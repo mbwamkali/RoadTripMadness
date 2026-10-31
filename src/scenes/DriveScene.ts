@@ -4,7 +4,9 @@ import { CRUISE_SPEED } from '../geo/route';
 import { advance, upcomingStop, type GameState } from '../game/state';
 import { STOP_TITLES, type Stop } from '../game/stops';
 import { hashString, makeRng, type Rng } from '../game/rng';
-import { addLights, disposeTree, makeCar, makeRoadTexture, textSprite, to3, type GameScene } from './common';
+import { ANNOUNCED, type Landmark } from '../game/landmarks';
+import { addLights, disposeTree, makeCar, makeRoadTexture, setBlinkers, textSprite, to3, type GameScene } from './common';
+import { buildLandmark, waterTexture } from './landmarkModels';
 
 const CHUNK = 400;
 const BEHIND = 250;
@@ -18,6 +20,7 @@ export interface DriveCallbacks {
   onOutOfFuel(): void;
   onPrompt(stop: Stop | null, distanceTo: number): void;
   onEnterStop(stop: Stop): void;
+  onLandmark(l: Landmark): void;
   onTick(): void;
 }
 
@@ -53,6 +56,8 @@ export class DriveScene implements GameScene {
   private pendingTurn: Stop | null = null;
   private turning: { stop: Stop; t: number; from: THREE.Vector3; mid: THREE.Vector3; to: THREE.Vector3 } | null = null;
   private stopping = false;
+  private clock = 0;
+  private announced = new Set<number>();
 
   constructor(
     private state: GameState,
@@ -64,8 +69,9 @@ export class DriveScene implements GameScene {
     this.scene.fog = new THREE.Fog(this.biome.sky, 300, 1300);
     addLights(this.scene);
 
-    this.roadMat = new THREE.MeshLambertMaterial({ map: this.roadTex });
-    this.shoulderMat = new THREE.MeshLambertMaterial({ color: this.biome.shoulder });
+    // Layered flat surfaces: polygon offsets keep road > water > shoulder > ground without z-fighting.
+    this.roadMat = new THREE.MeshLambertMaterial({ map: this.roadTex, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
+    this.shoulderMat = new THREE.MeshLambertMaterial({ color: this.biome.shoulder, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
     this.mats = {
       plant: new THREE.MeshLambertMaterial({ color: this.biome.plant === 'cactus' ? 0x4f8a3c : 0x2f6b35 }),
       trunk: new THREE.MeshLambertMaterial({ color: 0x6b4a2b }),
@@ -93,7 +99,7 @@ export class DriveScene implements GameScene {
 
     this.ground = new THREE.Mesh(
       new THREE.PlaneGeometry(4000, 4000),
-      new THREE.MeshLambertMaterial({ color: this.biome.ground }),
+      new THREE.MeshLambertMaterial({ color: this.biome.ground, polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 4 }),
     );
     this.ground.rotation.x = -Math.PI / 2;
     this.scene.add(this.ground);
@@ -108,9 +114,19 @@ export class DriveScene implements GameScene {
     this.camera.updateProjectionMatrix();
   }
 
-  /** The player chose to turn off at a stop; the car takes the turn when it gets there. */
+  /** The player chose to turn off at a stop; the car signals and takes the turn when it gets there. */
   takeTurn(stop: Stop): void {
     this.pendingTurn = stop;
+  }
+
+  /** Changed their mind before reaching the turn. */
+  cancelTurn(): void {
+    if (this.turning) return;
+    this.pendingTurn = null;
+  }
+
+  get signalling(): Stop | null {
+    return this.turning?.stop ?? this.pendingTurn;
   }
 
   skipStop(stop: Stop): void {
@@ -129,6 +145,16 @@ export class DriveScene implements GameScene {
   }
 
   update(dt: number): void {
+    this.clock += dt;
+    const sig = this.signalling;
+    setBlinkers(this.car, sig ? (sig.side === 'left' ? 'L' : 'R') : null, !!sig && Math.floor(this.clock * 3) % 2 === 0);
+    const water = waterTexture();
+    water.offset.y -= dt * 0.25;
+    for (const g of this.chunks.values()) {
+      g.traverse((o) => {
+        if (o.name === 'spin') o.rotation.z += dt * 0.6;
+      });
+    }
     if (this.turning) {
       this.animateTurn(dt);
       return;
@@ -175,7 +201,21 @@ export class DriveScene implements GameScene {
       this.promptStop = next;
     }
     if (this.promptStop) this.cb.onPrompt(this.promptStop, this.promptStop.at - s.distance);
+    this.announceLandmarks();
     this.cb.onTick();
+  }
+
+  private announceLandmarks(): void {
+    const d = this.state.distance;
+    this.state.landmarks.forEach((l, i) => {
+      if (this.announced.has(i) || !ANNOUNCED.has(l.kind)) return;
+      if (d >= l.at - 60 && d < l.at + 20) {
+        this.announced.add(i);
+        this.cb.onLandmark(l);
+      } else if (d >= l.at + 20) {
+        this.announced.add(i);
+      }
+    });
   }
 
   private spinWheels(step: number): void {
@@ -304,13 +344,16 @@ export class DriveScene implements GameScene {
     const g = new THREE.Group();
     const from = k * CHUNK;
     const to = Math.min(this.path.length, from + CHUNK + 4);
-    g.add(this.ribbon(from, to, ROAD_HALF + 3, 0.02, this.shoulderMat, 1));
-    g.add(this.ribbon(from, to, ROAD_HALF, 0.05, this.roadMat, 16));
+    g.add(this.ribbon(from, to, ROAD_HALF + 3, 0.04, this.shoulderMat, 1));
+    g.add(this.ribbon(from, to, ROAD_HALF, 0.1, this.roadMat, 16));
 
     const rng = makeRng(this.state.seed ^ hashString(`chunk${k}`));
     const inst: Record<string, THREE.Matrix4[]> = { plant: [], trunk: [], rock: [], pole: [], building: [], roof: [] };
     const buildingColors: THREE.Color[] = [];
     const stopsHere = this.state.stops.filter((s) => s.at > from - 200 && s.at < to + 200);
+    const marksHere = this.state.landmarks.filter((l) => l.at > from - 120 && l.at < to + 120 && l.kind !== 'mountains' && l.kind !== 'peak');
+    const clear = (d: number, side: number) =>
+      marksHere.some((l) => (l.kind === 'river' ? Math.abs(l.at - d) < 45 : Math.abs(l.at - d) < 30 && l.side === side));
     const total = this.path.length;
 
     for (let d = from; d < to; d += 8) {
@@ -323,9 +366,10 @@ export class DriveScene implements GameScene {
         d > total - 1500 ? 1 - (total - d) / 1500 : 0,
         ...stopsHere.filter((s) => s.kind === 'town' || s.kind === 'mall').map((s) => Math.max(0, 1 - Math.abs(s.at - d) / 260)),
       );
-      if (Math.round(d) % 48 < 8) placeAt(inst.pole, p, right, 7.5, 0, 1);
+      if (Math.round(d) % 48 < 8 && !clear(d, 1)) placeAt(inst.pole, p, right, 7.5, 0, 1);
       for (const side of [-1, 1]) {
         if (stopsHere.some((s) => Math.abs(s.at - d) < 30 && (s.side === 'right' ? 1 : -1) === side)) continue;
+        if (clear(d, side)) continue;
         const r = rng();
         if (r < urban * 0.6) {
           const off = side * (12 + rng() * 20);
@@ -353,6 +397,9 @@ export class DriveScene implements GameScene {
     for (const stop of this.state.stops) {
       if (stop.at >= from && stop.at < from + CHUNK) g.add(this.buildStop(stop, rng));
     }
+    for (const l of this.state.landmarks) {
+      if (l.at >= from && l.at < from + CHUNK) g.add(buildLandmark(l, this.path));
+    }
     if (k === Math.floor(this.path.length / CHUNK)) g.add(this.buildFinish());
     return g;
   }
@@ -370,7 +417,7 @@ export class DriveScene implements GameScene {
     const road = new THREE.Mesh(new THREE.PlaneGeometry(7, len - ROAD_HALF), this.roadMat);
     road.rotation.x = -Math.PI / 2;
     road.rotation.z = Math.atan2(side.x, side.y);
-    road.position.copy(to3({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, 0.06));
+    road.position.copy(to3({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, 0.09));
     g.add(road);
     // Exit sign ahead of the turn.
     const signAt = this.path.pointAt(stop.at - 90);
@@ -463,8 +510,11 @@ function disposeChunk(g: THREE.Group): void {
     if (o instanceof THREE.Mesh) {
       o.geometry.dispose();
       // Building materials are made per chunk; the rest are shared and freed in dispose().
-      const mat = o.material as THREE.Material;
-      if (mat.userData.chunkOwned) mat.dispose();
+      const mat = o.material as THREE.MeshBasicMaterial;
+      if (mat.userData.chunkOwned) {
+        if (mat.map?.userData.chunkOwned) mat.map.dispose();
+        mat.dispose();
+      }
     }
   });
 }

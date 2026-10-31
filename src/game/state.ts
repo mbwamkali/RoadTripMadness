@@ -1,5 +1,6 @@
 import { pathFromRoute, type RouteData } from '../geo/route';
 import type { Path } from '../geo/geo';
+import { fillLandmarks, type Landmark } from './landmarks';
 import { generateStops, type PlaceKind, type Stop } from './stops';
 import { hashString, makeRng, range, rangeInt, type Rng } from './rng';
 
@@ -19,6 +20,7 @@ export interface GameState {
   seed: number;
   route: RouteData;
   stops: Stop[];
+  landmarks: Landmark[];
   /** Distance travelled along the game path. */
   distance: number;
   health: number;
@@ -49,11 +51,13 @@ export function fuelPerUnit(pathLength: number): number {
 export function newGame(route: RouteData, seed = Date.now() & 0xffffffff): GameState {
   const path = pathFromRoute(route);
   const rng = makeRng(seed);
+  const stops = generateStops(route, path.length, seed);
   return {
     version: 1,
     seed,
     route,
-    stops: generateStops(route, path.length, seed),
+    stops,
+    landmarks: fillLandmarks(route, path.length, stops, route.landmarks ?? [], seed),
     distance: 0,
     health: MAX_HEALTH,
     inv: { fuel: 70, cash: 60, scrap: 10, bullets: 60, shells: 6, catnip: 1 },
@@ -229,7 +233,10 @@ export function loadGame(): GameState | null {
     const raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return null;
     const s = JSON.parse(raw) as GameState;
-    return s.version === 1 && s.status === 'driving' ? s : null;
+    if (s.version !== 1 || s.status !== 'driving') return null;
+    // Saves from before landmarks existed.
+    s.landmarks ??= fillLandmarks(s.route, pathFromRoute(s.route).length, s.stops, s.route.landmarks ?? [], s.seed);
+    return s;
   } catch {
     return null;
   }

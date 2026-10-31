@@ -3,6 +3,8 @@ import './style.css';
 import type { Path } from './geo/geo';
 import { currentPosition, searchPlaces, type Place } from './geo/geocode';
 import { fetchRoute } from './geo/osrm';
+import { fetchMapFeatures } from './geo/overpass';
+import { LANDMARK_ICONS, LANDMARK_TITLES, type Landmark } from './game/landmarks';
 import { demoRawRoute } from './geo/demoRoute';
 import { buildRouteData, pathFromRoute, realKmAt, type RouteData } from './geo/route';
 import {
@@ -171,6 +173,8 @@ function showSetup(): void {
     err.replaceChildren();
     try {
       const raw = await fetchRoute(from, to, from.label, to.label);
+      go.textContent = 'Scouting landmarks along the way…';
+      raw.features = await fetchMapFeatures(raw.coords);
       previewRoute(buildRouteData(raw));
     } catch (e) {
       err.replaceChildren(
@@ -214,6 +218,8 @@ function previewRoute(route: RouteData): void {
         { class: 'facts' },
         h('li', {}, `${fmtKm(km)} of road (${hours.toFixed(1)} h by the map)`),
         h('li', {}, `${s.stops.length} places to turn off for fuel and supplies`),
+        (route.landmarks?.length ?? 0) > 0 &&
+          h('li', {}, `${route.landmarks!.length} real sights to pass, like ${[...new Set(route.landmarks!.map((l) => l.name))].slice(0, 3).join(', ')}`),
         h('li', {}, 'Green dots have gas pumps. Your tank lasts about a third of the trip.'),
       ),
       h('button', { class: 'btn primary', onclick: () => startTrip(s) }, 'Hit the road'),
@@ -244,6 +250,7 @@ function startTrip(s: GameState): void {
     onOutOfFuel: () => setTimeout(showEnd, 600),
     onPrompt: (stop, dist) => updatePrompt(stop, dist),
     onEnterStop: (stop) => showStop(stop),
+    onLandmark: (l) => showLandmarkToast(l),
     onTick: () => hudTick?.(),
   });
   setScene(drive);
@@ -257,13 +264,20 @@ function updatePrompt(stop: Stop | null, dist: number): void {
   if (!promptEl) return;
   if (!stop) {
     promptEl.replaceChildren();
-    promptEl.classList.remove('show');
+    promptEl.classList.remove('show', 'signalling');
     promptFor = null;
     return;
   }
   const meters = Math.max(0, Math.round(realKmAt(state!.route, dist) * 1000));
   const distText = meters >= 1000 ? `${(meters / 1000).toFixed(1)} km` : `${meters} m`;
   const distEl = promptEl.querySelector('.dist');
+  if (drive?.signalling === stop) {
+    if (!promptEl.classList.contains('signalling')) renderSignalling(stop);
+    const d = promptEl.querySelector('.dist');
+    if (d) d.textContent = `in ${distText}`;
+    return;
+  }
+  promptEl.classList.remove('signalling');
   if (promptFor === stop.id && distEl) {
     distEl.textContent = `in ${distText}`;
     return;
@@ -292,7 +306,52 @@ function updatePrompt(stop: Stop | null, dist: number): void {
 
 function chooseTurn(stop: Stop): void {
   drive?.takeTurn(stop);
-  if (promptEl) promptEl.replaceChildren(h('div', { class: 'prompt-text' }, `Signalling ${stop.side}… turning off at ${stop.name}`));
+  navigator.vibrate?.(40);
+  renderSignalling(stop);
+}
+
+/** Replaces the turn buttons with a blinking indicator so it's obvious the tap registered. */
+function renderSignalling(stop: Stop): void {
+  if (!promptEl) return;
+  const left = stop.side === 'left';
+  promptEl.classList.add('signalling');
+  promptEl.replaceChildren(
+    h(
+      'div',
+      { class: `signal ${left ? 'left' : 'right'}` },
+      left && h('span', { class: 'arrow' }, '◀'),
+      h('div', { class: 'signal-text' }, h('strong', {}, `Turning ${stop.side}`), h('span', { class: 'muted' }, ` into ${stop.name} `), h('span', { class: 'dist' }, '')),
+      !left && h('span', { class: 'arrow' }, '▶'),
+    ),
+    h(
+      'button',
+      {
+        class: 'btn ghost small',
+        onclick: () => {
+          drive?.cancelTurn();
+          promptEl?.classList.remove('signalling');
+          promptFor = null;
+        },
+      },
+      'Cancel',
+    ),
+  );
+}
+
+let toastTimer = 0;
+function showLandmarkToast(l: Landmark): void {
+  const el = document.querySelector('.landmark-toast');
+  if (!el) return;
+  const verb = l.kind === 'river' ? 'Crossing' : l.kind === 'citysign' ? '' : 'Passing';
+  el.replaceChildren(
+    h('span', { class: 'icon' }, LANDMARK_ICONS[l.kind]),
+    h('div', {}, h('small', {}, verb ? `${verb} · ${LANDMARK_TITLES[l.kind]}` : LANDMARK_TITLES[l.kind]), h('strong', {}, l.name)),
+  );
+  el.classList.remove('show');
+  void (el as HTMLElement).offsetWidth;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => el.classList.remove('show'), 3500);
 }
 
 function bar(cls: string, label: string): { el: HTMLElement; set: (v: number, max: number, text?: string) => void } {
@@ -346,6 +405,7 @@ function showDriveHud(): void {
     h(
       'div',
       { class: 'hud' },
+      h('div', { class: 'landmark-toast' }),
       h('div', { class: 'hud-top' }, h('div', { class: 'stats' }, fuel.el, hp.el, inv), h('div', { class: 'side' }, map.canvas, h('div', { class: 'row' }, speedBtn, menuBtn))),
       h('div', { class: 'hud-bottom' }, promptEl, progress, progressText),
     ),

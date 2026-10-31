@@ -1,3 +1,4 @@
+import { placeFeatures, type Landmark, type MapFeature } from '../game/landmarks';
 import { chaikin, dedupe, makeProjection, Path, resample, type LatLng, type Vec2 } from './geo';
 
 /** One maneuver on the real route (from OSRM), placed along the game path. */
@@ -26,6 +27,8 @@ export interface RouteData {
   points: [number, number][];
   steps: RouteStep[];
   attribution: string;
+  /** Real landmarks from OpenStreetMap, placed along the path (optional; filled in after routing). */
+  landmarks?: Landmark[];
 }
 
 /** Cruise speed of the car in game units per second. */
@@ -54,6 +57,8 @@ export interface RawRoute {
   realSeconds: number;
   steps: RawStep[];
   attribution: string;
+  /** Sights near the route from OpenStreetMap (see geo/overpass.ts). Optional; offline trips can skip it. */
+  features?: MapFeature[];
 }
 
 /** Converts a real-world route into game geometry: project, scale, smooth and resample. */
@@ -84,7 +89,7 @@ export function buildRouteData(raw: RawRoute): RouteData {
   });
   steps.sort((a, b) => a.at - b.at);
 
-  return {
+  const data: RouteData = {
     source: raw.source,
     startLabel: raw.startLabel,
     endLabel: raw.endLabel,
@@ -97,6 +102,8 @@ export function buildRouteData(raw: RawRoute): RouteData {
     steps,
     attribution: raw.attribution,
   };
+  if (raw.features?.length) data.landmarks = placeFeatures(data, pathFromRoute(data), raw.features);
+  return data;
 }
 
 export function pathFromRoute(route: RouteData): Path {

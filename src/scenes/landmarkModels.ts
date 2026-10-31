@@ -1,0 +1,467 @@
+import * as THREE from 'three';
+import type { Path } from '../geo/geo';
+import { LANDMARK_TITLES, type Landmark } from '../game/landmarks';
+import { hashString, makeRng, range } from '../game/rng';
+import { textSprite, to3 } from './common';
+
+/**
+ * Low-poly models for landmarks. Every material made here is owned by the
+ * chunk that holds the model and is freed with it (userData.chunkOwned).
+ */
+
+const ROAD_HALF = 4.5;
+
+function mat(color: number, extra: THREE.MeshLambertMaterialParameters = {}): THREE.MeshLambertMaterial {
+  const m = new THREE.MeshLambertMaterial({ color, ...extra });
+  m.userData.chunkOwned = true;
+  return m;
+}
+
+function basic(color: number, extra: THREE.MeshBasicMaterialParameters = {}): THREE.MeshBasicMaterial {
+  const m = new THREE.MeshBasicMaterial({ color, ...extra });
+  m.userData.chunkOwned = true;
+  return m;
+}
+
+function mesh(geo: THREE.BufferGeometry, m: THREE.Material, x = 0, y = 0, z = 0): THREE.Mesh {
+  const o = new THREE.Mesh(geo, m);
+  o.position.set(x, y, z);
+  return o;
+}
+
+/** Frame of the road at a distance: position, forward and right vectors in three.js space. */
+function frame(path: Path, at: number) {
+  const p = path.pointAt(at);
+  const f = path.directionAt(at, 8);
+  return {
+    p,
+    fwd: new THREE.Vector3(f.x, 0, -f.y),
+    right: new THREE.Vector3(f.y, 0, f.x),
+  };
+}
+
+let waterTex: THREE.CanvasTexture | null = null;
+/** Shared rippled water texture; DriveScene scrolls its offset to make rivers flow. */
+export function waterTexture(): THREE.CanvasTexture {
+  if (waterTex) return waterTex;
+  const c = document.createElement('canvas');
+  c.width = 64;
+  c.height = 128;
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#2f6fa8';
+  g.fillRect(0, 0, 64, 128);
+  for (let i = 0; i < 40; i++) {
+    g.fillStyle = `rgba(200,230,255,${0.15 + Math.random() * 0.25})`;
+    g.fillRect(Math.random() * 64, Math.random() * 128, 6 + Math.random() * 14, 2);
+  }
+  waterTex = new THREE.CanvasTexture(c);
+  waterTex.wrapS = waterTex.wrapT = THREE.RepeatWrapping;
+  waterTex.colorSpace = THREE.SRGBColorSpace;
+  return waterTex;
+}
+
+/** A meandering river crossing under the road, with a bridge and a name sign. */
+function buildRiver(l: Landmark, path: Path): THREE.Group {
+  const g = new THREE.Group();
+  const { p, fwd } = frame(path, l.at);
+  const rng = makeRng(hashString(l.name + l.at));
+  const width = l.real ? range(rng, 18, 34) : range(rng, 9, 16);
+  const angle = l.angle ?? Math.PI / 2;
+  // River direction: the road's forward vector rotated by the crossing angle.
+  const dir = fwd.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), angle);
+  const across = new THREE.Vector3(-dir.z, 0, dir.x);
+  const pos: number[] = [];
+  const uv: number[] = [];
+  const idx: number[] = [];
+  const centre = to3(p, 0.06);
+  const n = 70;
+  const len = 1400;
+  const phase = rng() * 6;
+  for (let i = 0; i <= n; i++) {
+    const s = -len / 2 + (i / n) * len;
+    // Meander, pinned straight where it passes under the bridge.
+    const wiggle = Math.sin(s / 140 + phase) * 30 * Math.min(1, Math.abs(s) / 120);
+    const c = centre.clone().addScaledVector(dir, s).addScaledVector(across, wiggle);
+    const a = c.clone().addScaledVector(across, -width / 2);
+    const b = c.clone().addScaledVector(across, width / 2);
+    pos.push(a.x, a.y, a.z, b.x, b.y, b.z);
+    uv.push(0, s / 30, 1, s / 30);
+    if (i > 0) {
+      const k = (i - 1) * 2;
+      idx.push(k, k + 2, k + 1, k + 1, k + 2, k + 3);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  const water = mat(0xffffff, { map: waterTexture(), polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4, side: THREE.DoubleSide });
+  g.add(new THREE.Mesh(geo, water));
+  // Bridge: deck sides and railings along the road where it crosses the water.
+  const span = Math.min(80, width / Math.max(0.3, Math.sin(angle)) + 16);
+  const steel = mat(0x7d8790);
+  const concrete = mat(0xb9b2a5);
+  for (const side of [-1, 1]) {
+    for (let s = -span / 2; s <= span / 2; s += 2) {
+      const f = frame(path, l.at + s);
+      const base = to3(f.p).addScaledVector(f.right, side * (ROAD_HALF + 0.4));
+      const post = mesh(new THREE.BoxGeometry(0.25, 1.2, 0.25), steel);
+      post.position.copy(base).setY(0.6);
+      g.add(post);
+    }
+    const a = frame(path, l.at - span / 2);
+    const b = frame(path, l.at + span / 2);
+    const pa = to3(a.p).addScaledVector(a.right, side * (ROAD_HALF + 0.4));
+    const pb = to3(b.p).addScaledVector(b.right, side * (ROAD_HALF + 0.4));
+    const rail = mesh(new THREE.BoxGeometry(0.3, 0.3, pa.distanceTo(pb)), steel);
+    rail.position.copy(pa).lerp(pb, 0.5).setY(1.2);
+    rail.lookAt(pb.clone().setY(1.2));
+    g.add(rail);
+    const girder = mesh(new THREE.BoxGeometry(0.8, 1.6, pa.distanceTo(pb)), concrete);
+    girder.position.copy(pa).lerp(pb, 0.5).setY(-0.6);
+    girder.lookAt(pb.clone().setY(-0.6));
+    g.add(girder);
+  }
+  // Blue river name sign before the bridge.
+  const sf = frame(path, l.at - span / 2 - 30);
+  const sign = textSprite(l.name, '', '#2a5f9e');
+  sign.position.copy(to3(sf.p).addScaledVector(sf.right, ROAD_HALF + 4)).setY(4.5);
+  sign.scale.set(7, 2.6, 1);
+  g.add(sign);
+  return g;
+}
+
+function buildPeak(rng: () => number): THREE.Object3D {
+  const g = new THREE.Group();
+  const h = range(rng, 260, 420);
+  const r = h * range(rng, 0.7, 1);
+  g.add(mesh(new THREE.ConeGeometry(r, h, 7), mat(0x7a7f8f, { flatShading: true }), 0, h / 2, 0));
+  const capH = h * 0.28;
+  g.add(mesh(new THREE.ConeGeometry(r * 0.29, capH, 7), mat(0xf4f6fa, { flatShading: true }), 0, h - capH / 2 + 1, 0));
+  for (let i = 0; i < 2; i++) {
+    const hh = h * range(rng, 0.45, 0.7);
+    g.add(mesh(new THREE.ConeGeometry(hh * 0.9, hh, 6), mat(0x8a8f9c, { flatShading: true }), (i ? 1 : -1) * r * 0.8, hh / 2, range(rng, -40, 40)));
+  }
+  return g;
+}
+
+function buildMountains(rng: () => number): THREE.Object3D {
+  const g = new THREE.Group();
+  const n = 3 + Math.floor(rng() * 4);
+  const color = new THREE.Color().setHSL(0.62 + rng() * 0.08, 0.15, 0.45 + rng() * 0.1);
+  for (let i = 0; i < n; i++) {
+    const h = range(rng, 120, 280);
+    g.add(mesh(new THREE.ConeGeometry(h * range(rng, 0.9, 1.4), h, 6), mat(color.getHex(), { flatShading: true }), (i - n / 2) * 160 + range(rng, -40, 40), h / 2, range(rng, -80, 80)));
+  }
+  return g;
+}
+
+function buildMonument(): THREE.Object3D {
+  const g = new THREE.Group();
+  const stone = mat(0xe8e2d4);
+  g.add(mesh(new THREE.BoxGeometry(8, 2, 8), mat(0xa89e8c), 0, 1, 0));
+  const ob = new THREE.CylinderGeometry(0.9, 2, 26, 4);
+  ob.rotateY(Math.PI / 4);
+  g.add(mesh(ob, stone, 0, 15, 0));
+  const tip = new THREE.ConeGeometry(1.25, 2.5, 4);
+  tip.rotateY(Math.PI / 4);
+  g.add(mesh(tip, stone, 0, 29.2, 0));
+  return g;
+}
+
+function buildTower(): THREE.Object3D {
+  const g = new THREE.Group();
+  const red = mat(0xd03a2a);
+  const white = mat(0xf0f0f0);
+  for (let i = 0; i < 8; i++) {
+    const r0 = 1.6 - i * 0.15;
+    g.add(mesh(new THREE.CylinderGeometry(r0 - 0.15, r0, 6, 6), i % 2 ? white : red, 0, 3 + i * 6, 0));
+  }
+  g.add(mesh(new THREE.SphereGeometry(0.6, 6, 4), basic(0xff3030), 0, 49, 0));
+  const dish = new THREE.Mesh(new THREE.CylinderGeometry(2, 0.3, 0.8, 10), white);
+  dish.rotation.z = Math.PI / 2.5;
+  dish.position.set(1.8, 34, 0);
+  g.add(dish);
+  return g;
+}
+
+function buildLighthouse(): THREE.Object3D {
+  const g = new THREE.Group();
+  for (let i = 0; i < 6; i++) {
+    const r0 = 3 - i * 0.3;
+    g.add(mesh(new THREE.CylinderGeometry(r0 - 0.3, r0, 4.5, 10), mat(i % 2 ? 0xd03a2a : 0xf4f4f4), 0, 2.25 + i * 4.5, 0));
+  }
+  g.add(mesh(new THREE.CylinderGeometry(1.6, 1.6, 2.4, 10), basic(0xfff2a0), 0, 28.2, 0));
+  g.add(mesh(new THREE.ConeGeometry(2, 2, 10), mat(0x303030), 0, 30.4, 0));
+  return g;
+}
+
+function buildCastle(rng: () => number): THREE.Object3D {
+  const g = new THREE.Group();
+  const stone = mat(0xa39a8a, { flatShading: true });
+  const w = range(rng, 22, 34);
+  const h = range(rng, 7, 11);
+  for (const [x, z, rx, rz] of [
+    [0, -w / 2, w, 1.5],
+    [0, w / 2, w, 1.5],
+    [-w / 2, 0, 1.5, w],
+    [w / 2, 0, 1.5, w],
+  ]) {
+    g.add(mesh(new THREE.BoxGeometry(rx, h, rz), stone, x, h / 2, z));
+    // Crenellations.
+    const along = rx > rz ? 'x' : 'z';
+    for (let s = -w / 2; s <= w / 2; s += 3) {
+      const c = mesh(new THREE.BoxGeometry(1.4, 1.4, 1.4), stone, along === 'x' ? s : x, h + 0.7, along === 'z' ? s : z);
+      g.add(c);
+    }
+  }
+  for (const x of [-w / 2, w / 2]) {
+    for (const z of [-w / 2, w / 2]) {
+      g.add(mesh(new THREE.CylinderGeometry(3, 3.3, h * 1.6, 8), stone, x, (h * 1.6) / 2, z));
+      g.add(mesh(new THREE.ConeGeometry(3.6, 4, 8), mat(0x6b3b2b), x, h * 1.6 + 2, z));
+    }
+  }
+  g.add(mesh(new THREE.BoxGeometry(w * 0.5, h * 1.8, w * 0.5), stone, 0, h * 0.9, 0));
+  return g;
+}
+
+/** A Ferris wheel, because every attraction deserves one. Its wheel is named 'spin'. */
+function buildAttraction(): THREE.Object3D {
+  const g = new THREE.Group();
+  const steel = mat(0xe0e0e0);
+  const wheel = new THREE.Group();
+  wheel.name = 'spin';
+  wheel.add(new THREE.Mesh(new THREE.TorusGeometry(12, 0.4, 6, 32), steel));
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2;
+    const spoke = mesh(new THREE.BoxGeometry(0.25, 24, 0.25), steel);
+    spoke.rotation.z = a;
+    wheel.add(spoke);
+    const car = mesh(new THREE.BoxGeometry(1.6, 1.6, 1.6), mat(new THREE.Color().setHSL(i / 12, 0.7, 0.55).getHex()), Math.cos(a) * 12, Math.sin(a) * 12, 0);
+    wheel.add(car);
+  }
+  wheel.position.y = 15;
+  g.add(wheel);
+  for (const x of [-4, 4]) {
+    const leg = mesh(new THREE.BoxGeometry(0.6, 16, 0.6), steel, x, 7.5, 0);
+    leg.rotation.z = x > 0 ? 0.25 : -0.25;
+    g.add(leg);
+  }
+  return g;
+}
+
+function buildViewpoint(): THREE.Object3D {
+  const g = new THREE.Group();
+  g.add(mesh(new THREE.CylinderGeometry(6, 6, 0.2, 16), mat(0x8a8274), 0, 0.1, 0));
+  g.add(mesh(new THREE.CylinderGeometry(0.15, 0.15, 1.3, 6), mat(0x333333), 0, 0.75, 0));
+  g.add(mesh(new THREE.BoxGeometry(0.9, 0.4, 0.4), mat(0x2f6b3a), 0, 1.5, 0));
+  g.add(mesh(new THREE.CylinderGeometry(0.08, 0.08, 6, 5), mat(0x666666), 3, 3, 0));
+  g.add(mesh(new THREE.BoxGeometry(0.05, 1.2, 2), mat(0xd03a2a), 3, 5.3, 1));
+  return g;
+}
+
+function buildWaterTower(rng: () => number): THREE.Object3D {
+  const g = new THREE.Group();
+  const leg = mat(0x8a8f96);
+  for (const [x, z] of [
+    [-3, -3],
+    [3, -3],
+    [-3, 3],
+    [3, 3],
+  ]) {
+    g.add(mesh(new THREE.CylinderGeometry(0.3, 0.3, 16, 5), leg, x, 8, z));
+  }
+  const color = rng() < 0.5 ? 0xe8eef2 : 0x7fb0d8;
+  g.add(mesh(new THREE.CylinderGeometry(5, 5, 6, 14), mat(color), 0, 19, 0));
+  g.add(mesh(new THREE.ConeGeometry(5.2, 2.5, 14), mat(color), 0, 23.2, 0));
+  g.add(mesh(new THREE.SphereGeometry(5, 14, 6, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2), mat(color), 0, 16, 0));
+  return g;
+}
+
+/** A farm windmill; its blades are named 'spin'. */
+function buildWindmill(): THREE.Object3D {
+  const g = new THREE.Group();
+  const tower = new THREE.CylinderGeometry(0.4, 2.5, 18, 4);
+  g.add(mesh(tower, mat(0x9a9a9a, { wireframe: false }), 0, 9, 0));
+  const rotor = new THREE.Group();
+  rotor.name = 'spin';
+  const blade = mat(0xd8d8d8);
+  for (let i = 0; i < 12; i++) {
+    const b = mesh(new THREE.BoxGeometry(0.5, 3.2, 0.1), blade, 0, 1.8, 0);
+    const holder = new THREE.Group();
+    holder.rotation.z = (i / 12) * Math.PI * 2;
+    holder.add(b);
+    rotor.add(holder);
+  }
+  rotor.position.set(0, 18.5, 0.8);
+  g.add(rotor);
+  const tail = mesh(new THREE.BoxGeometry(0.1, 1.6, 3), mat(0xc0392b), 0, 18.5, -2);
+  g.add(tail);
+  return g;
+}
+
+function signTexture(lines: string[], bg: string, fg: string, w = 512, h = 256): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const g = c.getContext('2d')!;
+  g.fillStyle = bg;
+  g.fillRect(0, 0, w, h);
+  g.strokeStyle = fg;
+  g.lineWidth = 8;
+  g.strokeRect(8, 8, w - 16, h - 16);
+  g.fillStyle = fg;
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  const size = lines.length > 2 ? 46 : 58;
+  g.font = `900 ${size}px system-ui, sans-serif`;
+  lines.forEach((t, i) => g.fillText(t, w / 2, h / 2 + (i - (lines.length - 1) / 2) * (size + 8)));
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.userData.chunkOwned = true;
+  return tex;
+}
+
+/** Splits text into lines of about `width` characters. */
+function wrap(text: string, width: number): string[] {
+  const words = text.split(' ');
+  const lines: string[] = [];
+  let line = '';
+  for (const w of words) {
+    if ((line + ' ' + w).trim().length > width && line) {
+      lines.push(line);
+      line = w;
+    } else line = (line + ' ' + w).trim();
+  }
+  if (line) lines.push(line);
+  return lines.slice(0, 3);
+}
+
+function buildBillboard(l: Landmark, rng: () => number): THREE.Object3D {
+  const g = new THREE.Group();
+  const wood = mat(0x5a4632);
+  for (const x of [-5, 5]) g.add(mesh(new THREE.BoxGeometry(0.5, 9, 0.5), wood, x, 4.5, -0.3));
+  const bgs = ['#ffd23f', '#f4f1e8', '#e8432e', '#1f6fb2'];
+  const bg = bgs[Math.floor(rng() * bgs.length)];
+  const fg = bg === '#ffd23f' || bg === '#f4f1e8' ? '#1a1a1a' : '#ffffff';
+  const tex = signTexture(wrap(l.name, 16), bg, fg);
+  const board = mesh(new THREE.PlaneGeometry(16, 8), basic(0xffffff, { map: tex, side: THREE.DoubleSide }), 0, 9, 0);
+  g.add(board);
+  return g;
+}
+
+/** Big goofy roadside figures. The shape is picked from the name so it's stable. */
+function buildGiant(l: Landmark): THREE.Object3D {
+  const g = new THREE.Group();
+  const n = l.name.toLowerCase();
+  if (n.includes('duck')) {
+    const y = mat(0xffd21f);
+    g.add(mesh(new THREE.SphereGeometry(7, 14, 10), y, 0, 6, 0));
+    g.add(mesh(new THREE.SphereGeometry(4, 12, 8), y, 0, 14, 4));
+    const beak = mesh(new THREE.ConeGeometry(1.4, 3.5, 8), mat(0xff7a1a), 0, 13.5, 8.5);
+    beak.rotation.x = Math.PI / 2;
+    g.add(beak);
+  } else if (n.includes('dinosaur')) {
+    const green = mat(0x4f9a46, { flatShading: true });
+    g.add(mesh(new THREE.BoxGeometry(6, 6, 14), green, 0, 8, 0));
+    const neck = mesh(new THREE.BoxGeometry(2.4, 14, 2.4), green, 0, 16, 7);
+    neck.rotation.x = 0.35;
+    g.add(neck);
+    g.add(mesh(new THREE.BoxGeometry(3, 3, 5), green, 0, 23, 10.5));
+    const tail = mesh(new THREE.BoxGeometry(2, 2, 12), green, 0, 6, -12);
+    tail.rotation.x = -0.3;
+    g.add(tail);
+    for (const [x, z] of [
+      [-2.2, -4],
+      [2.2, -4],
+      [-2.2, 4],
+      [2.2, 4],
+    ])
+      g.add(mesh(new THREE.BoxGeometry(1.8, 6, 1.8), green, x, 3, z));
+  } else if (n.includes('coffee')) {
+    const pot = mat(0xe0e4e8);
+    g.add(mesh(new THREE.CylinderGeometry(6, 7.5, 14, 16), pot, 0, 7, 0));
+    g.add(mesh(new THREE.ConeGeometry(6, 4, 16), pot, 0, 16, 0));
+    const spout = mesh(new THREE.CylinderGeometry(0.8, 1.6, 7, 8), pot, 0, 10, 8);
+    spout.rotation.x = 0.9;
+    g.add(spout);
+  } else if (n.includes('ufo')) {
+    g.add(mesh(new THREE.CylinderGeometry(0.6, 0.6, 12, 6), mat(0x777777), 0, 6, 0));
+    const tilt = new THREE.Group();
+    tilt.rotation.z = 0.3;
+    tilt.position.y = 13;
+    tilt.add(mesh(new THREE.CylinderGeometry(7, 8, 1.6, 18), mat(0xb8c0d0)));
+    tilt.add(mesh(new THREE.SphereGeometry(3, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), mat(0x9ff0ff, { transparent: true, opacity: 0.75 }), 0, 0.8, 0));
+    g.add(tilt);
+  } else {
+    // A big fiberglass figure: cowboy, rooster, armadillo, fork... all get the giant-man treatment.
+    const shirt = mat(n.includes('rooster') ? 0xc8402a : 0x2f6fb5);
+    const skin = mat(0xe1a77a);
+    g.add(mesh(new THREE.BoxGeometry(2.4, 9, 2.4), mat(0x3b4a6b), -1.6, 4.5, 0));
+    g.add(mesh(new THREE.BoxGeometry(2.4, 9, 2.4), mat(0x3b4a6b), 1.6, 4.5, 0));
+    g.add(mesh(new THREE.BoxGeometry(6, 8, 3.2), shirt, 0, 13, 0));
+    g.add(mesh(new THREE.BoxGeometry(3.4, 3.6, 3.4), skin, 0, 19, 0));
+    g.add(mesh(new THREE.CylinderGeometry(4, 4, 0.5, 14), mat(0x6b4423), 0, 21, 0));
+    g.add(mesh(new THREE.CylinderGeometry(2, 2.2, 2.4, 14), mat(0x6b4423), 0, 22.4, 0));
+    const arm = mesh(new THREE.BoxGeometry(1.6, 7, 1.6), shirt, 4, 15, 0);
+    arm.rotation.z = 2.4;
+    g.add(arm);
+    g.add(mesh(new THREE.BoxGeometry(1.6, 7, 1.6), shirt, -3.8, 12, 0));
+  }
+  return g;
+}
+
+function buildCitySign(l: Landmark): THREE.Object3D {
+  const g = new THREE.Group();
+  const post = mat(0x8a8f96);
+  g.add(mesh(new THREE.BoxGeometry(0.25, 4, 0.25), post, -2.6, 2, 0));
+  g.add(mesh(new THREE.BoxGeometry(0.25, 4, 0.25), post, 2.6, 2, 0));
+  const lines = wrap(l.name, 18);
+  const tex = signTexture(lines, '#1f6b3a', '#ffffff');
+  g.add(mesh(new THREE.PlaneGeometry(6.4, 3.2), basic(0xffffff, { map: tex, side: THREE.DoubleSide }), 0, 4.6, 0.15));
+  return g;
+}
+
+/** Brown "point of interest" sign that announces a landmark ahead. */
+function poiSign(l: Landmark, path: Path): THREE.Object3D {
+  const f = frame(path, Math.max(0, l.at - 70));
+  const sign = textSprite(l.name, LANDMARK_TITLES[l.kind], '#6b3f1f');
+  sign.position.copy(to3(f.p).addScaledVector(f.right, (l.side > 0 ? 1 : -1) * (ROAD_HALF + 4))).setY(4.5);
+  sign.scale.set(7, 2.6, 1);
+  return sign;
+}
+
+/** Builds a landmark, positioned and turned to face the road. */
+export function buildLandmark(l: Landmark, path: Path): THREE.Object3D {
+  if (l.kind === 'river') return buildRiver(l, path);
+  const rng = makeRng(hashString(`${l.kind}${l.name}${Math.round(l.at)}`));
+  const builders: Partial<Record<Landmark['kind'], () => THREE.Object3D>> = {
+    peak: () => buildPeak(rng),
+    mountains: () => buildMountains(rng),
+    monument: buildMonument,
+    tower: buildTower,
+    lighthouse: buildLighthouse,
+    castle: () => buildCastle(rng),
+    attraction: buildAttraction,
+    viewpoint: buildViewpoint,
+    watertower: () => buildWaterTower(rng),
+    windmill: buildWindmill,
+    billboard: () => buildBillboard(l, rng),
+    giant: () => buildGiant(l),
+    citysign: () => buildCitySign(l),
+  };
+  const model = (builders[l.kind] ?? buildMonument)();
+  const { p, fwd, right } = frame(path, l.at);
+  const out = new THREE.Group();
+  model.position.copy(to3(p)).addScaledVector(right, l.side * l.offset);
+  // Face the road; signs and billboards also angle toward oncoming traffic.
+  const toRoad = right.clone().multiplyScalar(-l.side);
+  const face = l.kind === 'billboard' || l.kind === 'citysign' ? toRoad.multiplyScalar(0.35).addScaledVector(fwd, -1).normalize() : toRoad;
+  model.rotation.y = Math.atan2(face.x, face.z);
+  out.add(model);
+  if (l.kind !== 'citysign' && l.kind !== 'billboard' && l.kind !== 'mountains' && l.kind !== 'watertower' && l.kind !== 'windmill') {
+    out.add(poiSign(l, path));
+  }
+  return out;
+}

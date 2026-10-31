@@ -634,3 +634,78 @@ body.hurt::after {
     width: 56px;
   }
 }
+
+/* ------------------------------------------------------------------ turn signal & landmarks */
+
+.prompt.signalling {
+  border-color: #ffb020;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.signal {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.signal .arrow {
+  font-size: 34px;
+  color: #ffb020;
+  text-shadow: 0 0 14px #ffb020;
+  animation: blinker 0.66s steps(1) infinite;
+}
+
+.signal.right {
+  justify-content: space-between;
+}
+
+@keyframes blinker {
+  50% {
+    opacity: 0.12;
+  }
+}
+
+.landmark-toast {
+  position: absolute;
+  left: 50%;
+  top: calc(200px + var(--safe-t));
+  transform: translate(-50%, -10px);
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  background: var(--panel);
+  border-radius: 14px;
+  padding: 8px 16px;
+  opacity: 0;
+  transition: opacity 0.3s, transform 0.3s;
+  pointer-events: none;
+  max-width: calc(100% - 32px);
+}
+
+.landmark-toast.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.landmark-toast .icon {
+  font-size: 26px;
+}
+
+.landmark-toast small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.landmark-toast strong {
+  font-size: 16px;
+}
+
+@media (orientation: landscape) and (max-height: 500px) {
+  .landmark-toast {
+    top: calc(10px + var(--safe-t));
+  }
+}

@@ -38,6 +38,40 @@ export function makeRoadTexture(): THREE.CanvasTexture {
   return t;
 }
 
+export const BLINK_OFF = 0x5a3a10;
+export const BLINK_ON = 0xffb020;
+
+let glowTex: THREE.CanvasTexture | null = null;
+
+/** Soft round glow, shared by every blinker. */
+function glowTexture(): THREE.CanvasTexture {
+  if (glowTex) return glowTex;
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d')!;
+  const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0, 'rgba(255,255,255,1)');
+  grad.addColorStop(0.35, 'rgba(255,255,255,0.6)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 64, 64);
+  glowTex = new THREE.CanvasTexture(c);
+  return glowTex;
+}
+
+/** Turns a car's indicators on or off. side: 'L', 'R' or null for both off. */
+export function setBlinkers(car: THREE.Object3D, side: 'L' | 'R' | null, lit: boolean): void {
+  car.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (o.name === 'blinkL' || o.name === 'blinkR') {
+      const on = lit && o.name === `blink${side}`;
+      (m.material as THREE.MeshBasicMaterial).color.setHex(on ? BLINK_ON : BLINK_OFF);
+    } else if (o.name === 'glowL' || o.name === 'glowR') {
+      (m.material as THREE.MeshBasicMaterial).opacity = lit && o.name === `glow${side}` ? 0.55 : 0;
+    }
+  });
+}
+
 /** A chunky low-poly muscle car built from boxes. Faces +z. */
 export function makeCar(color = 0xd9482b): THREE.Group {
   const car = new THREE.Group();
@@ -87,6 +121,31 @@ export function makeCar(color = 0xd9482b): THREE.Group {
     const l = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.2, 0.05), lights);
     l.position.set(x, 0.85, 2.11);
     car.add(l);
+  }
+  const tail = new THREE.MeshBasicMaterial({ color: 0x9a1a10 });
+  for (const x of [-0.6, 0.6]) {
+    const l = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.18, 0.05), tail);
+    l.position.set(x, 0.85, -2.11);
+    car.add(l);
+  }
+  // Turn signals. The car faces +z, so its right-hand side is -x.
+  for (const side of ['L', 'R'] as const) {
+    const x = side === 'L' ? 0.9 : -0.9;
+    const mat = new THREE.MeshBasicMaterial({ color: BLINK_OFF });
+    for (const z of [2.12, -2.12]) {
+      const b = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.22, 0.08), mat);
+      b.position.set(x, 0.9, z);
+      b.name = `blink${side}`;
+      car.add(b);
+    }
+    // A glow card that makes the blink readable from the chase camera.
+    const glow = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.4, 1.4),
+      new THREE.MeshBasicMaterial({ color: BLINK_ON, map: glowTexture(), transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }),
+    );
+    glow.position.set(x * 1.05, 0.9, -2.2);
+    glow.name = `glow${side}`;
+    car.add(glow);
   }
   const shadow = new THREE.Mesh(
     new THREE.PlaneGeometry(2.6, 4.8),
