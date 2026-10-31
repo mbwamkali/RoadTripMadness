@@ -1,0 +1,147 @@
+import * as THREE from 'three';
+import type { Vec2 } from '../geo/geo';
+
+/** Game plane (x east, y north) to three.js world (x, 0, -y). */
+export const to3 = (p: Vec2, h = 0) => new THREE.Vector3(p.x, h, -p.y);
+
+export interface GameScene {
+  scene: THREE.Scene;
+  camera: THREE.PerspectiveCamera;
+  update(dt: number): void;
+  resize(w: number, h: number): void;
+  dispose(): void;
+}
+
+export function makeRoadTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 128;
+  c.height = 256;
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#3b3b40';
+  g.fillRect(0, 0, 128, 256);
+  // Grain so the asphalt reads as moving.
+  for (let i = 0; i < 900; i++) {
+    const v = 50 + Math.random() * 30;
+    g.fillStyle = `rgb(${v},${v},${v + 4})`;
+    g.fillRect(Math.random() * 128, Math.random() * 256, 2, 2);
+  }
+  g.fillStyle = '#e8e2cf';
+  g.fillRect(6, 0, 4, 256);
+  g.fillRect(118, 0, 4, 256);
+  g.fillStyle = '#f2c230';
+  g.fillRect(61, 0, 6, 150);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = THREE.RepeatWrapping;
+  t.wrapT = THREE.RepeatWrapping;
+  t.anisotropy = 4;
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+/** A chunky low-poly muscle car built from boxes. Faces +z. */
+export function makeCar(color = 0xd9482b): THREE.Group {
+  const car = new THREE.Group();
+  const paint = new THREE.MeshLambertMaterial({ color });
+  const dark = new THREE.MeshLambertMaterial({ color: 0x1d1d22 });
+  const glass = new THREE.MeshLambertMaterial({ color: 0x8fc6e8, emissive: 0x112233 });
+  const metal = new THREE.MeshLambertMaterial({ color: 0x9a9a9a });
+
+  const body = new THREE.Mesh(new THREE.BoxGeometry(2, 0.7, 4.2), paint);
+  body.position.y = 0.75;
+  car.add(body);
+  const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.6, 2), glass);
+  cabin.position.set(0, 1.35, -0.3);
+  car.add(cabin);
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(1.75, 0.12, 1.8), paint);
+  roof.position.set(0, 1.7, -0.3);
+  car.add(roof);
+  // Spiked bumper and a roof gun: this car is ready for trouble.
+  const bumper = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.3, 0.3), metal);
+  bumper.position.set(0, 0.55, 2.2);
+  car.add(bumper);
+  for (const x of [-0.8, 0, 0.8]) {
+    const spike = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.5, 5), metal);
+    spike.rotation.x = Math.PI / 2;
+    spike.position.set(x, 0.55, 2.55);
+    car.add(spike);
+  }
+  const gun = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 1.2), dark);
+  gun.position.set(0, 1.9, 0);
+  gun.name = 'gun';
+  car.add(gun);
+  const wheelGeo = new THREE.CylinderGeometry(0.42, 0.42, 0.35, 10);
+  wheelGeo.rotateZ(Math.PI / 2);
+  for (const [x, z] of [
+    [-1, 1.3],
+    [1, 1.3],
+    [-1, -1.3],
+    [1, -1.3],
+  ]) {
+    const w = new THREE.Mesh(wheelGeo, dark);
+    w.position.set(x, 0.42, z);
+    w.name = 'wheel';
+    car.add(w);
+  }
+  const lights = new THREE.MeshBasicMaterial({ color: 0xfff3b0 });
+  for (const x of [-0.65, 0.65]) {
+    const l = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.2, 0.05), lights);
+    l.position.set(x, 0.85, 2.11);
+    car.add(l);
+  }
+  const shadow = new THREE.Mesh(
+    new THREE.PlaneGeometry(2.6, 4.8),
+    new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35, depthWrite: false }),
+  );
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.y = 0.03;
+  car.add(shadow);
+  return car;
+}
+
+/** A sprite with text drawn on it, for road signs. */
+export function textSprite(text: string, sub = '', bg = '#1f6b3a'): THREE.Sprite {
+  const c = document.createElement('canvas');
+  c.width = 512;
+  c.height = 192;
+  const g = c.getContext('2d')!;
+  g.fillStyle = bg;
+  g.strokeStyle = '#ffffff';
+  g.lineWidth = 10;
+  g.beginPath();
+  g.roundRect(8, 8, 496, 176, 20);
+  g.fill();
+  g.stroke();
+  g.fillStyle = '#ffffff';
+  g.textAlign = 'center';
+  g.font = 'bold 60px system-ui, sans-serif';
+  g.fillText(text.slice(0, 18), 256, sub ? 92 : 115);
+  if (sub) {
+    g.font = '40px system-ui, sans-serif';
+    g.fillText(sub.slice(0, 26), 256, 150);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthWrite: false }));
+  s.scale.set(8, 3, 1);
+  return s;
+}
+
+export function disposeTree(obj: THREE.Object3D): void {
+  obj.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (m.geometry) m.geometry.dispose();
+    const mat = (m as { material?: THREE.Material | THREE.Material[] }).material;
+    const mats = Array.isArray(mat) ? mat : mat ? [mat] : [];
+    for (const x of mats) {
+      (x as THREE.MeshBasicMaterial).map?.dispose();
+      x.dispose();
+    }
+  });
+}
+
+export function addLights(scene: THREE.Scene): void {
+  scene.add(new THREE.HemisphereLight(0xfff6e0, 0x8a6a45, 1.6));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.8);
+  sun.position.set(40, 80, 30);
+  scene.add(sun);
+}

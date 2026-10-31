@@ -1,0 +1,9 @@
+{
+  "name": "Road Trip Madness",
+  "short_name": "Road Trip",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#1b1410",
+  "theme_color": "#1b1410",
+  "start_url": "./"
+}
