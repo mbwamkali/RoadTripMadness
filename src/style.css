@@ -709,3 +709,56 @@ body.hurt::after {
     top: calc(10px + var(--safe-t));
   }
 }
+
+/* ------------------------------------------------------------------ offline trips */
+
+.trip-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.trip {
+  background: var(--panel);
+  border-radius: 14px;
+  padding: 12px 14px;
+  border-left: 5px solid var(--accent-2);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.trip-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.trip h3 {
+  margin: 0 0 4px;
+  font-size: 17px;
+}
+
+.trip p {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.trip small {
+  color: var(--muted);
+}
+
+.offline-badge {
+  align-self: center;
+  font-size: 13px;
+  color: var(--accent-2);
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+
+.note {
+  color: var(--accent-2);
+  font-size: 14px;
+  margin: 0;
+}

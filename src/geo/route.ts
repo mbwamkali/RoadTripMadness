@@ -15,7 +15,7 @@ export interface RouteStep {
  * projected to meters and then scaled so every trip takes a playable amount of time.
  */
 export interface RouteData {
-  source: 'osrm' | 'demo';
+  source: 'osrm' | 'demo' | 'offline' | 'curated';
   startLabel: string;
   endLabel: string;
   start: LatLng;
