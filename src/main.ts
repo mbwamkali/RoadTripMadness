@@ -880,7 +880,9 @@ function showDriveHud(): void {
       dashMpg.textContent = String(Math.round(mpg(s, drive.throttle)));
       controls.classList.toggle('wrong-side', drive.wrongSide);
       const t = drive.target;
-      shootRow.classList.toggle('show', !!t);
+      // The big shoot button sits just above the stop prompt; it steps aside while a turn is on offer,
+      // or it would catch taps meant for "Take the exit".
+      shootRow.classList.toggle('show', !!t && !promptEl?.classList.contains('show'));
       if (t && !bigShoot) tapHint();
       if (t) {
         const label = t.type === 'obstacle' ? `🔫 ${OBSTACLE_LABEL[t.o.kind]}` : `🔫 ${t.v.hostile ? '😠 ' : ''}${VEHICLE_LABEL[t.v.kind]}`;
