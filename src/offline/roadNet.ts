@@ -42,6 +42,8 @@ export interface RoadIndex {
   backbone: { file: string; gzipBytes: number; km: number };
   towns: { file: string; count: number };
   tiles: [number, number, number][];
+  /** Landmark files (src/offline/features.ts) as [x, y, gzipBytes]; missing in builds made before they were added. */
+  features?: [number, number, number][];
 }
 
 export interface TownsFile {
@@ -554,9 +556,9 @@ export function tilesFor(index: RoadIndex, points: LatLng[]): [number, number][]
   return [...want.values()];
 }
 
-const roadsUrl = (path: string) => new URL(`data/osm/${path}`, document.baseURI).href;
+export const roadsUrl = (path: string) => new URL(`data/osm/${path}`, document.baseURI).href;
 
-async function getJson<T>(url: string): Promise<T> {
+export async function getRoadJson<T>(url: string): Promise<T> {
   const r = await fetch(url);
   if (!r.ok) throw new Error(`Road file missing (${r.status}): ${url.split('/').pop()}`);
   return (await r.json()) as T;
@@ -569,7 +571,7 @@ const tileLoads = new Map<string, Promise<RoadFile>>();
 /** The road index. Fetched fresh when online (the service worker falls back to its copy offline). */
 export function loadRoadIndex(): Promise<RoadIndex> {
   if (!indexLoad) {
-    indexLoad = getJson<RoadIndex>(roadsUrl('index.json')).catch((e) => {
+    indexLoad = getRoadJson<RoadIndex>(roadsUrl('index.json')).catch((e) => {
       indexLoad = null;
       throw e;
     });
@@ -597,8 +599,8 @@ export async function loadRoadNet(
     progress(`Loading the highway map (${(index.backbone.gzipBytes / 1e6).toFixed(0)} MB the first time)…`);
     tileLoads.clear();
     backboneLoad = Promise.all([
-      getJson<RoadFile>(roadsUrl(`${index.backbone.file}?v=${v}`)),
-      getJson<TownsFile>(roadsUrl(`${index.towns.file}?v=${v}`)).catch(() => null),
+      getRoadJson<RoadFile>(roadsUrl(`${index.backbone.file}?v=${v}`)),
+      getRoadJson<TownsFile>(roadsUrl(`${index.towns.file}?v=${v}`)).catch(() => null),
     ]).then(([file, towns]) => ({ built: index.built, file, towns }));
     backboneLoad.catch(() => (backboneLoad = null));
   }
@@ -608,7 +610,7 @@ export async function loadRoadNet(
       const name = `tiles/${x}_${y}.json`;
       let load = tileLoads.get(name);
       if (!load) {
-        load = getJson<RoadFile>(roadsUrl(`${name}?v=${v}`));
+        load = getRoadJson<RoadFile>(roadsUrl(`${name}?v=${v}`));
         load.catch(() => tileLoads.delete(name));
         tileLoads.set(name, load);
       }

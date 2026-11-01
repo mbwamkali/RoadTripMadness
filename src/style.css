@@ -1313,3 +1313,8 @@ ol.scores li.new {
 .bike-story p {
   margin: 6px 0;
 }
+
+/* The hidden attribute wins over display rules like .btn. */
+[hidden] {
+  display: none !important;
+}

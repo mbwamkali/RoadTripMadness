@@ -4,13 +4,16 @@
 usage: python3 scripts/build-osm-roads.py <filtered.osm.pbf> <out_dir> [--source TEXT]
 
 Input is an OpenStreetMap extract already cut down by scripts/fetch-osm-roads.sh
-(highways, motorway exits and towns only). Output, all plain JSON:
+(highways, motorway exits, towns, and the landmarks and gas stations the
+game shows along the way). Output, all plain JSON:
 
   backbone.json        interstates and other major highways (motorway, trunk
                        and their ramps), the whole country in one file
   tiles/<x>_<y>.json   US and state routes (primary and its ramps), one file
                        per 2 x 2 degree square; x = floor(lng / 2), y = floor(lat / 2)
   towns.json           cities and towns
+  features/<x>_<y>.json  landmarks and gas stations near the highways, per
+                       2 x 2 degree square (see scripts/osm_features.py)
   index.json           what was built, when, from what, and the tile list
   LICENSE-ODbL.txt     the licence note these files must carry
 
@@ -45,6 +48,8 @@ from datetime import datetime, timezone
 
 import osmium
 
+from osm_features import KINDS as FEATURE_KINDS, FeatureReader, RoadGrid
+
 Q = 100_000  # 1e-5 degree, about 1 m; fine enough that shared nodes line up exactly
 TILE_DEG = 2
 MIN_SPAN_M = 60  # shorter bridges (most overpasses) and tunnels are left out
@@ -60,7 +65,8 @@ Open Database License (ODbL) 1.0: https://opendatacommons.org/licenses/odbl/1-0/
 © OpenStreetMap contributors. See https://www.openstreetmap.org/copyright
 
 They were derived by keeping only highways, motorway exits and towns, joining
-road pieces between junctions and simplifying their shapes. The script that
+road pieces between junctions and simplifying their shapes, plus named
+landmarks, gas stations and river crossings near those highways. The script that
 builds them is scripts/build-osm-roads.py in the game's repository.
 """
 
@@ -458,6 +464,22 @@ def main():
     sizes['towns.json'] = write_json(os.path.join(args.out, 'towns.json'), {
         'version': 2, 'q': Q, 'attribution': ATTRIBUTION, 'license': 'ODbL-1.0',
         'kinds': ['city', 'town'], 'towns': r.towns})
+
+    # Landmarks: a second pass over the same files, keeping what lies near the highways.
+    grid = RoadGrid(simplify([(p[1], p[2]) for p in e['pts']], SIMPLIFY_DEG) for e in edges)
+    fr = FeatureReader(grid, Q, TILE_DEG)
+    for f in args.pbf:
+        fr.apply_file(f, locations=True)
+    del grid
+    os.makedirs(os.path.join(args.out, 'features'), exist_ok=True)
+    feature_list = []
+    for (x, y), t in sorted(fr.tiles.items()):
+        name = f'features/{x}_{y}.json'
+        sizes[name] = write_json(os.path.join(args.out, name), {
+            'version': 1, 'q': Q, 'attribution': ATTRIBUTION, 'license': 'ODbL-1.0', 'tile': [x, y], 'tileDeg': TILE_DEG,
+            'kinds': FEATURE_KINDS, 'points': t['points'], 'lines': t['lines']})
+        feature_list.append([x, y, sizes[name][1]])
+
     with open(os.path.join(args.out, 'LICENSE-ODbL.txt'), 'w') as f:
         f.write(LICENSE_NOTE)
     index = {
@@ -466,6 +488,7 @@ def main():
         'backbone': {'file': 'backbone.json', 'gzipBytes': sizes['backbone.json'][1], 'km': round(backbone.meters / 1000)},
         'towns': {'file': 'towns.json', 'count': len(r.towns)},
         'tiles': tile_list,
+        'features': feature_list,
     }
     write_json(os.path.join(args.out, 'index.json'), index)
 
@@ -476,6 +499,8 @@ def main():
         print(f'tiles: {len(tile_gz)}, {sum(tile_gz) / 1e6:.2f} MB gzipped in total, '
               f'median {tile_gz[len(tile_gz) // 2] / 1e3:.0f} KB, largest {tile_gz[-1] / 1e3:.0f} KB')
     print(f'towns: {len(r.towns)}')
+    feat_gz = sum(s[1] for n, s in sizes.items() if n.startswith('features/'))
+    print(f'landmarks: {dict(sorted(fr.count.items()))}, {len(feature_list)} files, {feat_gz / 1e6:.2f} MB gzipped in total')
     print(f'bridges and tunnels kept: {backbone.spans + sum(t.spans for t in tiles.values())}')
 
     # Sanity check: almost every road should join one network across all files.

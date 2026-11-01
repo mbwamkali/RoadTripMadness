@@ -4,6 +4,7 @@ import { fetchLocalStreets } from '../geo/localStreets';
 import { fetchMapFeatures } from '../geo/overpass';
 import type { RawRoute } from '../geo/route';
 import { loadAtlas } from './atlas';
+import { loadRouteFeatures } from './features';
 import { loadRoadNet } from './roadNet';
 import { tripCache } from './tripCache';
 
@@ -24,11 +25,40 @@ export type PlannedVia = 'roads' | 'saved' | 'atlas';
 
 export const isOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
 
-/** Landmarks for a planned route: the live OpenStreetMap lookup when online, plus the atlas's sights when that finds none. */
-async function addFeatures(raw: RawRoute, progress: (message: string) => void): Promise<void> {
-  if (!isOffline()) {
-    progress('Scouting landmarks along the way…');
-    raw.features = await fetchMapFeatures(raw.coords);
+/** How long trip planning waits for the live landmark lookup before starting without it. */
+export const SCOUT_WAIT_MS = 8_000;
+
+/**
+ * Lets the setup screen offer a Skip button while landmarks are being scouted:
+ * called with a skip function when scouting starts, and with null when it ends.
+ */
+export type ScoutHook = (skip: (() => void) | null) => void;
+
+/**
+ * Landmarks for a planned route. First choice is the landmark files baked into
+ * the road build (src/offline/features.ts): quick, and cached for offline use.
+ * Only when this build has none does it ask the public Overpass server live,
+ * and that can take a minute or more when the server is busy, so planning
+ * waits at most SCOUT_WAIT_MS (or until the player skips). When neither finds
+ * any sights, the atlas's sights fill in.
+ */
+export async function addFeatures(raw: RawRoute, progress: (message: string) => void, scout?: ScoutHook, waitMs = SCOUT_WAIT_MS): Promise<void> {
+  progress('Scouting landmarks along the way…');
+  const baked = await loadRouteFeatures(raw.coords);
+  if (baked) raw.features = baked;
+  else if (!isOffline()) {
+    let skip = () => {};
+    const skipped = new Promise<null>((resolve) => (skip = () => resolve(null)));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<null>((resolve) => (timer = setTimeout(() => resolve(null), waitMs)));
+    scout?.(skip);
+    try {
+      const found = await Promise.race([fetchMapFeatures(raw.coords), skipped, late]);
+      if (found) raw.features = found;
+    } finally {
+      clearTimeout(timer);
+      scout?.(null);
+    }
   }
   // Gas stations alone don't make a trip interesting; borrow the atlas's sights if the lookup found none.
   if (!raw.features?.some((f) => f.kind !== 'fuel')) raw.features = [...(raw.features ?? []), ...(await atlasFeatures(raw))];
@@ -38,6 +68,7 @@ export async function planTrip(
   from: Place,
   to: Place,
   progress: (message: string) => void = () => {},
+  scout?: ScoutHook,
 ): Promise<{ raw: RawRoute; via: PlannedVia; note?: string }> {
   const problems: string[] = [];
   const own = async () => {
@@ -46,7 +77,7 @@ export async function planTrip(
     const net = await loadRoadNet([from, to], progress, streets);
     progress('Finding the fastest route…');
     const raw = net.planTrip(from, to, from.label, to.label);
-    await addFeatures(raw, progress);
+    await addFeatures(raw, progress, scout);
     tripCache.save(raw, { start: from, end: to });
     return { raw, via: 'roads' as const };
   };

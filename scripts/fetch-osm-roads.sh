@@ -1,7 +1,8 @@
 #!/bin/sh
 # Downloads OpenStreetMap data for the lower 48 states and DC, one state at a
 # time, and keeps only what scripts/build-osm-roads.py needs: highways down to
-# primary roads, motorway exits, and towns. Each full state file is deleted as
+# primary roads, motorway exits, towns, and the landmarks and gas stations the
+# game shows along the way (named rivers, peaks, sights, fuel). Each full state file is deleted as
 # soon as it is filtered, so this needs only about 2 GB of free disk.
 #
 # usage: sh scripts/fetch-osm-roads.sh [work_dir]   (default data-src/osm)
@@ -22,7 +23,11 @@ for s in $STATES; do
   curl -fsSL --retry 4 --retry-delay 10 -o "$DIR/US-$s.osm.pbf" "$BASE/US-$s-latest.osm.pbf"
   osmium tags-filter --overwrite --no-progress -o "$out" "$DIR/US-$s.osm.pbf" \
     w/highway=motorway,motorway_link,trunk,trunk_link,primary,primary_link \
-    n/highway=motorway_junction n/place=city,town
+    n/highway=motorway_junction n/place=city,town,village \
+    w/waterway=river n/natural=peak,volcano nw/amenity=fuel \
+    n/tourism=attraction,viewpoint,theme_park \
+    n/historic=monument,memorial,castle,fort,ruins,battlefield \
+    n/man_made=tower,lighthouse,water_tower,windmill
   rm -f "$DIR/US-$s.osm.pbf"
 done
 # The build reads the state files one by one. Merging them would keep only

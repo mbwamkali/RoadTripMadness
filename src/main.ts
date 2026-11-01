@@ -268,6 +268,8 @@ function showSetup(): void {
   let to: Place | null = null;
   const err = h('div', { class: 'error' });
   const go = h('button', { class: 'btn primary', disabled: true }, 'Plan the route');
+  // Shown only while the live landmark lookup runs (when the road build has no landmark files).
+  const skipScout = h('button', { class: 'btn small ghost', hidden: true }, 'Skip landmark scouting');
   const refresh = () => {
     go.disabled = !(from && to);
   };
@@ -277,7 +279,15 @@ function showSetup(): void {
     go.textContent = 'Finding the fastest road…';
     err.replaceChildren();
     try {
-      const { raw, note } = await planTrip(from, to, (msg) => (go.textContent = msg));
+      const { raw, note } = await planTrip(
+        from,
+        to,
+        (msg) => (go.textContent = msg),
+        (skip) => {
+          skipScout.hidden = !skip;
+          skipScout.onclick = skip;
+        },
+      );
       previewRoute(buildRouteData(raw), note);
     } catch (e) {
       err.replaceChildren(
@@ -296,6 +306,7 @@ function showSetup(): void {
       placePicker('Start', (p) => ((from = p), refresh()), true),
       placePicker('Destination', (p) => ((to = p), refresh()), false),
       go,
+      skipScout,
       err,
       h('button', { class: 'btn ghost', onclick: showTitle }, '← Back'),
     ),
