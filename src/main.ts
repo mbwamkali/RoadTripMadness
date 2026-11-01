@@ -5,7 +5,8 @@ import { currentPosition, type Place } from './geo/geocode';
 import { ANNOUNCED, LANDMARK_ICONS, LANDMARK_TITLES, readMoreUrl, roadAt, type Landmark } from './game/landmarks';
 import { demoRawRoute } from './geo/demoRoute';
 import { addStateLines, buildRouteData, pathFromRoute, realKmAt, type RawRoute, type RouteData } from './geo/route';
-import { loadStateMap } from './geo/states';
+import { latLngAt, loadStateMap } from './geo/states';
+import { overpassStreets } from './geo/streets';
 import { fetchLiveConditions, liveEnabled, setLiveEnabled, type LiveConditions } from './geo/liveWeather';
 import { isOffline, planTrip, searchAnywhere } from './offline/planner';
 import { tripCache } from './offline/tripCache';
@@ -336,9 +337,26 @@ function previewRoute(route: RouteData, note?: string, back: () => void = showSe
   });
   const realMap = route.source !== 'demo';
   if (realMap) lookUpLive();
+  // Real street names at the turn-offs (the stops are the same for the same seed).
+  const streets = realMap
+    ? overpassStreets
+        .streetsNear(
+          s.stops.map((st) => latLngAt(route, p, st.at)),
+          s.stops.map((st) => roadAt(route, st.at)),
+        )
+        .then((names) => new Map(s.stops.map((st, i) => [st.id, names[i]] as const)))
+        .catch(() => null)
+    : null;
   const go = () => {
     const g = newGame(route, s.seed, difficulty);
     startTrip(g);
+    void streets?.then((names) => {
+      if (!names || state !== g) return;
+      for (const st of g.stops) {
+        const n = names.get(st.id);
+        if (n) st.street = n;
+      }
+    });
     void live?.then((c) => {
       if (!c || state !== g) return;
       // Too late to reset the clock once the car is moving; the weather still blends in.
@@ -457,6 +475,7 @@ function updatePrompt(stop: Stop | null, dist: number): void {
       h('strong', {}, `${stop.exit ? `Exit ${stop.exit} · ` : ''}${STOP_TITLES[stop.kind]} · ${stop.name}`),
       h('span', {}, ` on the ${stop.side} `),
       h('span', { class: 'dist' }, `in ${distText}`),
+      stop.street && h('div', { class: 'muted' }, `Turn onto ${stop.street}`),
       h('div', { class: 'muted' }, stop.places.map((p) => PLACE_TITLES[p]).join(' · ')),
     ),
     h(

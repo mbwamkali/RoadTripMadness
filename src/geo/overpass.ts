@@ -121,7 +121,7 @@ out center tags 600;`;
 
 const TRUCK_BRANDS = /\b(love'?s|pilot|flying j|petro|ta\b|travelcenters|travel center|travel plaza|truck ?stop|kwik trip|buc-ee'?s|sapp bros)/i;
 
-interface OsmElement {
+export interface OsmElement {
   type: 'node' | 'way' | 'relation';
   lat?: number;
   lon?: number;
@@ -204,7 +204,13 @@ export async function fetchMapFeatures(coords: LatLng[], timeoutMs = 45000): Pro
   return (await Promise.all([towns, sights, fuel])).flat();
 }
 
-async function runQuery(query: string, timeoutMs: number, retry = true): Promise<MapFeature[]> {
+async function runQuery(query: string, timeoutMs: number): Promise<MapFeature[]> {
+  const json = await overpassJson(query, timeoutMs);
+  return json ? parseOverpass(json) : [];
+}
+
+/** Runs an Overpass query and returns the raw answer, or null on any failure. */
+export async function overpassJson(query: string, timeoutMs: number, retry = true): Promise<{ elements?: OsmElement[] } | null> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
@@ -217,12 +223,12 @@ async function runQuery(query: string, timeoutMs: number, retry = true): Promise
     if ((res.status === 429 || res.status === 504) && retry) {
       clearTimeout(timer);
       await new Promise((r) => setTimeout(r, 4000));
-      return runQuery(query, timeoutMs, false);
+      return overpassJson(query, timeoutMs, false);
     }
-    if (!res.ok) return [];
-    return parseOverpass(await res.json());
+    if (!res.ok) return null;
+    return await res.json();
   } catch {
-    return [];
+    return null;
   } finally {
     clearTimeout(timer);
   }

@@ -20,6 +20,8 @@ export interface Stop {
   real?: boolean;
   /** Interstate exit number (miles from where the interstate enters the state). */
   exit?: number;
+  /** The real street at the turn-off, when looked up. */
+  street?: string;
 }
 
 export const STOP_TITLES: Record<StopKind, string> = {

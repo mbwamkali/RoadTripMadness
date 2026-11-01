@@ -641,10 +641,19 @@ export class DriveScene implements GameScene {
     // Exit sign ahead of the turn.
     const signAt = this.path.pointAt(stop.at - 90);
     const sf = this.path.directionAt(stop.at - 90);
-    const sign = textSprite(`${stop.side === 'left' ? '◀' : ''} ${stop.name} ${stop.side === 'right' ? '▶' : ''}`.trim(), STOP_TITLES[stop.kind]);
+    const sub = [stop.exit ? `EXIT ${stop.exit}` : STOP_TITLES[stop.kind], stop.street].filter(Boolean).join(' · ');
+    const sign = textSprite(`${stop.side === 'left' ? '◀' : ''} ${stop.name} ${stop.side === 'right' ? '▶' : ''}`.trim(), sub);
     const so = this.edge(stop.at - 90) + 3.5;
     sign.position.copy(to3({ x: signAt.x + sf.y * sideSign * so, y: signAt.y - sf.x * sideSign * so }, 5));
     g.add(sign);
+    // Street name blade at the corner.
+    if (stop.street) {
+      const blade = textSprite(stop.street, '', '#1f6b3a');
+      blade.scale.set(5, 1.9, 1);
+      const back = -8;
+      blade.position.copy(to3({ x: a.x + side.x * 3 + f.x * back, y: a.y + side.y * 3 + f.y * back }, 4));
+      g.add(blade);
+    }
     // A little cluster of buildings at the end of the side road.
     for (let i = 0; i < 4 + rng() * 4; i++) {
       const w = 8 + rng() * 10;
