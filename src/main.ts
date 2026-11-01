@@ -42,6 +42,7 @@ import { CREW, rollEvent, type RoadEvent } from './game/events';
 import { mpg, swipeAction } from './game/driving';
 import { installButton } from './ui/install';
 import { narrateUi, narrator } from './audio/narrator';
+import { eventScenes, playEventScene, sceneKindFor, type SceneKind } from './scenes/eventScene';
 import { DoubleTap, isSwipe, type Press } from './game/gestures';
 import { RAGE_HOSTILE, RAGE_MAX, rageOf } from './game/rage';
 import { clockText, hourOf, isNight, nightDanger, weatherAt, WEATHER_INFO, type Weather } from './game/time';
@@ -922,6 +923,17 @@ function showPauseMenu(): void {
         {
           class: 'btn',
           onclick: (e: Event) => {
+            eventScenes.set(!eventScenes.on);
+            (e.currentTarget as HTMLElement).textContent = `🎬 Event scenes: ${eventScenes.on ? 'on' : 'off'}`;
+          },
+        },
+        `🎬 Event scenes: ${eventScenes.on ? 'on' : 'off'}`,
+      ),
+      h(
+        'button',
+        {
+          class: 'btn',
+          onclick: (e: Event) => {
             const c = nextQualityChoice(loadQualityChoice());
             saveQualityChoice(c);
             quality.level = resolveQuality(c);
@@ -950,11 +962,37 @@ function showPauseMenu(): void {
 
 // --------------------------------------------------------------- road events
 
+/**
+ * The picture at the top of an event card: a few seconds of the event acted
+ * out in 3D (when event scenes are on), then its big icon. Tap to skip.
+ */
+function eventPicture(icon: string, kind: SceneKind): HTMLElement {
+  const iconEl = h('div', { class: 'event-icon' }, icon);
+  const box = h('div', { class: 'event-picture' }, iconEl);
+  if (!eventScenes.on) return box;
+  iconEl.hidden = true;
+  box.classList.add('playing');
+  // Start once the card is on screen, so the scene knows how wide it can be.
+  requestAnimationFrame(() => {
+    const stop = playEventScene(box, kind, {
+      ride: state?.ride ?? 'car',
+      upgrades: state?.upgrades,
+      onDone: () => {
+        box.classList.remove('playing');
+        iconEl.hidden = false;
+        iconEl.classList.add('pop');
+      },
+    });
+    box.addEventListener('click', stop, { once: true });
+  });
+  return box;
+}
+
 function showRoadEvent(ev: RoadEvent): void {
   const s = state!;
   saveGame(s);
   const body = h('div', { class: 'event-body' });
-  const card = h('div', { class: 'card event' }, h('div', { class: 'event-icon' }, ev.icon), h('h2', {}, ev.title), h('p', {}, ev.text), body);
+  const card = h('div', { class: 'card event' }, eventPicture(ev.icon, sceneKindFor(ev.id)), h('h2', {}, ev.title), h('p', {}, ev.text), body);
   const overlay = h('div', { class: 'modal' }, card);
   const finish = (fight?: EnemyType) => {
     overlay.remove();
@@ -1007,7 +1045,7 @@ function showBikeRescue(): void {
   const card = h(
     'div',
     { class: 'card event' },
-    h('div', { class: 'event-icon' }, '🚲'),
+    eventPicture('🚲', 'fuel'),
     h('h2', {}, 'Out of gas'),
     h('p', {}, `The engine coughs and dies. In the ditch there's a rusty old bicycle with a basket just big enough for a gas can. ${where}`),
     body,
@@ -1537,6 +1575,13 @@ registerServiceWorker();
   },
   get combat() {
     return combat;
+  },
+  /** Shows an event scene on its own card, for checking how each one looks. */
+  showScene(kind: SceneKind) {
+    const card = h('div', { class: 'card event', 'data-quiet': true }, eventPicture('🎬', kind), h('h2', {}, kind));
+    const overlay = h('div', { class: 'modal scene-test' }, card);
+    ui().append(overlay);
+    return overlay;
   },
 };
 

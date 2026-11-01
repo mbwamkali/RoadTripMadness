@@ -1350,3 +1350,34 @@ ol.scores li.new {
 .card.narrated {
   cursor: pointer;
 }
+
+/* Event cards: a short 3D scene, then the big icon. */
+.event-picture {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 64px;
+}
+.event-picture.playing {
+  cursor: pointer;
+}
+.event-scene {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 12px;
+}
+.event-icon.pop {
+  font-size: 84px;
+  animation: iconPop 0.35s ease-out;
+}
+@keyframes iconPop {
+  from {
+    transform: scale(0.3);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}

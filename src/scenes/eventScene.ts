@@ -1,0 +1,405 @@
+import * as THREE from 'three';
+import { disposeTree, makeRide } from './common';
+import { modelsWanted } from './models';
+import { sampleCatship, sampleOutlaw, sampleWreck } from './samples';
+import type { Upgrades } from '../game/upgrades';
+
+/**
+ * Short animated scenes for road events: a few seconds acting out what is
+ * happening (a tyre blowing, a saucer's tractor beam, a trader's stall), so
+ * a player who can't read yet can follow along. Each plays once in a small
+ * canvas on the event card, then gives way to the event's big icon. On Low
+ * graphics the people, saucers and wrecks are simple shapes.
+ */
+
+export type SceneKind = 'flat' | 'help' | 'dog' | 'loot' | 'trade' | 'beam' | 'roadblock' | 'bridge' | 'fuel';
+
+/** The scene for each road event (src/game/events.ts ids), plus 'bike' for running out of gas. */
+export function sceneKindFor(eventId: string): SceneKind {
+  switch (eventId) {
+    case 'flat':
+      return 'flat';
+    case 'hitchhiker':
+    case 'mechanic':
+      return 'help';
+    case 'dog':
+      return 'dog';
+    case 'wreck':
+      return 'loot';
+    case 'trader':
+      return 'trade';
+    case 'beam':
+      return 'beam';
+    case 'roadblock':
+      return 'roadblock';
+    case 'bridge':
+      return 'bridge';
+    case 'bike':
+      return 'fuel';
+    default:
+      return 'help';
+  }
+}
+
+export const SCENE_SECONDS = 4;
+
+const lam = (color: number, extra: THREE.MeshLambertMaterialParameters = {}) => new THREE.MeshLambertMaterial({ color, ...extra });
+function mesh(geo: THREE.BufferGeometry, mat: THREE.Material, x = 0, y = 0, z = 0): THREE.Mesh {
+  const m = new THREE.Mesh(geo, mat);
+  m.position.set(x, y, z);
+  return m;
+}
+
+/** A simple person: legs, body, head and a waving right arm (named 'arm'). */
+function person(shirt: number, skin = 0xd8a77a): THREE.Group {
+  const g = new THREE.Group();
+  g.add(mesh(new THREE.BoxGeometry(0.45, 0.8, 0.3), lam(0x2b3a55), 0, 0.4, 0));
+  g.add(mesh(new THREE.BoxGeometry(0.55, 0.75, 0.35), lam(shirt), 0, 1.2, 0));
+  g.add(mesh(new THREE.SphereGeometry(0.25, 12, 10), lam(skin), 0, 1.8, 0));
+  const arm = new THREE.Group();
+  arm.name = 'arm';
+  arm.position.set(0.33, 1.5, 0);
+  arm.add(mesh(new THREE.BoxGeometry(0.16, 0.6, 0.16), lam(shirt), 0, 0.28, 0));
+  g.add(arm);
+  g.add(mesh(new THREE.BoxGeometry(0.16, 0.6, 0.16), lam(shirt), -0.33, 1.25, 0));
+  return g;
+}
+
+function dog(): THREE.Group {
+  const g = new THREE.Group();
+  const fur = lam(0xb07a3a);
+  g.add(mesh(new THREE.BoxGeometry(0.9, 0.4, 0.35), fur, 0, 0.55, 0));
+  g.add(mesh(new THREE.BoxGeometry(0.4, 0.35, 0.32), fur, 0.55, 0.85, 0));
+  g.add(mesh(new THREE.BoxGeometry(0.18, 0.12, 0.2), lam(0x2a1a10), 0.8, 0.8, 0));
+  for (const [x, z] of [[-0.3, -0.12], [-0.3, 0.12], [0.3, -0.12], [0.3, 0.12]]) g.add(mesh(new THREE.BoxGeometry(0.1, 0.4, 0.1), fur, x, 0.2, z));
+  const tail = mesh(new THREE.BoxGeometry(0.35, 0.08, 0.08), fur, -0.6, 0.75, 0);
+  tail.name = 'tail';
+  g.add(tail);
+  return g;
+}
+
+function saucer(): THREE.Group {
+  if (modelsWanted()) return sampleCatship();
+  const g = new THREE.Group();
+  g.add(mesh(new THREE.CylinderGeometry(0.6, 2.4, 0.5, 16), lam(0xa6aec6)));
+  g.add(mesh(new THREE.SphereGeometry(0.9, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), lam(0x9fd8ff, { transparent: true, opacity: 0.7 }), 0, 0.25, 0));
+  return g;
+}
+
+function outlaw(): THREE.Group {
+  if (modelsWanted()) return sampleOutlaw();
+  return person(0x5a3622);
+}
+
+function wreck(): THREE.Group {
+  if (modelsWanted()) return sampleWreck();
+  const g = new THREE.Group();
+  g.add(mesh(new THREE.BoxGeometry(1.8, 0.9, 3.8), lam(0x6b4a3a), 0, 0.6, 0));
+  g.add(mesh(new THREE.BoxGeometry(1.5, 0.6, 1.8), lam(0x3a3030), 0, 1.3, -0.2));
+  return g;
+}
+
+function bicycle(): THREE.Group {
+  const g = new THREE.Group();
+  const black = lam(0x222222);
+  for (const x of [-0.55, 0.55]) {
+    const w = mesh(new THREE.TorusGeometry(0.35, 0.05, 6, 16), black, x, 0.35, 0);
+    w.name = 'wheel';
+    g.add(w);
+  }
+  g.add(mesh(new THREE.BoxGeometry(1.1, 0.07, 0.07), lam(0x9c2a22), 0, 0.6, 0));
+  g.add(mesh(new THREE.BoxGeometry(0.35, 0.3, 0.3), lam(0xc23b2b), 0.65, 0.8, 0)); // gas can in the basket
+  const rider = person(0x3a6ea5);
+  rider.scale.setScalar(0.75);
+  rider.position.set(-0.05, 0.35, 0);
+  g.add(rider);
+  return g;
+}
+
+interface Built {
+  scene: THREE.Scene;
+  camera: THREE.PerspectiveCamera;
+  /** Moves everything to time t (seconds). */
+  at: (t: number) => void;
+}
+
+/** Road, sky and lights shared by every scene; the car drives along +x. */
+function stage(kind: SceneKind, ride: 'car' | 'motorcycle' | 'truck', up?: Upgrades): Built {
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(kind === 'beam' ? 0x1b1d3a : 0x9fc6e6);
+  scene.add(new THREE.HemisphereLight(0xfff6e0, 0x6a5a45, 1.8));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.6);
+  sun.position.set(4, 10, 6);
+  scene.add(sun);
+  const camera = new THREE.PerspectiveCamera(40, 16 / 9, 0.5, 200);
+  camera.position.set(0, 2.4, 9.5);
+  camera.lookAt(0, 1.3, 0);
+  scene.add(mesh(new THREE.PlaneGeometry(80, 30).rotateX(-Math.PI / 2), lam(kind === 'bridge' ? 0x3d6f9a : 0x6f9a45), 0, -0.02, 0));
+  const road = new THREE.Group();
+  const asphalt = lam(0x3a3a40);
+  const dash = lam(0xf2d36b);
+  const gap = kind === 'bridge';
+  for (let x = -40; x < 40; x += 4) {
+    if (gap && x >= 2 && x < 10) continue; // the bridge is out
+    road.add(mesh(new THREE.BoxGeometry(4.02, 0.1, 5), asphalt, x + 2, 0, 0));
+    road.add(mesh(new THREE.BoxGeometry(1.6, 0.02, 0.18), dash, x + 2, 0.06, 0));
+  }
+  scene.add(road);
+  const car = makeRide(ride, up);
+  car.rotation.y = -Math.PI / 2; // models face +z; drive along +x
+  scene.add(car);
+  const props: ((t: number) => void)[] = [];
+  /** Car position: drives in from the left and stops at stopX by stopAt seconds. */
+  let stopX = -1.5;
+  const stopAt = 1.4;
+  const drive = (t: number) => {
+    const k = Math.min(1, t / stopAt);
+    car.position.x = -14 + (stopX + 14) * (1 - (1 - k) ** 2);
+    for (const w of car.children) if (w.name === 'wheel') w.rotation.x -= 0.2 * (1 - k);
+  };
+  switch (kind) {
+    case 'flat': {
+      stopX = 0;
+      const puff = new THREE.Group();
+      for (let i = 0; i < 6; i++) puff.add(mesh(new THREE.SphereGeometry(0.35, 8, 6), lam(0xffffff, { transparent: true }), Math.cos(i) * 0.3, 0.3, Math.sin(i * 2) * 0.3));
+      puff.visible = false;
+      scene.add(puff);
+      props.push((t) => {
+        const p = t - stopAt;
+        puff.visible = p > 0 && p < 2.2;
+        puff.position.set(car.position.x + 1.2, 0.2, 1);
+        puff.scale.setScalar(1 + Math.max(0, p) * 1.5);
+        for (const m of puff.children) ((m as THREE.Mesh).material as THREE.MeshLambertMaterial).opacity = Math.max(0, 1 - p / 2.2);
+        // The car sags on the burst tyre and wobbles.
+        car.rotation.z = p > 0 ? -0.12 + Math.sin(p * 18) * 0.04 * Math.max(0, 1 - p) : 0;
+        car.position.y = p > 0 ? -0.12 : 0;
+      });
+      break;
+    }
+    case 'help':
+    case 'dog': {
+      stopX = -2.5;
+      const who = kind === 'dog' ? dog() : person(0x3a8f5a);
+      who.position.set(2.2, 0, 2.6);
+      who.rotation.y = kind === 'dog' ? Math.PI : -0.4;
+      scene.add(who);
+      props.push((t) => {
+        const arm = who.getObjectByName('arm');
+        if (arm) arm.rotation.z = Math.PI * 0.85 + Math.sin(t * 9) * 0.35; // waving
+        const tail = who.getObjectByName('tail');
+        if (tail) tail.rotation.y = Math.sin(t * 20) * 0.6;
+        // Hops for joy once the car stops.
+        who.position.y = t > stopAt ? Math.abs(Math.sin((t - stopAt) * 6)) * 0.35 : 0;
+      });
+      break;
+    }
+    case 'loot': {
+      stopX = -3.5;
+      const w = wreck();
+      w.position.set(2.5, 0, 0);
+      w.rotation.set(0, 0.6, 0.15);
+      scene.add(w);
+      const crates: THREE.Mesh[] = [];
+      for (let i = 0; i < 3; i++) {
+        const c = mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5), lam([0xc8a050, 0x8a5a2a, 0x5a8f4a][i]));
+        crates.push(c);
+        scene.add(c);
+      }
+      props.push((t) => {
+        crates.forEach((c, i) => {
+          const p = Math.max(0, Math.min(1, (t - stopAt - i * 0.45) / 0.8));
+          // Each crate arcs out of the wreck and into the car.
+          c.position.set(2.5 + (car.position.x - 2.5) * p, 1 + Math.sin(p * Math.PI) * 2.5, 0.5);
+          c.rotation.set(p * 6, p * 4, 0);
+          c.visible = p > 0 && p < 1;
+        });
+      });
+      break;
+    }
+    case 'trade': {
+      stopX = -3.2;
+      const stall = new THREE.Group();
+      stall.add(mesh(new THREE.BoxGeometry(2.4, 0.9, 1.1), lam(0x8a5a2a), 0, 0.45, 0));
+      for (let i = 0; i < 4; i++) stall.add(mesh(new THREE.BoxGeometry(0.6, 0.12, 1.4), lam(i % 2 ? 0xf2f2f2 : 0xc23b2b), -0.9 + i * 0.6, 2.2, 0));
+      for (const x of [-1.1, 1.1]) stall.add(mesh(new THREE.BoxGeometry(0.1, 2.2, 0.1), lam(0x5a3a22), x, 1.1, 0.5));
+      const trader = person(0x7a4aa0);
+      trader.position.set(0, 0, -0.9);
+      stall.add(trader);
+      stall.position.set(2.2, 0, -2.2);
+      scene.add(stall);
+      const coin = mesh(new THREE.CylinderGeometry(0.25, 0.25, 0.08, 16).rotateX(Math.PI / 2), lam(0xf2c84b, { emissive: 0x6a4a00 }));
+      const goods = mesh(new THREE.BoxGeometry(0.45, 0.45, 0.45), lam(0x5a8f4a));
+      scene.add(coin, goods);
+      props.push((t) => {
+        const p = Math.max(0, Math.min(1, (t - stopAt) / 0.9));
+        const q = Math.max(0, Math.min(1, (t - stopAt - 1) / 0.9));
+        coin.visible = p > 0 && p < 1;
+        goods.visible = q > 0 && q < 1;
+        coin.position.set(car.position.x + (2.2 - car.position.x) * p, 1.2 + Math.sin(p * Math.PI) * 1.5, -1.2 * p);
+        coin.rotation.y = p * 12;
+        goods.position.set(2.2 + (car.position.x - 2.2) * q, 1.2 + Math.sin(q * Math.PI) * 1.5, -1.2 * (1 - q));
+        const arm = trader.getObjectByName('arm');
+        if (arm) arm.rotation.z = Math.PI * 0.6 + Math.sin(t * 6) * 0.25;
+      });
+      break;
+    }
+    case 'beam': {
+      stopX = 0;
+      const ship = saucer();
+      scene.add(ship);
+      const cone = mesh(new THREE.CylinderGeometry(0.6, 2.2, 5, 20, 1, true), new THREE.MeshBasicMaterial({ color: 0xc070ff, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false }));
+      scene.add(cone);
+      props.push((t) => {
+        const p = Math.max(0, Math.min(1, (t - 0.6) / 1));
+        ship.position.set(car.position.x, 6.2 - p * 2.5 + Math.sin(t * 3) * 0.15, 0);
+        ship.rotation.y = t * 1.5;
+        const beam = t > stopAt + 0.2;
+        cone.visible = beam;
+        cone.position.set(ship.position.x, ship.position.y - 2.5, 0);
+        (cone.material as THREE.MeshBasicMaterial).opacity = 0.25 + Math.sin(t * 14) * 0.1;
+        // The car floats up in the beam.
+        car.position.y = beam ? Math.min(1.2, (t - stopAt - 0.2) * 0.8) + Math.sin(t * 5) * 0.05 : 0;
+      });
+      break;
+    }
+    case 'roadblock': {
+      stopX = -4;
+      for (let i = 0; i < 3; i++) {
+        const barrel = mesh(new THREE.CylinderGeometry(0.4, 0.4, 1.1, 12), lam(i === 1 ? 0xc23b2b : 0x3a6ea5), 1.5, 0.55, -1.4 + i * 1.4);
+        scene.add(barrel);
+      }
+      const bad = [outlaw(), outlaw()];
+      bad.forEach((o, i) => {
+        o.position.set(4 + i * 1.6, 0, -1 + i * 2);
+        o.rotation.y = -Math.PI / 2;
+        if (!modelsWanted()) o.scale.setScalar(1);
+        scene.add(o);
+      });
+      const flash = mesh(new THREE.SphereGeometry(0.25, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffd040 }));
+      scene.add(flash);
+      props.push((t) => {
+        bad.forEach((o, i) => (o.position.y = t > stopAt ? Math.min(0, -1.5 + (t - stopAt - i * 0.2) * 4) : -1.5));
+        flash.visible = t > stopAt + 0.6 && Math.floor(t * 8) % 3 === 0;
+        flash.position.set(bad[0].position.x - 0.9, 1.6, bad[0].position.z);
+      });
+      break;
+    }
+    case 'bridge': {
+      stopX = -0.8;
+      const bits: THREE.Mesh[] = [];
+      for (let i = 0; i < 4; i++) {
+        const b = mesh(new THREE.BoxGeometry(0.7, 0.3, 0.9), lam(0x5a5a60));
+        bits.push(b);
+        scene.add(b);
+      }
+      props.push((t) => {
+        bits.forEach((b, i) => {
+          const p = Math.max(0, t - stopAt - i * 0.25);
+          b.position.set(2.4 + i * 0.4, -p * p * 6, -1 + i * 0.7);
+          b.rotation.set(p * 3, p * 2, 0);
+          b.visible = b.position.y > -6;
+        });
+        // A sudden stop at the edge: the car rocks forward.
+        car.rotation.z = t > stopAt ? Math.sin((t - stopAt) * 10) * 0.05 * Math.max(0, 1 - (t - stopAt)) : 0;
+      });
+      break;
+    }
+    case 'fuel': {
+      car.visible = false;
+      const bike = bicycle();
+      scene.add(bike);
+      props.push((t) => {
+        bike.position.set(-9 + t * 4.5, 0, 1);
+        bike.position.y = Math.abs(Math.sin(t * 8)) * 0.05;
+        for (const w of bike.children) if (w.name === 'wheel') w.rotation.z -= 0.25;
+      });
+      break;
+    }
+  }
+  return {
+    scene,
+    camera,
+    at: (t) => {
+      drive(t);
+      for (const p of props) p(t);
+    },
+  };
+}
+
+/**
+ * Plays a scene in `host` (it fills the host's width), then calls onDone.
+ * Returns a stop function that ends it early. Everything it made is freed
+ * when it ends. Without WebGL it ends straight away.
+ */
+export function playEventScene(
+  host: HTMLElement,
+  kind: SceneKind,
+  opts: { ride?: 'car' | 'motorcycle' | 'truck'; upgrades?: Upgrades; seconds?: number; onDone: () => void },
+): () => void {
+  const seconds = opts.seconds ?? SCENE_SECONDS;
+  let renderer: THREE.WebGLRenderer;
+  try {
+    renderer = new THREE.WebGLRenderer({ antialias: modelsWanted(), alpha: false, powerPreference: 'low-power' });
+  } catch (e) {
+    console.warn('Event scene skipped:', (e as Error).message);
+    opts.onDone();
+    return () => {};
+  }
+  const built = stage(kind, opts.ride ?? 'car', opts.upgrades);
+  const w = Math.max(200, host.clientWidth || 320);
+  const h = Math.round(w * 0.5);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, modelsWanted() ? 2 : 1));
+  renderer.setSize(w, h);
+  built.camera.aspect = w / h;
+  built.camera.updateProjectionMatrix();
+  renderer.domElement.className = 'event-scene';
+  host.append(renderer.domElement);
+  let raf = 0;
+  let done = false;
+  // Scene time moves at most 1/20 s per frame, so a slow first frame (shaders
+  // compiling) or a slow phone plays the whole scene instead of skipping it.
+  let t = 0;
+  let last = performance.now();
+  const finish = () => {
+    if (done) return;
+    done = true;
+    cancelAnimationFrame(raf);
+    renderer.domElement.remove();
+    disposeTree(built.scene);
+    renderer.dispose();
+    renderer.forceContextLoss();
+    opts.onDone();
+  };
+  const frame = () => {
+    const now = performance.now();
+    t += Math.min(0.05, (now - last) / 1000);
+    last = now;
+    host.dataset.sceneT = t.toFixed(2);
+    built.at(Math.min(t, seconds));
+    renderer.render(built.scene, built.camera);
+    if (t >= seconds) finish();
+    else raf = requestAnimationFrame(frame);
+  };
+  frame();
+  return finish;
+}
+
+const SCENES_KEY = 'rtm-scenes';
+
+/** Event scenes on or off (on unless switched off in the pause menu). */
+export const eventScenes = {
+  get on(): boolean {
+    try {
+      return localStorage.getItem(SCENES_KEY) !== '0';
+    } catch {
+      return true;
+    }
+  },
+  set(on: boolean): void {
+    try {
+      localStorage.setItem(SCENES_KEY, on ? '1' : '0');
+    } catch {
+      // Storage blocked: nothing to remember it in.
+    }
+  },
+};
