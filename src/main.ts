@@ -489,7 +489,7 @@ function startTripNow(s: GameState): void {
       }
     },
     onCrash: (kind, dmg) => {
-      const what = { car: 'a car', pickup: 'a pickup', van: 'a van', truck: 'a big rig' }[kind];
+      const what = { car: 'a car', motorcycle: 'a motorcycle', pickup: 'a pickup', van: 'a van', truck: 'a big rig' }[kind];
       showToast('💥', `You hit ${what}`, `−${dmg} car health`);
       navigator.vibrate?.(120);
       if (state?.status === 'lost' && drive) {

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { modelMesh } from './models';
+import { modelMesh, modelsWanted } from './models';
+import { sampleMotorcycle, sampleTraffic, sampleWreck } from './samples';
 import { textureImage } from './textures';
 import type { Vec2 } from '../geo/geo';
 import type { Upgrades } from '../game/upgrades';
@@ -364,8 +365,17 @@ export function makeRide(ride: 'car' | 'motorcycle' | 'truck', up?: Upgrades): T
   return g;
 }
 
-/** Ordinary traffic: sedans, pickups, vans and big rigs. Faces +z like the player's car. */
-export function makeTrafficVehicle(kind: 'car' | 'pickup' | 'van' | 'truck', color: number): THREE.Group {
+const BIKER_JACKETS = [0x222226, 0x5a3622, 0x2b3a55, 0x6b1f1a];
+
+/** Ordinary traffic: sedans, motorcycles, pickups, vans and big rigs. Faces +z like the player's car. */
+export function makeTrafficVehicle(kind: 'car' | 'motorcycle' | 'pickup' | 'van' | 'truck', color: number): THREE.Group {
+  if (kind === 'motorcycle') {
+    if (!modelsWanted()) return makeRide('motorcycle');
+    const jacket = BIKER_JACKETS[Math.abs(color) % BIKER_JACKETS.length];
+    return sampleMotorcycle(color, { jacket, skin: 0xd8a77a, pants: 0x2b3a55 });
+  }
+  // Detailed pickups, vans and semis built in code on Medium and High.
+  if (kind !== 'car' && modelsWanted()) return sampleTraffic(kind, color);
   const g = new THREE.Group();
   // CC0 car models on Medium and High; the colour picks which one.
   if (kind === 'car') {
@@ -458,6 +468,8 @@ export function makeObstacle(kind: 'debris' | 'zombie' | 'wreck' | 'roadblock'):
     box(0.1, 0.1, 0.04, eye, 0.13, 1.95, 0.28);
     g.scale.setScalar(1.3);
     g.name = 'zombie';
+  } else if (kind === 'wreck' && modelsWanted()) {
+    g.add(sampleWreck());
   } else if (kind === 'wreck') {
     // A burnt-out car turned across the lane.
     const car = makeTrafficVehicle('car', 0x3a2e28);

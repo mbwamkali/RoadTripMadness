@@ -10,7 +10,7 @@ import { makeRng, pick, range, type Rng } from './rng';
  * oncoming lanes counted out the other way. On an undivided road the player
  * may pull into an oncoming lane to pass, at their own risk.
  */
-export type VehicleKind = 'car' | 'pickup' | 'van' | 'truck';
+export type VehicleKind = 'car' | 'motorcycle' | 'pickup' | 'van' | 'truck';
 
 export interface Vehicle {
   id: number;
@@ -26,7 +26,7 @@ export interface Vehicle {
   color: number;
 }
 
-export const VEHICLE_LENGTH: Record<VehicleKind, number> = { car: 4.4, pickup: 5, van: 5.2, truck: 14 };
+export const VEHICLE_LENGTH: Record<VehicleKind, number> = { car: 4.4, motorcycle: 2.4, pickup: 5, van: 5.2, truck: 14 };
 export const PLAYER_LENGTH = 4.4;
 
 const COLORS = [0xe8e8e8, 0x2b2b30, 0x8a96a3, 0x9c2a22, 0x23457a, 0x3d6b45, 0xc9b27a, 0x6b4a8a];
@@ -109,7 +109,7 @@ export class Traffic {
     const i = Math.floor(this.rng() * n);
     const lane = dir === 1 ? i : -i - 1;
     const r = this.rng();
-    const kind: VehicleKind = r < 0.55 ? 'car' : r < 0.72 ? 'pickup' : r < 0.84 ? 'van' : 'truck';
+    const kind: VehicleKind = r < 0.5 ? 'car' : r < 0.55 ? 'motorcycle' : r < 0.72 ? 'pickup' : r < 0.84 ? 'van' : 'truck';
     const road = this.baseSpeed * SPEED[cls].factor;
     // Your direction drives a bit slower than you so you pass them; trucks are slowest.
     const cruise = dir === 1 ? road * range(this.rng, 0.55, 0.8) * (kind === 'truck' ? 0.85 : 1) : road * range(this.rng, 0.8, 1.05);

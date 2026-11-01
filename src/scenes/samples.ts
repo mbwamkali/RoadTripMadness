@@ -4,8 +4,9 @@ import * as THREE from 'three';
  * Sample models built in code, for the things that are still simple box shapes:
  * outlaws, alien cats, the Cat Queen, the brute and the war rig, plus traffic
  * pickups, vans, semis, motorcycles and wrecks. Flat-shaded low poly to match
- * the CC0 models. Not used by the game yet: they were previewed side by side next
- * to the current shapes for a look first.
+ * the CC0 models. Used on Medium and High (Jared approved them 2026-11-01);
+ * Low keeps the box shapes. Materials are cached and shared (marked so scene
+ * clean-up leaves them alone); geometry belongs to each copy.
  *
  * Conventions match the current builders: everything faces +z, stands on y = 0,
  * and keeps the part names the animations look for (legL, armL, turret, light,
@@ -19,7 +20,10 @@ const mats = new Map<string, THREE.Material>();
 function lam(color: number, emissive = 0): THREE.Material {
   const key = `l${color}-${emissive}`;
   let m = mats.get(key);
-  if (!m) mats.set(key, (m = new THREE.MeshLambertMaterial({ color, emissive, flatShading: true })));
+  if (!m) {
+    mats.set(key, (m = new THREE.MeshLambertMaterial({ color, emissive, flatShading: true })));
+    m.userData.shared = true;
+  }
   return m;
 }
 /** Unlit colour, for lights, eyes and glows. */
@@ -28,6 +32,7 @@ function glow(color: number, opacity = 1): THREE.Material {
   let m = mats.get(key);
   if (!m) {
     m = new THREE.MeshBasicMaterial({ color, transparent: opacity < 1, opacity, side: opacity < 1 ? THREE.DoubleSide : THREE.FrontSide });
+    m.userData.shared = true;
     mats.set(key, m);
   }
   return m;
@@ -287,9 +292,11 @@ function saucer(parent: THREE.Object3D, r: number, hull: number, rim: number, nL
   add(parent, new THREE.TorusGeometry(2.4 * k, 0.12 * k, 4, 32).rotateX(Math.PI / 2), lam(rim));
   add(parent, cyl(0.55 * k, 0.75 * k, 0.24 * k, 12), lam(rim), [0, -0.66 * k, 0]);
   add(parent, cyl(0.45 * k, 0.45 * k, 0.04, 12), glow(0x9ff0ff), [0, -0.79 * k, 0]);
+  // Own material: the fight turns these lights pink while the ship charges.
+  const lightMat = new THREE.MeshBasicMaterial({ color: 0xffe040 });
   for (let i = 0; i < nLights; i++) {
     const a = (i / nLights) * Math.PI * 2;
-    add(parent, ball(0.16 * k, 6, 4), glow(0xffe040), [Math.cos(a) * 2.18 * k, -0.06 * k, Math.sin(a) * 2.18 * k], [0, 0, 0], 'light');
+    add(parent, ball(0.16 * k, 6, 4), lightMat, [Math.cos(a) * 2.18 * k, -0.06 * k, Math.sin(a) * 2.18 * k], [0, 0, 0], 'light');
   }
   const dome = add(parent, ball(1.1 * k, 16, 8).scale(1, 0.9, 1), glow(0x9ff0ff, 0.35), [0, 0.38 * k, 0]);
   dome.renderOrder = 2;
@@ -416,6 +423,13 @@ export function sampleWarRig(): THREE.Group {
   // Armoured trailer with plates and rivets, and the turret on top.
   add(g, box(3.4, 2.5, 5.4), lam(0x5b4a3a), [0, 2.05, -2.3]);
   for (const z of [-4.4, -3.0, -1.6, -0.2]) for (const s of [-1, 1]) add(g, box(0.08, 1.8, 1.2), steel, [s * 1.73, 2.0, z]);
+  // Back of the trailer (what you see in the fight): barred doors, tail lights, a spare wheel.
+  add(g, box(3.0, 2.1, 0.08), steel, [0, 2.0, -5.04]);
+  add(g, box(0.06, 2.1, 0.12), dark, [0, 2.0, -5.08]);
+  for (const y of [1.3, 2.0, 2.7]) add(g, box(3.0, 0.12, 0.12), dark, [0, y, -5.1]);
+  for (const s of [-1, 1]) add(g, box(0.4, 0.25, 0.08), glow(0xd8261a), [s * 1.35, 0.95, -5.06]);
+  add(g, box(3.6, 0.3, 0.3), steel, [0, 0.7, -5.05]);
+  wheel(g, 0.6, 0.4, [0.7, 2.3, -5.3], 0x5a5a60).rotation.y = Math.PI / 2;
   const turret = new THREE.Group();
   turret.name = 'turret';
   turret.position.set(0, 3.5, -2.5);

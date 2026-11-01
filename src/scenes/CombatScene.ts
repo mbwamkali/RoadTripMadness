@@ -17,7 +17,8 @@ import { detailTexture } from './textures';
 import { hourOf, weatherAt } from '../game/time';
 import { biomeSpans, groundColorAt } from '../game/biomes';
 import { castShadows, disposeTree, makeRide, makeRoadTexture, type GameScene } from './common';
-import { modelMesh } from './models';
+import { modelMesh, modelsWanted } from './models';
+import { sampleBrute, sampleCatship, sampleMothership, sampleOutlaw, sampleWarRig } from './samples';
 
 export interface CombatCallbacks {
   onCarHit(dmg: number): void;
@@ -382,6 +383,14 @@ export class CombatScene implements GameScene {
 
 // ---------------------------------------------------------------- enemy models
 
+const SAMPLE_ENEMIES: Partial<Record<EnemyType, { build: () => THREE.Group; hitRadius: number; barY: number }>> = {
+  outlaw: { build: sampleOutlaw, hitRadius: 1.7, barY: 3.0 },
+  catship: { build: sampleCatship, hitRadius: 2.6, barY: 2.8 },
+  mothership: { build: sampleMothership, hitRadius: 8, barY: 9.6 },
+  brute: { build: sampleBrute, hitRadius: 1.3, barY: 2.9 },
+  warrig: { build: sampleWarRig, hitRadius: 3.6, barY: 5 },
+};
+
 export function buildEnemy(type: EnemyType): THREE.Group {
   const g = new THREE.Group();
   const body = new THREE.Group();
@@ -396,7 +405,14 @@ export function buildEnemy(type: EnemyType): THREE.Group {
   };
   let hitRadius = 1.4;
   let barY = 2.6;
-  if (type === 'warrig') {
+  const sample = modelsWanted() ? SAMPLE_ENEMIES[type] : undefined;
+  if (sample) {
+    // Detailed models built in code (Medium and High); Low keeps the boxes below.
+    const s = sample.build();
+    body.add(...[...s.children]);
+    hitRadius = sample.hitRadius;
+    barY = sample.barY;
+  } else if (type === 'warrig') {
     box(3.4, 2.4, 5, 0x5b4a3a, 0, 1.7, -2.2); // trailer
     box(3.2, 2.2, 2.6, 0x7a2a1a, 0, 1.6, 1.8); // cab
     box(2.6, 0.9, 0.2, 0x9ff0ff, 0, 2.2, 3.12); // windscreen
