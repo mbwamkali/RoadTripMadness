@@ -49,10 +49,34 @@ With no ammo left for a weapon, the player throws rocks. They are weak, but neve
 
 - Place search: Nominatim (OpenStreetMap). Searches only run when the player presses Search, to respect the one-request-per-second usage policy.
 - Routing: the public OSRM demo server, asking for full geometry and turn-by-turn steps.
-- When either service is unreachable, the game offers an offline demo route through a made-up desert.
+- When either service is unreachable, the game falls back to the offline options below, and as a last resort offers a demo route through a made-up desert.
 - The screens credit OpenStreetMap contributors as the licence requires.
 
 Before a public release, routing and search should move to our own OSRM/Nominatim instances or a commercial provider, because the free public servers are for light use only.
+
+## Offline play
+
+Phones lose signal on exactly the kind of long drives this game is about, so the game has to work with no connection. The full OpenStreetMap extract for the US is about 10 GB, far too big for a phone, but the game only needs a thin slice of it. Three layers make that work:
+
+1. **Saved trips.** Every route planned online is saved on the device in a slimmed form: the route line simplified to about 25 m, packed as integers, plus the stops, turns and any landmark features that came with it. A cross-country trip is 20 to 60 KB. Up to 25 trips are kept, and the least recently played ones are dropped first when there are more or when storage is full. The title screen lists them under **Saved trips**. When planning fails because there's no connection, a saved trip between the same two places is used automatically.
+2. **Offline highway atlas.** The game ships a compact network of US interstates and US and state highways (about 309,000 km of road), built from [Natural Earth](https://www.naturalearthdata.com/) 1:10m data, which is public domain. It holds about 680 cities, plus national parks, peaks and the points where highways cross named rivers. It's about 1.1 MB, or 450 KB gzipped. With no connection:
+   - Place search looks up cities and parks in the atlas instead of Nominatim.
+   - Route planning runs A* over the atlas on the device. A cross-country trip takes around 40 ms, and its distances come within a few percent of real road distances. The start and end join the nearest highways with a short straight stretch.
+   - Cities beside the route become the named turn-offs, on the side of the road they are actually on, and highway changes (for example onto I-40) become left and right turns.
+   - The preview tells the player the trip was planned offline and follows the major highways.
+3. **Classic road trips.** A handful of famous drives are pre-baked from OpenStreetMap and OSRM and ship with the game, so they always work: Route 66, the Pacific Coast Highway, New York to Los Angeles, the Overseas Highway to Key West, and the Vegas Run. All five together come to about 115 KB.
+
+The game itself is installable. A service worker, generated at build time, precaches the app, the atlas and the classic routes. After one visit, the game opens and plays with no connection, and players can add it to their home screen. Map service requests are never cached by the service worker, because the game saves the trips it plans itself.
+
+Possible later steps are downloadable region packs for detailed routing in one state, and atlases for other countries.
+
+### Rebuilding the offline data
+
+```
+sh scripts/fetch-natural-earth.sh data-src/ne        # ~90 MB of Natural Earth GeoJSON
+node scripts/build-atlas.mjs data-src/ne public/data/atlas-us.json
+node scripts/bake-routes.mjs                          # needs router.project-osrm.org
+```
 
 ## Added since the first playable
 
@@ -70,4 +94,5 @@ Before a public release, routing and search should move to our own OSRM/Nominati
 - Real building footprints and road names at stops.
 - More enemy types and bosses that change with the region.
 - Online leaderboards.
-- Package for app stores with Capacitor, and add offline caching of a planned route.
+- Package for app stores with Capacitor.
+- Offline region packs for detailed routing in one state, and atlases beyond the US.

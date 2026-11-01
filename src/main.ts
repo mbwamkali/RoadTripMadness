@@ -1,12 +1,14 @@
 import * as THREE from 'three';
 import './style.css';
 import type { Path } from './geo/geo';
-import { currentPosition, searchPlaces, type Place } from './geo/geocode';
-import { fetchRoute } from './geo/osrm';
-import { fetchMapFeatures } from './geo/overpass';
+import { currentPosition, type Place } from './geo/geocode';
 import { LANDMARK_ICONS, LANDMARK_TITLES, type Landmark } from './game/landmarks';
 import { demoRawRoute } from './geo/demoRoute';
-import { buildRouteData, pathFromRoute, realKmAt, type RouteData } from './geo/route';
+import { buildRouteData, pathFromRoute, realKmAt, type RawRoute, type RouteData } from './geo/route';
+import { isOffline, planTrip, searchAnywhere } from './offline/planner';
+import { tripCache } from './offline/tripCache';
+import { registerServiceWorker } from './offline/registerSw';
+import { showClassics, showSavedTrips } from './ui/tripScreens';
 import {
   buyFuel,
   clearSave,
@@ -95,6 +97,8 @@ function showTitle(): void {
   disposeAll();
   clearUi();
   const saved = loadGame();
+  const savedTrips = tripCache.list().length;
+  const pick = (raw: RawRoute) => previewRoute(buildRouteData(raw), undefined, showTitle);
   ui().append(
     h(
       'div',
@@ -103,9 +107,12 @@ function showTitle(): void {
       h('p', { class: 'tag' }, 'Real roads. Zombies, outlaws and alien cats. Keep your tank full.'),
       saved && h('button', { class: 'btn primary', onclick: () => startTrip(saved) }, `Continue to ${saved.route.endLabel.split(',')[0]}`),
       h('button', { class: `btn ${saved ? '' : 'primary'}`, onclick: showSetup }, 'Plan a new trip'),
-      h('button', { class: 'btn', onclick: () => previewRoute(buildRouteData(demoRawRoute(Date.now() % 1000))) }, 'Quick demo trip (offline)'),
+      h('button', { class: 'btn', onclick: () => showClassics(pick, showTitle) }, 'Classic road trips'),
+      savedTrips > 0 && h('button', { class: 'btn', onclick: () => showSavedTrips(pick, showTitle) }, `Saved trips (${savedTrips})`),
+      h('button', { class: 'btn', onclick: () => previewRoute(buildRouteData(demoRawRoute(Date.now() % 1000)), undefined, showTitle) }, 'Quick demo trip (made-up map)'),
       h('button', { class: 'btn ghost', onclick: showScores }, '🏆 High scores'),
-      h('p', { class: 'fine' }, 'Maps © OpenStreetMap contributors. Routing by OSRM.'),
+      isOffline() && h('div', { class: 'offline-badge' }, 'Offline: classic, saved and atlas trips still work'),
+      h('p', { class: 'fine' }, 'Maps © OpenStreetMap contributors. Routing by OSRM. Offline atlas from Natural Earth.'),
     ),
   );
 }
@@ -165,11 +172,14 @@ function placePicker(label: string, onPick: (p: Place | null) => void, withGps: 
     chosen.textContent = '';
     status('Searching…');
     try {
-      const found = await searchPlaces(input.value);
-      if (!found.length) return status('No places found. Try adding a state or country.');
-      results.replaceChildren(...found.map((p) => h('button', { class: 'result', onclick: () => choose(p) }, p.label)));
+      const { places: found, offline } = await searchAnywhere(input.value);
+      if (!found.length) return status(offline ? 'Offline, so only cities and parks in the built-in US atlas can be found. Try a bigger nearby city.' : 'No places found. Try adding a state or country.');
+      results.replaceChildren(
+        ...(offline ? [h('div', { class: 'muted' }, 'Offline: showing places from the built-in US atlas.')] : []),
+        ...found.map((p) => h('button', { class: 'result', onclick: () => choose(p) }, p.label)),
+      );
     } catch (e) {
-      status(`${(e as Error).message} Check your connection, or try the offline demo.`);
+      status(`${(e as Error).message} Check your connection, or try a classic road trip.`);
     }
   };
   input.addEventListener('keydown', (e) => {
@@ -222,10 +232,8 @@ function showSetup(): void {
     go.textContent = 'Finding the fastest road…';
     err.replaceChildren();
     try {
-      const raw = await fetchRoute(from, to, from.label, to.label);
-      go.textContent = 'Scouting landmarks along the way…';
-      raw.features = await fetchMapFeatures(raw.coords);
-      previewRoute(buildRouteData(raw));
+      const { raw, note } = await planTrip(from, to, (msg) => (go.textContent = msg));
+      previewRoute(buildRouteData(raw), note);
     } catch (e) {
       err.replaceChildren(
         h('p', {}, `Couldn't plan that route: ${(e as Error).message}`),
@@ -249,7 +257,7 @@ function showSetup(): void {
   );
 }
 
-function previewRoute(route: RouteData): void {
+function previewRoute(route: RouteData, note?: string, back: () => void = showSetup): void {
   clearUi();
   const s = newGame(route);
   let difficulty = loadDifficulty();
@@ -295,9 +303,10 @@ function previewRoute(route: RouteData): void {
         h('li', {}, 'Green dots have gas pumps. Your tank lasts about a third of the trip.'),
         h('li', {}, 'Something big is waiting halfway, and another at the end of the road.'),
       ),
+      note && h('p', { class: 'note' }, note),
       h('div', { class: 'difficulty' }, ...diffBtns),
       h('button', { class: 'btn primary', onclick: () => startTrip(newGame(route, s.seed, difficulty)) }, 'Hit the road'),
-      h('button', { class: 'btn ghost', onclick: showSetup }, '← Pick different places'),
+      h('button', { class: 'btn ghost', onclick: back }, back === showSetup ? '← Pick different places' : '← Back'),
       h('p', { class: 'fine' }, route.attribution),
     ),
   );
@@ -1007,6 +1016,7 @@ window.addEventListener('click', (e) => {
 resize();
 requestAnimationFrame(frame);
 showTitle();
+registerServiceWorker();
 
 // Handy for automated play tests.
 (window as unknown as { rtm: unknown }).rtm = {

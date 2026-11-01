@@ -1,9 +1,16 @@
 {
   "name": "Road Trip Madness",
   "short_name": "Road Trip",
+  "description": "Drive real roads across the map. Zombies, outlaws and alien cats. Keep your tank full.",
   "display": "fullscreen",
   "orientation": "any",
   "background_color": "#1b1410",
   "theme_color": "#1b1410",
-  "start_url": "./"
+  "start_url": "./",
+  "scope": "./",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
 }
