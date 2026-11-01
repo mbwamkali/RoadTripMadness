@@ -9,6 +9,7 @@ import {
   type EnemyType,
 } from '../game/combat';
 import { damage, type GameState } from '../game/state';
+import { sound } from '../audio/sound';
 import { addLights, disposeTree, makeCar, makeRoadTexture, type GameScene } from './common';
 
 export interface CombatCallbacks {
@@ -138,6 +139,8 @@ export class CombatScene implements GameScene {
     }
     this.handleEvents();
     this.syncEnemies();
+    this.ambience(dt);
+    sound.engine(1, c.boostTime > 0);
 
     const speed = ROAD_SPEED * (c.boostTime > 0 ? 2.2 : 1);
     this.roadTex.offset.y += (speed * dt) / 16;
@@ -168,9 +171,23 @@ export class CombatScene implements GameScene {
     }
   }
 
+  private groanTimer = 1;
+  /** Zombies groan and cats meow now and then while they're around. */
+  private ambience(dt: number): void {
+    this.groanTimer -= dt;
+    if (this.groanTimer > 0) return;
+    this.groanTimer = 1.2 + Math.random() * 2;
+    const near = this.combat.enemies.filter((e) => Math.abs(e.z) < 50);
+    const z = near.find((e) => e.type === 'zombie');
+    const cat = near.find((e) => e.type === 'catship');
+    if (cat && Math.random() < 0.5) sound.meow();
+    else if (z) sound.groan();
+  }
+
   private handleEvents(): void {
     const c = this.combat;
     for (const ev of c.events) {
+      playEventSound(ev);
       switch (ev.kind) {
         case 'shot': {
           const from = new THREE.Vector3(c.carX, 2, 0);
@@ -427,5 +444,39 @@ function animateEnemy(g: THREE.Group, e: Enemy, t: number): void {
     body.traverse((o) => {
       if (o.name === 'light') ((o as THREE.Mesh).material as THREE.MeshBasicMaterial).color.setHex(e.charging ? 0xff40ff : 0xffe040);
     });
+  }
+}
+
+function playEventSound(ev: CombatState['events'][number]): void {
+  switch (ev.kind) {
+    case 'shot':
+      sound.shot(ev.weapon);
+      break;
+    case 'kill':
+      sound.kill(ev.type);
+      break;
+    case 'carHit':
+      sound.carHit();
+      break;
+    case 'enemyShot':
+      sound.enemyShot();
+      break;
+    case 'charge':
+      sound.charge();
+      break;
+    case 'laser':
+      sound.laser();
+      break;
+    case 'horn':
+      sound.horn();
+      break;
+    case 'boost':
+      sound.boost();
+      break;
+    case 'empty':
+      sound.empty();
+      break;
+    default:
+      break;
   }
 }

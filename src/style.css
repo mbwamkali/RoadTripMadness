@@ -709,3 +709,7 @@ body.hurt::after {
     top: calc(10px + var(--safe-t));
   }
 }
+
+.btn.round.off {
+  opacity: 0.5;
+}
