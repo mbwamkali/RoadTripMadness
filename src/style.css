@@ -1209,3 +1209,42 @@ ol.scores li.new {
   font-size: 14px;
   text-align: center;
 }
+
+.bike-track {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  font-size: 24px;
+  padding: 6px 4px;
+  margin: 4px 0 8px;
+  border-bottom: 2px dashed rgba(255, 255, 255, 0.25);
+}
+
+.bike-track .bike {
+  position: absolute;
+  left: 12%;
+  animation: bike-ride 3.6s ease-in-out forwards;
+}
+
+@keyframes bike-ride {
+  0% {
+    left: 12%;
+    transform: scaleX(-1);
+  }
+  45% {
+    left: 78%;
+    transform: scaleX(-1);
+  }
+  55% {
+    left: 78%;
+    transform: scaleX(1);
+  }
+  100% {
+    left: 12%;
+    transform: scaleX(1);
+  }
+}
+
+.bike-story p {
+  margin: 6px 0;
+}

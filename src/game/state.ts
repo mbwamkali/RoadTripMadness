@@ -49,6 +49,8 @@ export interface GameState {
   difficulty: Difficulty;
   /** What you drive (older saves: the car). */
   ride?: Ride;
+  /** The one-time bike rescue has been used (see rescue.ts). */
+  bikeUsed?: boolean;
   /** 0: halfway boss to come, 1: final boss to come, 2: both done. */
   bossStage: number;
   bossesBeaten: number;
@@ -151,8 +153,11 @@ export function advance(
     return { arrived, outOfFuel: false, encounter: false };
   }
   if (s.inv.fuel <= 0) {
-    s.status = 'lost';
-    s.lostReason = 'You ran out of fuel in the middle of nowhere.';
+    // The first time, there's a bike in the ditch (the caller offers it).
+    if (s.bikeUsed) {
+      s.status = 'lost';
+      s.lostReason = 'You ran out of fuel again, and this time there was no bike in the ditch.';
+    }
     return { arrived: false, outOfFuel: true, encounter: false };
   }
   if (s.bossStage < 2 && s.distance >= bosses[s.bossStage]) {

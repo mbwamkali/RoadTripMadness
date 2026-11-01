@@ -31,9 +31,12 @@ describe('trip', () => {
     expect(encounters).toBeGreaterThan(0);
   });
 
-  it('ends the trip when the tank runs dry', () => {
+  it('offers the bike the first time the tank runs dry, and ends the trip the second time', () => {
     const s = newGame(route, 1);
     s.inv.fuel = 0.01;
+    expect(advance(s, path, 50).outOfFuel).toBe(true);
+    expect(s.status).toBe('driving');
+    s.bikeUsed = true;
     expect(advance(s, path, 50).outOfFuel).toBe(true);
     expect(s.status).toBe('lost');
   });

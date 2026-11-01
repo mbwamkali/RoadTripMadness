@@ -5,6 +5,7 @@ import { currentPosition, type Place } from './geo/geocode';
 import { ANNOUNCED, LANDMARK_ICONS, LANDMARK_TITLES, readMoreUrl, roadAt, type Landmark } from './game/landmarks';
 import { demoRawRoute } from './geo/demoRoute';
 import type { ObstacleKind } from './game/obstacles';
+import { canUseBike, planBikeRide, rideForGas } from './game/rescue';
 import { loadRide, RIDE_IDS, RIDES, rideOf, saveRide, type Ride } from './game/rides';
 import { addStateLines, buildRouteData, pathFromRoute, realKmAt, type RawRoute, type RouteData } from './geo/route';
 import { latLngAt, loadStateMap } from './geo/states';
@@ -452,7 +453,7 @@ function startTrip(s: GameState): void {
   drive = new DriveScene(s, path, {
     onEncounter: () => startCombat(false),
     onArrive: () => setTimeout(showEnd, 600),
-    onOutOfFuel: () => setTimeout(showEnd, 600),
+    onOutOfFuel: () => setTimeout(() => (state?.status === 'lost' ? showEnd() : showBikeRescue()), 600),
     onPrompt: (stop, dist) => updatePrompt(stop, dist),
     onEnterStop: (stop) => showStop(stop),
     onLandmark: (l) => showLandmarkToast(l),
@@ -848,6 +849,66 @@ function showRoadEvent(ev: RoadEvent): void {
     ),
   );
   sound.charge();
+  ui().append(overlay);
+}
+
+/** Out of gas the first time: an old bike in the ditch, a ride to the pumps and back. */
+function showBikeRescue(): void {
+  const s = state!;
+  if (!canUseBike(s)) return showEnd();
+  saveGame(s);
+  sound.engine(0);
+  const plan = planBikeRide(s);
+  const where = plan.stop
+    ? `${plan.stop.name} is ${plan.km < 10 ? plan.km.toFixed(1) : Math.round(plan.km)} km ${plan.ahead ? 'up the road' : 'back the way you came'}.`
+    : 'There are no pumps anywhere near, but there are plenty of wrecks.';
+  const hours = `${plan.hours} h there and back`;
+  const body = h('div', { class: 'event-body' });
+  const card = h(
+    'div',
+    { class: 'card event' },
+    h('div', { class: 'event-icon' }, '🚲'),
+    h('h2', {}, 'Out of gas'),
+    h('p', {}, `The engine coughs and dies. In the ditch there's a rusty old bicycle with a basket just big enough for a gas can. ${where}`),
+    body,
+  );
+  const overlay = h('div', { class: 'modal' }, card);
+  const giveUp = () => {
+    overlay.remove();
+    s.status = 'lost';
+    s.lostReason = 'You ran out of fuel and decided to wait for a ride that never came.';
+    showEnd();
+  };
+  const ride = () => {
+    const out = rideForGas(s);
+    saveGame(s);
+    // A little bike rolls out to the pumps and back while the story plays.
+    const bike = h('span', { class: 'bike' }, '🚲');
+    const track = h('div', { class: 'bike-track' }, h('span', {}, '🚗'), bike, h('span', {}, '⛽'));
+    const lines = h('div', { class: 'bike-story' });
+    const done = h('button', { class: 'btn primary', disabled: true, onclick: () => {
+      overlay.remove();
+      hudTick?.();
+      drive?.resume();
+    } }, 'Back on the road');
+    body.replaceChildren(track, lines, done);
+    out.story.forEach((line, i) =>
+      setTimeout(() => {
+        lines.append(h('p', { class: `outcome ${/zombie|raiders/.test(line) ? 'bad' : 'good'}` }, line));
+        if (/zombie|raiders/.test(line)) sound.bad();
+        if (i === out.story.length - 1) {
+          sound.coin();
+          (done as HTMLButtonElement).disabled = false;
+          hudTick?.();
+        }
+      }, 400 + i * 900),
+    );
+  };
+  body.replaceChildren(
+    h('button', { class: 'btn choice', onclick: ride }, h('b', {}, 'Ride for gas'), h('small', {}, `${hours}. You only get one bike.`)),
+    h('button', { class: 'btn choice', onclick: giveUp }, h('b', {}, 'Give up the trip'), h('small', {}, 'Ends the run')),
+  );
+  sound.bad();
   ui().append(overlay);
 }
 
