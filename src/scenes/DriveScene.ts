@@ -4,6 +4,7 @@ import type { Path, Vec2 } from '../geo/geo';
 import { CRUISE_SPEED, postedLimit } from '../geo/route';
 import { advance, damage, fuelPerUnit, upcomingStop, type GameState } from '../game/state';
 import { brakeRange, crashScale, speedFuelFactor } from '../game/driving';
+import { coolRage, HOSTILE_RANGE, hostileShot, rageOf, rollHostile, shootVehicle } from '../game/rage';
 import { clampLane, defaultLane, laneCenter, oncoming, Traffic, type Vehicle, type VehicleKind } from '../game/traffic';
 import { Obstacles, ramObstacle, shootObstacle, SHOOT_RANGE, type Obstacle, type ObstacleKind } from '../game/obstacles';
 import { DIFFICULTIES } from '../game/difficulty';
@@ -49,7 +50,12 @@ export interface DriveCallbacks {
   onCrash?(kind: VehicleKind, damage: number): void;
   /** Drove into an obstacle (cost is car health lost). */
   onRam?(kind: ObstacleKind, cost: number): void;
+  /** A hostile driver fired at you (damage already taken; 0 = missed). */
+  onShotAt?(kind: VehicleKind, damage: number): void;
 }
+
+/** What the gun is pointed at: something in the road, or another vehicle. */
+export type ShotTarget = { type: 'obstacle'; o: Obstacle } | { type: 'vehicle'; v: Vehicle };
 
 /** Shared plant models; trees are a trunk plus a crown so each part gets its own colour. */
 function plantModels(): { geos: Record<string, THREE.BufferGeometry>; mats: Record<string, THREE.Material> } {
@@ -166,6 +172,7 @@ export class DriveScene implements GameScene {
   private turning: { stop: Stop; t: number; from: THREE.Vector3; mid: THREE.Vector3; to: THREE.Vector3 } | null = null;
   private stopping = false;
   private clock = 0;
+  private rageRng: Rng;
   private lastBlink = false;
   private atmosphere: Atmosphere;
   private skyTimer = 0;
@@ -182,6 +189,7 @@ export class DriveScene implements GameScene {
   ) {
     this.car = makeRide(state.ride ?? 'car', state.upgrades);
     this.fuelRate = fuelPerUnit(path.length);
+    this.rageRng = makeRng(state.seed ^ 0x2a6e);
     this.biomes = biomeSpans(state.route, path);
     const q = quality.profile;
     this.ahead = AHEAD * q.drawScale;
@@ -452,6 +460,8 @@ export class DriveScene implements GameScene {
     }
     const res = advance(s, this.path, step, this.fuelRate * speedFuelFactor(this.throttle));
     this.spinWheels(step);
+    coolRage(s, step);
+    if (this.warp === 1) this.roadRage(dt, speed);
     if (this.warp === 1) this.checkCrash();
     if (res.arrived) {
       this.stopping = true;
@@ -531,20 +541,55 @@ export class DriveScene implements GameScene {
     this.cb.onCrash?.(v.kind, amount);
   }
 
+  /**
+   * Road rage: when the meter is high some drivers you meet turn hostile. They
+   * pace you and shoot while they're close, with no fight scene.
+   */
+  private roadRage(dt: number, playerSpeed: number): void {
+    const s = this.state;
+    const rage = rageOf(s);
+    for (const v of this.traffic.vehicles) {
+      const gap = v.d - s.distance;
+      if (Math.abs(gap) < 300) rollHostile(v, rage, this.rageRng);
+      if (!v.hostile) continue;
+      // Same-direction drivers hang alongside you; oncoming ones fire as they pass.
+      if (!oncoming(v.lane) && Math.abs(gap) < 120) v.cruise = Math.max(1, playerSpeed * (gap > 6 ? 0.92 : 1.05));
+      v.fireIn = (v.fireIn ?? 2) - dt;
+      if (v.fireIn > 0 || Math.abs(gap) > HOSTILE_RANGE || s.status !== 'driving') continue;
+      const dmg = hostileShot(s, v, this.rageRng);
+      sound.enemyShot();
+      const m = this.vehicleMeshes.get(v.id);
+      if (m) m.userData.flash = 0.18;
+      this.cb.onShotAt?.(v.kind, dmg);
+    }
+  }
+
   private obstacleX(o: Obstacle): number {
     return laneCenter(classAt(this.segments, o.d), o.lane, this.edge(o.d));
   }
 
   /** What a shot would hit: the nearest obstacle ahead in your lane. */
-  get target(): Obstacle | null {
+  get target(): ShotTarget | null {
     if (this.paused || this.stopping || this.turning) return null;
-    return this.obstacles.ahead(this.state.distance, this.playerLane, SHOOT_RANGE);
+    const d = this.state.distance;
+    const o = this.obstacles.ahead(d, this.playerLane, SHOOT_RANGE);
+    const v = this.traffic.ahead(d, this.playerLane, SHOOT_RANGE);
+    if (o && (!v || o.d <= v.d)) return { type: 'obstacle', o };
+    if (v) return { type: 'vehicle', v };
+    // Nothing in your lane: a hostile driver close by in any lane.
+    let best: Vehicle | null = null;
+    for (const x of this.traffic.vehicles) {
+      if (x.hostile && Math.abs(x.d - d) < HOSTILE_RANGE && (!best || Math.abs(x.d - d) < Math.abs(best.d - d))) best = x;
+    }
+    return best ? { type: 'vehicle', v: best } : null;
   }
 
   /** Fires at the obstacle ahead. Returns what happened, or null with nothing to shoot. */
-  shoot(): { kind: ObstacleKind; destroyed: boolean; scrap: number } | 'empty' | null {
-    const o = this.target;
-    if (!o) return null;
+  shoot(): { kind: ObstacleKind | VehicleKind; destroyed: boolean; scrap: number; vehicle?: boolean } | 'empty' | null {
+    const t = this.target;
+    if (!t) return null;
+    if (t.type === 'vehicle') return this.shootVehicle(t.v);
+    const o = t.o;
     const r = shootObstacle(this.state, o);
     if (!r) {
       sound.empty();
@@ -560,6 +605,23 @@ export class DriveScene implements GameScene {
       m.position.y = 0.25;
     }
     return { kind: o.kind, destroyed: r.destroyed, scrap: r.scrap };
+  }
+
+  private shootVehicle(v: Vehicle): { kind: VehicleKind; destroyed: boolean; scrap: number; vehicle: true } | 'empty' {
+    const r = shootVehicle(this.state, v);
+    if (!r) {
+      sound.empty();
+      return 'empty';
+    }
+    sound.shot(r.ammo);
+    const m = this.vehicleMeshes.get(v.id);
+    if (r.destroyed) {
+      sound.carHit();
+      this.traffic.remove(v);
+      // What's left stays in the road (in your direction's lanes).
+      if (!oncoming(v.lane)) this.obstacles.list.push({ id: 100_000 + v.id, kind: 'wreck', d: v.d, lane: v.lane, hp: 3 });
+    } else if (m) m.position.y = 0.25;
+    return { kind: v.kind, destroyed: r.destroyed, scrap: r.scrap, vehicle: true };
   }
 
   /** Traffic swerves round obstacles (or pulls off the road on a one-lane road). */
@@ -634,6 +696,7 @@ export class DriveScene implements GameScene {
       m.position.set(p.x + f.y * x, 0, -p.y + f.x * x);
       const dir = oncoming(v.lane) ? -1 : 1;
       m.rotation.y = Math.atan2(f.x * dir, -f.y * dir);
+      if (v.hostile) this.markHostile(m);
     }
     for (const [id, m] of this.vehicleMeshes) {
       if (alive.has(id)) continue;
@@ -641,6 +704,27 @@ export class DriveScene implements GameScene {
       disposeTree(m);
       this.vehicleMeshes.delete(id);
     }
+  }
+
+  /** A hostile driver: a red light on the roof, and a muzzle flash when they fire. */
+  private markHostile(m: THREE.Group): void {
+    let mark = m.getObjectByName('hostile') as THREE.Mesh | undefined;
+    if (!mark) {
+      const box = new THREE.Box3().setFromObject(m);
+      mark = new THREE.Mesh(new THREE.OctahedronGeometry(0.45), new THREE.MeshBasicMaterial({ color: 0xff2a2a }));
+      mark.name = 'hostile';
+      mark.position.y = box.max.y + 0.9;
+      const flash = new THREE.Mesh(new THREE.SphereGeometry(0.7, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffd040 }));
+      flash.name = 'muzzle';
+      flash.position.set(0, box.max.y - 0.3, 0);
+      flash.visible = false;
+      m.add(mark, flash);
+    }
+    mark.rotation.y = this.clock * 3;
+    mark.scale.setScalar(1 + Math.sin(this.clock * 8) * 0.15);
+    const flash = (m.userData.flash as number | undefined) ?? 0;
+    m.userData.flash = Math.max(0, flash - 1 / 60);
+    m.getObjectByName('muzzle')!.visible = flash > 0;
   }
 
   private announceLandmarks(): void {

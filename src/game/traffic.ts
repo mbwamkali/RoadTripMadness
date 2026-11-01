@@ -24,6 +24,14 @@ export interface Vehicle {
   /** The speed it would like to drive. */
   cruise: number;
   color: number;
+  /** Shots it can take before it's wrecked (set when first hit). */
+  hp?: number;
+  /** Checked once for whether it turns hostile when road rage is high. */
+  rolled?: boolean;
+  /** A driver who shoots back. */
+  hostile?: boolean;
+  /** Seconds until a hostile driver's next shot. */
+  fireIn?: number;
 }
 
 export const VEHICLE_LENGTH: Record<VehicleKind, number> = { car: 4.4, motorcycle: 2.4, pickup: 5, van: 5.2, truck: 14 };

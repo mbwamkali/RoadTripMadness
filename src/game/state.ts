@@ -51,6 +51,8 @@ export interface GameState {
   ride?: Ride;
   /** The one-time bike rescue has been used (see rescue.ts). */
   bikeUsed?: boolean;
+  /** Road rage, 0 to 100: rises when you shoot traffic, cools as you drive (see rage.ts). */
+  rage?: number;
   /** 0: halfway boss to come, 1: final boss to come, 2: both done. */
   bossStage: number;
   bossesBeaten: number;

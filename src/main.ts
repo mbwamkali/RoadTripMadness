@@ -5,6 +5,7 @@ import { currentPosition, type Place } from './geo/geocode';
 import { ANNOUNCED, LANDMARK_ICONS, LANDMARK_TITLES, readMoreUrl, roadAt, type Landmark } from './game/landmarks';
 import { demoRawRoute } from './geo/demoRoute';
 import type { ObstacleKind } from './game/obstacles';
+import type { VehicleKind } from './game/traffic';
 import { loadModels, modelsReady, modelsWanted } from './scenes/models';
 import { canUseBike, planBikeRide, rideForGas } from './game/rescue';
 import { loadRide, RIDE_IDS, RIDES, rideOf, saveRide, type Ride } from './game/rides';
@@ -39,6 +40,7 @@ import { DIFFICULTIES, DIFFICULTY_IDS, type Difficulty } from './game/difficulty
 import { addScore, loadScores, scoreFor, type ScoreEntry } from './game/scores';
 import { CREW, rollEvent, type RoadEvent } from './game/events';
 import { mpg, swipeAction } from './game/driving';
+import { RAGE_HOSTILE, RAGE_MAX, rageOf } from './game/rage';
 import { clockText, hourOf, isNight, nightDanger, weatherAt, WEATHER_INFO, type Weather } from './game/time';
 import type { GameScene } from './scenes/common';
 import { DriveScene } from './scenes/DriveScene';
@@ -85,6 +87,7 @@ let combat: CombatScene | null = null;
 let hudTick: (() => void) | null = null;
 /** The speeding tip shows once per session. */
 let warnedSpeeding = false;
+let warnedHostile = false;
 let lastSave = 0;
 
 // --------------------------------------------------------------- render loop
@@ -491,6 +494,17 @@ function startTripNow(s: GameState): void {
         setTimeout(showEnd, 900);
       }
     },
+    onShotAt: (kind, dmg) => {
+      if (dmg > 0) navigator.vibrate?.(60);
+      if (!warnedHostile) {
+        warnedHostile = true;
+        showToast('😠', `A ${VEHICLE_LABEL[kind].toLowerCase()} is shooting back!`, 'Shoot back, or let your road rage cool');
+      }
+      if (state?.status === 'lost' && drive) {
+        drive.paused = true;
+        setTimeout(showEnd, 900);
+      }
+    },
     onCrash: (kind, dmg) => {
       const what = { car: 'a car', motorcycle: 'a motorcycle', pickup: 'a pickup', van: 'a van', truck: 'a big rig' }[kind];
       showToast('💥', `You hit ${what}`, `−${dmg} car health`);
@@ -671,6 +685,7 @@ function showDriveHud(): void {
   const p = path!;
   const fuel = bar('fuel', '⛽');
   const hp = bar('hp', '🔧');
+  const rage = bar('rage', '😡');
   const inv = h('div', {});
   const progress = h('div', { class: 'progress' }, h('div', { class: 'fill' }));
   const progressText = h('div', { class: 'progress-text' });
@@ -729,7 +744,7 @@ function showDriveHud(): void {
       'div',
       { class: 'hud' },
       h('div', { class: 'landmark-toast' }),
-      h('div', { class: 'hud-top' }, h('div', { class: 'stats' }, fuel.el, hp.el, inv), h('div', { class: 'side' }, map.canvas, h('div', { class: 'row' }, radioBtn, speedBtn, menuBtn))),
+      h('div', { class: 'hud-top' }, h('div', { class: 'stats' }, fuel.el, hp.el, rage.el, inv), h('div', { class: 'side' }, map.canvas, h('div', { class: 'row' }, radioBtn, speedBtn, menuBtn))),
       h('div', { class: 'hud-bottom' }, promptEl, shootRow, dash, controls, progress, progressText),
     ),
   );
@@ -746,6 +761,9 @@ function showDriveHud(): void {
   hudTick = () => {
     fuel.set(s.inv.fuel, tankSize(s));
     hp.set(s.health, maxHealth(s));
+    rage.set(rageOf(s), RAGE_MAX);
+    rage.el.classList.toggle('show', rageOf(s) > 0.5);
+    rage.el.classList.toggle('hot', rageOf(s) >= RAGE_HOSTILE);
     const key = JSON.stringify(s.inv) + s.crew.join();
     if (key !== lastInv) {
       inv.replaceChildren(inventoryLine(s));
@@ -774,7 +792,7 @@ function showDriveHud(): void {
       const t = drive.target;
       shootRow.classList.toggle('show', !!t);
       if (t) {
-        const label = `🔫 ${OBSTACLE_LABEL[t.kind]}`;
+        const label = t.type === 'obstacle' ? `🔫 ${OBSTACLE_LABEL[t.o.kind]}` : `🔫 ${t.v.hostile ? '😠 ' : ''}${VEHICLE_LABEL[t.v.kind]}`;
         if (shootBtn.textContent !== label) shootBtn.textContent = label;
       }
     }
@@ -783,12 +801,14 @@ function showDriveHud(): void {
 }
 
 const OBSTACLE_LABEL: Record<ObstacleKind, string> = { debris: 'Junk', zombie: 'Zombie', wreck: 'Wreck', roadblock: 'Roadblock' };
+const VEHICLE_LABEL: Record<VehicleKind, string> = { car: 'Car', motorcycle: 'Biker', pickup: 'Pickup', van: 'Van', truck: 'Big rig' };
 
 /** Fires at whatever is in the road ahead in your lane. */
 function shootAhead(): void {
   const r = drive?.shoot();
   if (r === 'empty') showToast('🔫', 'Out of ammo', 'Dodge it or ram it');
-  else if (r?.destroyed && r.scrap) showToast('💥', `${OBSTACLE_LABEL[r.kind]} cleared`, `+${r.scrap} scrap`);
+  else if (r?.vehicle && r.destroyed) showToast('💥', `${VEHICLE_LABEL[r.kind as VehicleKind]} wrecked`, `+${r.scrap} scrap · road rage is rising`);
+  else if (r && !r.vehicle && r.destroyed && r.scrap) showToast('💥', `${OBSTACLE_LABEL[r.kind as ObstacleKind]} cleared`, `+${r.scrap} scrap`);
 }
 
 function showPauseMenu(): void {

@@ -311,6 +311,27 @@ body.hurt::after {
   background: var(--good);
 }
 
+.bar.rage {
+  display: none;
+}
+
+.bar.rage.show {
+  display: grid;
+}
+
+.rage .fill {
+  background: #ff8a3c;
+}
+
+.bar.rage.low .fill {
+  background: #ff8a3c;
+  animation: none;
+}
+
+.bar.rage.hot .fill {
+  background: #ff3b3b;
+}
+
 .escape .fill {
   background: #58b8ff;
 }
