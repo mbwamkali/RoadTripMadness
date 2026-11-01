@@ -2,6 +2,7 @@ import { pathFromRoute, type RouteData } from '../geo/route';
 import type { Path } from '../geo/geo';
 import { fillLandmarks, type Landmark } from './landmarks';
 import type { CrewMember } from './events';
+import { hourOf, nightLoot } from './time';
 import { fuelEfficiency, MAX_LEVEL, maxHealthFor, noUpgrades, tankFor, upgradeCost, UPGRADES, type UpgradeKind, type Upgrades } from './upgrades';
 import { generateStops, type PlaceKind, type Stop } from './stops';
 import { hashString, makeRng, range, rangeInt, type Rng } from './rng';
@@ -31,6 +32,8 @@ export interface GameState {
   crew: CrewMember[];
   nextEventAt: number;
   eventsSeen: number;
+  /** Hours spent off the road (scavenging), which moves the clock. */
+  hoursSpent: number;
   /** Stop ids already passed or visited. */
   passed: string[];
   /** Searches done per stop+place, which raises the ambush risk. */
@@ -74,6 +77,7 @@ export function newGame(route: RouteData, seed = Date.now() & 0xffffffff): GameS
     crew: [],
     nextEventAt: path.length * range(rng, 0.05, 0.09),
     eventsSeen: 0,
+    hoursSpent: 0,
     inv: { fuel: 70, cash: 60, scrap: 10, bullets: 60, shells: 6, catnip: 1 },
     passed: [],
     searches: {},
@@ -221,13 +225,14 @@ export function search(s: GameState, stopId: string, place: PlaceKind): ActionRe
   const key = `${stopId}:${place}`;
   const n = s.searches[key] ?? 0;
   s.searches[key] = n + 1;
+  s.hoursSpent += 0.75;
   const rng = makeRng(s.seed ^ hashString(`${key}:${n}`));
   const ambushChance = Math.min(0.75, 0.15 + n * 0.2) - (s.crew.includes('dog') ? 0.1 : 0);
   if (rng() < ambushChance) {
     return { ok: true, ambush: true, message: 'Something heard you. They\'re coming!' };
   }
   const loot = LOOT[place](rng);
-  const factor = n === 0 ? 1 : n === 1 ? 0.5 : 0.2;
+  const factor = (n === 0 ? 1 : n === 1 ? 0.5 : 0.2) * nightLoot(hourOf(s));
   const found: string[] = [];
   for (const [k, v] of Object.entries(loot) as [keyof Inventory, number][]) {
     const amount = Math.floor((v ?? 0) * factor);
@@ -277,6 +282,7 @@ export function loadGame(): GameState | null {
     s.upgrades ??= noUpgrades();
     s.crew ??= [];
     s.eventsSeen ??= 0;
+    s.hoursSpent ??= 0;
     s.nextEventAt ??= s.distance + 500;
     // Saves from before landmarks existed.
     s.landmarks ??= fillLandmarks(s.route, pathFromRoute(s.route).length, s.stops, s.route.landmarks ?? [], s.seed);

@@ -10,7 +10,9 @@ import {
 } from '../game/combat';
 import { damage, type GameState } from '../game/state';
 import { sound } from '../audio/sound';
-import { addLights, disposeTree, makeCar, makeRoadTexture, type GameScene } from './common';
+import { Atmosphere } from './atmosphere';
+import { hourOf, weatherAt } from '../game/time';
+import { disposeTree, makeCar, makeRoadTexture, type GameScene } from './common';
 
 export interface CombatCallbacks {
   onCarHit(dmg: number): void;
@@ -33,6 +35,7 @@ export class CombatScene implements GameScene {
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(60, 1, 0.3, 400);
   private car: THREE.Group;
+  private atmosphere: Atmosphere;
   private roadTex = makeRoadTexture();
   private road: THREE.Mesh;
   private props: THREE.Group = new THREE.Group();
@@ -50,9 +53,9 @@ export class CombatScene implements GameScene {
     private cb: CombatCallbacks,
   ) {
     this.car = makeCar(undefined, state.upgrades);
-    this.scene.background = new THREE.Color(combat.title.includes('cat') ? 0x2a1f4a : 0xe8a868);
-    this.scene.fog = new THREE.Fog(this.scene.background as THREE.Color, 60, 160);
-    addLights(this.scene);
+    this.atmosphere = new Atmosphere(this.scene, combat.title.includes('cat') ? 0x5a3f8a : 0xe8a868, 60, 170);
+    this.atmosphere.set(hourOf(state), weatherAt(state));
+    this.atmosphere.attachHeadlights(this.car);
 
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshLambertMaterial({ color: 0xc89a62 }));
     ground.rotation.x = -Math.PI / 2;
@@ -162,6 +165,7 @@ export class CombatScene implements GameScene {
     this.camera.position.set(c.carX * 0.6 + sx, 9.5 + sy, 14);
     this.camera.lookAt(c.carX * 0.4, 0, -22);
     this.updateFx(dt);
+    this.atmosphere.update(dt, this.camera);
     this.cb.onTick();
 
     const outcome = this.state.status === 'lost' ? 'wrecked' : combatOutcome(c);
@@ -324,6 +328,7 @@ export class CombatScene implements GameScene {
   }
 
   dispose(): void {
+    this.atmosphere.dispose();
     for (const g of this.meshes.values()) disposeTree(g);
     for (const f of this.fx) disposeTree(f.obj);
     disposeTree(this.scene);

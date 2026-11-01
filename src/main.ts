@@ -27,6 +27,7 @@ import {
 import { STOP_TITLES, type PlaceKind, type Stop } from './game/stops';
 import { BOOST_FUEL, boost, createCombat, horn, WEAPONS, type CombatState, type EnemyType, type WeaponKind } from './game/combat';
 import { CREW, rollEvent, type RoadEvent } from './game/events';
+import { clockText, hourOf, isNight, nightDanger, weatherAt, WEATHER_INFO } from './game/time';
 import type { GameScene } from './scenes/common';
 import { DriveScene } from './scenes/DriveScene';
 import { CombatScene } from './scenes/CombatScene';
@@ -440,7 +441,9 @@ function showDriveHud(): void {
     }
     (progress.firstChild as HTMLElement).style.width = `${(s.distance / p.length) * 100}%`;
     const left = realKmAt(s.route, p.length - s.distance);
-    progressText.textContent = `${fmtKm(left)} to ${s.route.endLabel.split(',')[0]}`;
+    const hour = hourOf(s);
+    const wx = weatherAt(s);
+    progressText.textContent = `${isNight(hour) ? '🌙' : '☀️'} ${clockText(hour)} · ${wx === 'clear' ? '' : `${WEATHER_INFO[wx].icon} ${WEATHER_INFO[wx].name} · `}${fmtKm(left)} to ${s.route.endLabel.split(',')[0]}`;
     if (frameCount++ % 10 === 0) map.draw(s.distance, s.passed);
   };
   hudTick();
@@ -584,6 +587,13 @@ function showStop(stop: Stop): void {
       'div',
       { class: 'screen explore' },
       h('h2', {}, `${stop.name}`, h('small', {}, ` ${STOP_TITLES[stop.kind]}`)),
+      h(
+        'p',
+        { class: 'muted' },
+        isNight(hourOf(s))
+          ? `🌙 ${clockText(hourOf(s))}. It's dark: you'll find more, but every search takes 45 minutes.`
+          : `☀️ ${clockText(hourOf(s))}. Every search takes 45 minutes.`,
+      ),
       meters,
       invEl,
       cards,
@@ -667,7 +677,7 @@ function startCombat(ambush: boolean, stop?: Stop, theme?: EnemyType): void {
     theme,
     gunner: s.crew.includes('gunner'),
     seed: s.seed + s.encounters * 31 + (ambush ? 7 : 0) + Math.floor(s.distance),
-    progress: s.distance / path!.length,
+    progress: s.distance / path!.length + nightDanger(hourOf(s)),
     ambush,
     gunDamage: gunDamageFor(s.upgrades),
     ramDamage: ramDamageFor(s.upgrades),

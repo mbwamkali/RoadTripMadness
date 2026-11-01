@@ -5,9 +5,11 @@ import { advance, upcomingStop, type GameState } from '../game/state';
 import { STOP_TITLES, type Stop } from '../game/stops';
 import { hashString, makeRng, type Rng } from '../game/rng';
 import { ANNOUNCED, type Landmark } from '../game/landmarks';
-import { addLights, disposeTree, makeCar, makeRoadTexture, setBlinkers, textSprite, to3, type GameScene } from './common';
+import { disposeTree, makeCar, makeRoadTexture, setBlinkers, textSprite, to3, type GameScene } from './common';
 import { buildLandmark, waterTexture } from './landmarkModels';
 import { sound } from '../audio/sound';
+import { Atmosphere } from './atmosphere';
+import { hourOf, weatherAt } from '../game/time';
 
 const CHUNK = 400;
 const BEHIND = 250;
@@ -60,6 +62,8 @@ export class DriveScene implements GameScene {
   private stopping = false;
   private clock = 0;
   private lastBlink = false;
+  private atmosphere: Atmosphere;
+  private skyTimer = 0;
   private announced = new Set<number>();
 
   constructor(
@@ -69,9 +73,9 @@ export class DriveScene implements GameScene {
   ) {
     this.car = makeCar(undefined, state.upgrades);
     this.biome = biomeFor(state);
-    this.scene.background = new THREE.Color(this.biome.sky);
-    this.scene.fog = new THREE.Fog(this.biome.sky, 300, 1300);
-    addLights(this.scene);
+    this.atmosphere = new Atmosphere(this.scene, this.biome.sky, 300, 1300);
+    this.atmosphere.attachHeadlights(this.car);
+    this.atmosphere.set(hourOf(state), weatherAt(state));
 
     // Layered flat surfaces: polygon offsets keep road > water > shoulder > ground without z-fighting.
     this.roadMat = new THREE.MeshLambertMaterial({ map: this.roadTex, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
@@ -130,6 +134,7 @@ export class DriveScene implements GameScene {
     this.scene.remove(this.car);
     disposeTree(this.car);
     this.car = makeCar(undefined, this.state.upgrades);
+    this.atmosphere.attachHeadlights(this.car);
     this.car.position.copy(pos);
     this.car.quaternion.copy(rot);
     this.scene.add(this.car);
@@ -169,6 +174,12 @@ export class DriveScene implements GameScene {
     this.lastBlink = blinkOn;
     const moving = !this.paused && (!this.stopping || !!this.turning);
     sound.engine(moving ? (this.turning ? 0.6 : this.warp) : 0);
+    this.skyTimer -= dt;
+    if (this.skyTimer <= 0) {
+      this.skyTimer = 0.25;
+      this.atmosphere.set(hourOf(this.state), weatherAt(this.state));
+    }
+    this.atmosphere.update(dt, this.camera);
     const water = waterTexture();
     water.offset.y -= dt * 0.25;
     for (const g of this.chunks.values()) {
@@ -499,6 +510,7 @@ export class DriveScene implements GameScene {
   }
 
   dispose(): void {
+    this.atmosphere.dispose();
     for (const g of this.chunks.values()) disposeChunk(g);
     this.chunks.clear();
     disposeTree(this.car);
