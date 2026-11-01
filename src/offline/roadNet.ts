@@ -61,13 +61,15 @@ export interface Town extends LatLng {
  * tertiary and minor streets.
  */
 const DEFAULT_KMH = [105, 88, 72, 64, 56, 40];
-/** Traffic averages about this share of the speed limit (matches OSRM's trip times within about 5%). */
+/** Traffic averages about this share of the speed limit (OSRM's trip times agreed within about 5% when compared). */
 const PACE = 0.8;
 /** Off-network stretch from the start or end to the nearest road: slower, and roads wind. */
 const CONNECTOR_KMH = 40;
 const CONNECTOR_WIND = 1.3;
 /** Search radius for the nearest roads, tried in order. */
 const CONNECTOR_RADII_M = [15_000, 40_000, 90_000];
+/** When the nearest junction is further than this, the start or end also looks for a closer point along a road. */
+const SNAP_TO_EDGE_M = 300;
 /** Grid cell for the nearest-node lookup, in degrees. */
 const CELL_DEG = 0.1;
 /** Turn-offs closer together than this are merged into the later one. */
@@ -88,6 +90,7 @@ export class RoadNet {
   private readonly eFile: Int32Array;
   private readonly eIx: Int32Array;
   private readonly cost: Float64Array;
+  private readonly oneway: Uint8Array;
   private readonly maxSpeedMs: number;
   /** CSR adjacency over directed moves: from node n, edges adjEdge[adjStart[n] .. adjStart[n+1]). */
   private readonly adjStart: Int32Array;
@@ -134,7 +137,7 @@ export class RoadNet {
     this.eFile = new Int32Array(edgeCount);
     this.eIx = new Int32Array(edgeCount);
     this.cost = new Float64Array(edgeCount);
-    const oneway = new Uint8Array(edgeCount);
+    const oneway = (this.oneway = new Uint8Array(edgeCount));
     let maxKmh = DEFAULT_KMH[0];
     let ei = 0;
     files.forEach((f, fi) => {
@@ -231,29 +234,90 @@ export class RoadNet {
     return this.ea[ei] === from ? this.eb[ei] : this.ea[ei];
   }
 
+  /**
+   * The closest points along roads to p, for long roads with no junction
+   * nearby (a start in Big Sur is 30 km from the nearest one). An edge can
+   * only come within maxMeters of p if its start node is within maxMeters
+   * plus its length, which rules out almost every edge cheaply.
+   */
+  nearestOnEdges(p: LatLng, maxMeters: number, k = 4): EdgeSnap[] {
+    const kx = 111_320 * Math.cos((p.lat * Math.PI) / 180);
+    const ky = 110_540;
+    const found: EdgeSnap[] = [];
+    for (let ei = 0; ei < this.ea.length; ei++) {
+      const a = this.ea[ei];
+      const rough = Math.hypot((this.nx[a] / this.q - p.lng) * kx, (this.ny[a] / this.q - p.lat) * ky);
+      if (rough - this.edgeMeters(ei) * 1.05 > maxMeters) continue;
+      const shape = this.edgeCoords(ei, a);
+      let best = Infinity;
+      let bestI = 0;
+      let bestT = 0;
+      for (let i = 0; i < shape.length - 1; i++) {
+        const ax = (shape[i].lng - p.lng) * kx, ay = (shape[i].lat - p.lat) * ky;
+        const dx = (shape[i + 1].lng - shape[i].lng) * kx, dy = (shape[i + 1].lat - shape[i].lat) * ky;
+        const t = Math.max(0, Math.min(1, -(ax * dx + ay * dy) / (dx * dx + dy * dy || 1)));
+        const d = Math.hypot(ax + dx * t, ay + dy * t);
+        if (d < best) [best, bestI, bestT] = [d, i, t];
+      }
+      if (best > maxMeters) continue;
+      const A = shape[bestI], B = shape[bestI + 1];
+      const at = { lat: A.lat + (B.lat - A.lat) * bestT, lng: A.lng + (B.lng - A.lng) * bestT };
+      const toA = [...shape.slice(0, bestI + 1), at];
+      const toB = [at, ...shape.slice(bestI + 1)];
+      const share = lineMeters(toA) / (lineMeters(toA) + lineMeters(toB) || 1);
+      found.push({ edge: ei, at, meters: best, toA, toB, share });
+    }
+    found.sort((x, y) => x.meters - y.meters);
+    return found.slice(0, k);
+  }
+
   /** Fastest route between two points (A*). The start and end join the network by short straight stretches. */
   route(start: LatLng, end: LatLng): RoadPath {
     const from = this.nearestWithin(start, true);
     const to = this.nearestWithin(end, false);
-    if (!from.length) throw new Error('The start is too far from any highway in the road files.');
-    if (!to.length) throw new Error('The destination is too far from any highway in the road files.');
+    const maxR = CONNECTOR_RADII_M[CONNECTOR_RADII_M.length - 1];
+    const fromEdges = (from[0]?.meters ?? Infinity) > SNAP_TO_EDGE_M ? this.nearestOnEdges(start, Math.min(from[0]?.meters ?? maxR, maxR)) : [];
+    const toEdges = (to[0]?.meters ?? Infinity) > SNAP_TO_EDGE_M ? this.nearestOnEdges(end, Math.min(to[0]?.meters ?? maxR, maxR)) : [];
+    if (!from.length && !fromEdges.length) throw new Error('The start is too far from any highway in the road files.');
+    if (!to.length && !toEdges.length) throw new Error('The destination is too far from any highway in the road files.');
     const connectorCost = (m: number) => (m * CONNECTOR_WIND) / (CONNECTOR_KMH / 3.6);
     const n = this.nodeCount;
     const g = new Float64Array(n).fill(Infinity);
     const prevEdge = new Int32Array(n).fill(-1);
     const prevNode = new Int32Array(n).fill(-1);
     const closed = new Uint8Array(n);
+    /** How the trip reaches the network: a node, or a point along a road and on to a node. */
+    const seedShape = new Map<number, RoadPart>();
     const exitCost = new Map<number, number>();
-    for (const t of to) exitCost.set(t.node, Math.min(exitCost.get(t.node) ?? Infinity, connectorCost(t.meters)));
+    const exitShape = new Map<number, RoadPart>();
+    const addExit = (node: number, c: number, part: RoadPart | null) => {
+      if (c >= (exitCost.get(node) ?? Infinity)) return;
+      exitCost.set(node, c);
+      if (part) exitShape.set(node, part);
+      else exitShape.delete(node);
+    };
+    for (const t of to) addExit(t.node, connectorCost(t.meters), null);
+    for (const sn of toEdges) {
+      const c = connectorCost(sn.meters);
+      // Drive from the edge's start up to the point, or (two-way roads) back from its end.
+      addExit(this.ea[sn.edge], c + this.cost[sn.edge] * sn.share, { edge: sn.edge, shape: sn.toA });
+      if (!this.oneway[sn.edge]) addExit(this.eb[sn.edge], c + this.cost[sn.edge] * (1 - sn.share), { edge: sn.edge, shape: sn.toB.slice().reverse() });
+    }
     const endX = end.lng, endY = end.lat;
     const h = (i: number) => haversineMeters({ lat: this.ny[i] / this.q, lng: this.nx[i] / this.q }, { lat: endY, lng: endX }) / this.maxSpeedMs;
     const heap = new MinHeap();
-    for (const s of from) {
-      const c = connectorCost(s.meters);
-      if (c < g[s.node]) {
-        g[s.node] = c;
-        heap.push(s.node, c + h(s.node));
-      }
+    const seed = (node: number, c: number, part: RoadPart | null) => {
+      if (c >= g[node]) return;
+      g[node] = c;
+      if (part) seedShape.set(node, part);
+      else seedShape.delete(node);
+      heap.push(node, c + h(node));
+    };
+    for (const sn of from) seed(sn.node, connectorCost(sn.meters), null);
+    for (const sn of fromEdges) {
+      const c = connectorCost(sn.meters);
+      seed(this.eb[sn.edge], c + this.cost[sn.edge] * (1 - sn.share), { edge: sn.edge, shape: sn.toB });
+      if (!this.oneway[sn.edge]) seed(this.ea[sn.edge], c + this.cost[sn.edge] * sn.share, { edge: sn.edge, shape: sn.toA.slice().reverse() });
     }
     let best = Infinity;
     let bestNode = -1;
@@ -284,13 +348,17 @@ export class RoadNet {
     for (let v = bestNode; prevEdge[v] >= 0; v = prevNode[v]) legs.push({ edge: prevEdge[v], from: prevNode[v] });
     legs.reverse();
     const firstNode = legs.length ? legs[0].from : bestNode;
+    const startPart = seedShape.get(firstNode) ?? null;
+    const endPart = exitShape.get(bestNode) ?? null;
     return {
       firstNode,
       lastNode: bestNode,
       legs,
       seconds: best,
-      startConnectorM: haversineMeters(start, this.node(firstNode)),
-      endConnectorM: haversineMeters(end, this.node(bestNode)),
+      startPart,
+      endPart,
+      startConnectorM: haversineMeters(start, startPart ? startPart.shape[0] : this.node(firstNode)),
+      endConnectorM: haversineMeters(end, endPart ? endPart.shape[endPart.shape.length - 1] : this.node(bestNode)),
     };
   }
 
@@ -312,7 +380,7 @@ export class RoadNet {
     return this.ea[ei] === fromNode ? out : out.reverse();
   }
 
-  /** What a road sign would call this edge: name and route number, like OSRM's step names. */
+  /** What a road sign would call this edge: name and route number. */
   edgeName(ei: number): string {
     const f = this.files[this.eFile[ei]];
     const e = f.edges[this.eIx[ei]];
@@ -337,7 +405,7 @@ export class RoadNet {
     return this.files[this.eFile[ei]].edges[this.eIx[ei]][7];
   }
 
-  /** Plans a trip and returns it in the same shape the game gets from OSRM. */
+  /** Plans a trip and returns it as the game's raw route. */
   planTrip(start: LatLng, end: LatLng, startLabel: string, endLabel: string): RawRoute {
     const p = this.route(start, end);
     const coords: LatLng[] = [start];
@@ -345,7 +413,6 @@ export class RoadNet {
       const last = coords[coords.length - 1];
       if (Math.abs(last.lat - c.lat) > 1e-6 || Math.abs(last.lng - c.lng) > 1e-6) coords.push(c);
     };
-    push(this.node(p.firstNode));
     const steps: RawStep[] = [];
     let meters = (p.startConnectorM + p.endConnectorM) * CONNECTOR_WIND;
     let prevName = '';
@@ -353,14 +420,21 @@ export class RoadNet {
     const exits: NonNullable<RawRoute['exits']> = [];
     const limits: NonNullable<RawRoute['limits']> = [];
     let lastKmh = -1;
-    for (const leg of p.legs) {
+    // The trip in pieces: maybe part of a road to the first junction, whole roads, maybe part of one at the end.
+    const pieces: { edge: number; from: number; shape: LatLng[]; meters: number }[] = [];
+    if (p.startPart) pieces.push({ edge: p.startPart.edge, from: -1, shape: p.startPart.shape, meters: lineMeters(p.startPart.shape) });
+    else push(this.node(p.firstNode));
+    for (const leg of p.legs) pieces.push({ edge: leg.edge, from: leg.from, shape: this.edgeCoords(leg.edge, leg.from), meters: this.edgeMeters(leg.edge) });
+    if (p.endPart) pieces.push({ edge: p.endPart.edge, from: -1, shape: p.endPart.shape, meters: lineMeters(p.endPart.shape) });
+    for (const leg of pieces) {
       // Exits passed on a motorway: the node where this leg starts.
-      const exit = this.edgeClass(leg.edge) === 0 ? this.exitAt.get(leg.from) : undefined;
+      const exit = leg.from >= 0 && this.edgeClass(leg.edge) === 0 ? this.exitAt.get(leg.from) : undefined;
       if (exit) exits.push({ location: this.node(leg.from), ref: exit[0], name: exit[1] });
       const kmh = this.edgeSpeed(leg.edge);
-      if (kmh !== lastKmh && (kmh > 0 || lastKmh > 0)) limits.push({ location: this.node(leg.from), kmh });
+      if (kmh !== lastKmh && (kmh > 0 || lastKmh > 0)) limits.push({ location: leg.shape[0], kmh });
       lastKmh = kmh;
-      const shape = this.edgeCoords(leg.edge, leg.from);
+      const shape = leg.shape;
+      if (coords.length < 2) push(shape[0]);
       const name = this.edgeName(leg.edge);
       // Ramps usually have no name; the turn-off is named after the road they lead to.
       if (name && name !== prevName && coords.length >= 2) {
@@ -377,7 +451,7 @@ export class RoadNet {
       }
       if (name) prevName = name;
       for (let i = 1; i < shape.length; i++) push(shape[i]);
-      const m = this.edgeMeters(leg.edge);
+      const m = leg.meters;
       meters += m;
       sinceStep += m;
     }
@@ -408,11 +482,36 @@ export class RoadNet {
 
 }
 
+/** Part of one road, driven along `shape`: from a point on it to a junction, or from a junction to a point. */
+export interface RoadPart {
+  edge: number;
+  shape: LatLng[];
+}
+
+/** The closest point on an edge to some place. toA runs from the edge's start node to the point, toB on to its end node. */
+export interface EdgeSnap {
+  edge: number;
+  at: LatLng;
+  meters: number;
+  toA: LatLng[];
+  toB: LatLng[];
+  /** How far along the edge the point is, 0 to 1. */
+  share: number;
+}
+
+function lineMeters(line: LatLng[]): number {
+  let m = 0;
+  for (let i = 1; i < line.length; i++) m += haversineMeters(line[i - 1], line[i]);
+  return m;
+}
+
 export interface RoadPath {
   firstNode: number;
   lastNode: number;
   legs: { edge: number; from: number }[];
   seconds: number;
+  startPart: RoadPart | null;
+  endPart: RoadPart | null;
   startConnectorM: number;
   endConnectorM: number;
 }

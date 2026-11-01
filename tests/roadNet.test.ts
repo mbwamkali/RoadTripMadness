@@ -79,6 +79,21 @@ describe('RoadNet', () => {
     expect(postedLimit(route, route.limits![1].at + 1)).toBe(0);
   });
 
+  it('joins a long road part way along when no junction is near', () => {
+    // Halfway between A and B, 110 m south of the eastbound carriageway: the nearest junction is 5.5 km away.
+    const raw = net().planTrip({ lat: -0.001, lng: 0.05 }, { lat: 0.101, lng: 0.2 }, 'Midway', 'North');
+    expect(raw.coords[1].lng).toBeCloseTo(0.05, 3);
+    expect(raw.coords[1].lat).toBeCloseTo(0, 5);
+    expect(raw.realMeters).toBeGreaterThan(27_500);
+    expect(raw.realMeters).toBeLessThan(28_500);
+    expect(raw.steps.filter((s) => s.type === 'turn').map((s) => s.name)).toEqual(['I 1', 'Main Street']);
+    // And the same for an end: stop part way along the westbound side, never driving the eastbound one backwards.
+    const back = net().planTrip({ lat: 0.101, lng: 0.2 }, { lat: 0.002, lng: 0.05 }, 'North', 'Midway');
+    const last = back.coords[back.coords.length - 2];
+    expect(last.lat).toBeCloseTo(0.001, 5);
+    expect(last.lng).toBeCloseTo(0.05, 3);
+  });
+
   it('fails clearly when a place is far from every road', () => {
     expect(() => net().planTrip({ lat: 10, lng: 10 }, { lat: 0, lng: 0 }, 'Nowhere', 'West')).toThrow(/too far/);
   });

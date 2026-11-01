@@ -34,7 +34,7 @@ jobs:
         run: sh scripts/fetch-osm-roads.sh "$RUNNER_TEMP/osm"
       - name: Build road files
         run: |
-          python3 scripts/build-osm-roads.py "$RUNNER_TEMP/osm/us-roads.osm.pbf" osm-roads \
+          python3 scripts/build-osm-roads.py "$RUNNER_TEMP"/osm/roads-*.osm.pbf osm-roads \
             --source "OpenStreetMap state extracts from osm.download.movisda.io, $(date -u +%Y-%m-%d)"
           tar -czf osm-roads.tar.gz -C osm-roads .
           ls -l osm-roads.tar.gz

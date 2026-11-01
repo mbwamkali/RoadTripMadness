@@ -85,13 +85,19 @@ class Reader(osmium.SimpleHandler):
         self.ways = []
         self.towns = []
         self.exits = {}
+        # Each state file holds its own clipped copy of a road that crosses
+        # the border, under the same way id, so ways are told apart by their
+        # nodes too. Only exact repeats (and repeated towns) are skipped.
+        self.seen_ways = set()
+        self.seen_towns = set()
 
     def node(self, n):
         t = n.tags
         if t.get('highway') == 'motorway_junction':
             self.exits[n.id] = (t.get('ref', ''), t.get('exit_to') or t.get('name') or '')
         place = t.get('place')
-        if place in ('city', 'town') and 'name' in t:
+        if place in ('city', 'town') and 'name' in t and n.id not in self.seen_towns:
+            self.seen_towns.add(n.id)
             pop = re.sub(r'[^\d]', '', t.get('population', ''))
             self.towns.append([t['name'], 0 if place == 'city' else 1, round(n.location.lon * Q), round(n.location.lat * Q), int(pop) if pop else 0])
 
@@ -107,6 +113,10 @@ class Reader(osmium.SimpleHandler):
             return
         if len(pts) < 2:
             return
+        key = (w.id, tuple(p[0] for p in pts))
+        if key in self.seen_ways:
+            return
+        self.seen_ways.add(key)
         oneway = t.get('oneway', '')
         if oneway == '-1':
             pts.reverse()
@@ -364,14 +374,17 @@ def write_json(path, doc):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('pbf')
+    ap.add_argument('pbf', nargs='+', help='filtered state files (roads-XX.osm.pbf); read one by one, never merged')
     ap.add_argument('out')
     ap.add_argument('--source', default='OpenStreetMap extract')
     ap.add_argument('--min-connected', type=float, default=0.95, help='fail if fewer road nodes join the main network')
     args = ap.parse_args()
 
     r = Reader()
-    r.apply_file(args.pbf, locations=True)
+    # Not osmium merge: it keeps one copy of a way that two state files both
+    # clipped at their border, which left gaps of kilometres (I-40 at Texola).
+    for f in args.pbf:
+        r.apply_file(f, locations=True)
     print(f'read {len(r.ways)} ways, {len(r.exits)} exits, {len(r.towns)} towns', file=sys.stderr)
 
     joined = join_cut_ends(r.ways)

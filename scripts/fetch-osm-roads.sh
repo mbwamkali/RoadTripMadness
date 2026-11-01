@@ -5,7 +5,7 @@
 # soon as it is filtered, so this needs only about 2 GB of free disk.
 #
 # usage: sh scripts/fetch-osm-roads.sh [work_dir]   (default data-src/osm)
-# Needs osmium-tool. Result: <work_dir>/us-roads.osm.pbf
+# Needs osmium-tool. Result: <work_dir>/roads-XX.osm.pbf, one per state
 #
 # Source: state extracts of OpenStreetMap cut by movisda
 # (https://osm.download.movisda.io), updated daily. The data is © OpenStreetMap
@@ -25,5 +25,6 @@ for s in $STATES; do
     n/highway=motorway_junction n/place=city,town
   rm -f "$DIR/US-$s.osm.pbf"
 done
-osmium merge --overwrite --no-progress -o "$DIR/us-roads.osm.pbf" "$DIR"/roads-*.osm.pbf
-ls -l "$DIR/us-roads.osm.pbf"
+# The build reads the state files one by one. Merging them would keep only
+# one copy of each road that crosses a state line, and lose the other half.
+ls -l "$DIR"/roads-*.osm.pbf
