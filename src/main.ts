@@ -38,6 +38,7 @@ import { BOOST_FUEL, BOSS_INFO, boost, createCombat, ENEMY_STATS, horn, WEAPONS,
 import { DIFFICULTIES, DIFFICULTY_IDS, type Difficulty } from './game/difficulty';
 import { addScore, loadScores, scoreFor, type ScoreEntry } from './game/scores';
 import { CREW, rollEvent, type RoadEvent } from './game/events';
+import { mpg, swipeAction } from './game/driving';
 import { clockText, hourOf, isNight, nightDanger, weatherAt, WEATHER_INFO, type Weather } from './game/time';
 import type { GameScene } from './scenes/common';
 import { DriveScene } from './scenes/DriveScene';
@@ -697,6 +698,17 @@ function showDriveHud(): void {
     return b;
   };
   const speedText = h('span', { class: 'speed' }, '');
+  // The dashboard: big speed, clock and fuel economy.
+  const dashSpeed = h('b', {}, '');
+  const dashClock = h('b', {}, '');
+  const dashMpg = h('b', {}, '');
+  const dash = h(
+    'div',
+    { class: 'dash' },
+    h('div', { class: 'gauge speed-gauge' }, dashSpeed, h('small', {}, 'mph')),
+    h('div', { class: 'gauge' }, dashClock, h('small', {}, 'time')),
+    h('div', { class: 'gauge' }, dashMpg, h('small', {}, 'mpg')),
+  );
   const controls = h(
     'div',
     { class: 'drive-pad' },
@@ -716,9 +728,17 @@ function showDriveHud(): void {
       { class: 'hud' },
       h('div', { class: 'landmark-toast' }),
       h('div', { class: 'hud-top' }, h('div', { class: 'stats' }, fuel.el, hp.el, inv), h('div', { class: 'side' }, map.canvas, h('div', { class: 'row' }, radioBtn, speedBtn, menuBtn))),
-      h('div', { class: 'hud-bottom' }, promptEl, shootRow, controls, progress, progressText),
+      h('div', { class: 'hud-bottom' }, promptEl, shootRow, dash, controls, progress, progressText),
     ),
   );
+  try {
+    if (!localStorage.getItem('rtm-swipe-hint')) {
+      localStorage.setItem('rtm-swipe-hint', '1');
+      setTimeout(() => showToast('👆', 'Swipe to drive', 'Swipe sideways to change lanes, up or down to change speed'), 1500);
+    }
+  } catch {
+    // Storage blocked: skip the hint.
+  }
   let lastInv = '';
   let frameCount = 0;
   hudTick = () => {
@@ -734,12 +754,16 @@ function showDriveHud(): void {
     const hour = hourOf(s);
     const wx = weatherAt(s);
     const road = roadAt(s.route, s.distance);
-    progressText.textContent = `${isNight(hour) ? '🌙' : '☀️'} ${clockText(hour)} · ${wx === 'clear' ? '' : `${WEATHER_INFO[wx].icon} ${WEATHER_INFO[wx].name} · `}${road ? `${road} · ` : ''}${drive ? `${drive.speedLimit()} mph · ` : ''}${fmtKm(left)} to ${s.route.endLabel.split(',')[0]}`;
+    progressText.textContent = `${isNight(hour) ? '🌙' : '☀️'} ${wx === 'clear' ? '' : `${WEATHER_INFO[wx].icon} ${WEATHER_INFO[wx].name} · `}${road ? `${road} · ` : ''}${fmtKm(left)} to ${s.route.endLabel.split(',')[0]}`;
+    dashClock.textContent = clockText(hour);
     if (frameCount++ % 10 === 0) map.draw(s.distance, s.passed);
     if (drive) {
-      const mph = Math.round(drive.speedLimit() * drive.throttle);
-      speedText.textContent = `${mph} mph`;
-      speedText.classList.toggle('fast', drive.throttle > 1);
+      const limit = drive.speedLimit();
+      const mph = Math.round(limit * drive.throttle);
+      speedText.textContent = `Limit ${limit}`;
+      dashSpeed.textContent = String(mph);
+      dash.classList.toggle('fast', drive.throttle > 1);
+      dashMpg.textContent = String(Math.round(mpg(s, drive.throttle)));
       controls.classList.toggle('wrong-side', drive.wrongSide);
       const t = drive.target;
       shootRow.classList.toggle('show', !!t);
@@ -1215,9 +1239,23 @@ function toNdc(e: PointerEvent): THREE.Vector2 {
   const r = canvas.getBoundingClientRect();
   return ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
 }
+// Swipe on the road to drive: sideways changes lanes, up and down change speed.
+let swipeFrom: { x: number; y: number; id: number } | null = null;
 canvas.addEventListener('pointerdown', (e) => {
   if (active === combat && combat) combat.pointerDown(toNdc(e));
+  else if (drive && active === drive) swipeFrom = { x: e.clientX, y: e.clientY, id: e.pointerId };
 });
+canvas.addEventListener('pointerup', (e) => {
+  const from = swipeFrom;
+  swipeFrom = null;
+  if (!from || from.id !== e.pointerId || !drive || active !== drive) return;
+  const act = swipeAction(e.clientX - from.x, e.clientY - from.y);
+  if (act === 'left') drive.steer(-1);
+  else if (act === 'right') drive.steer(1);
+  else if (act === 'faster') drive.pedal(1);
+  else if (act === 'slower') drive.pedal(-1);
+});
+canvas.addEventListener('pointercancel', () => (swipeFrom = null));
 window.addEventListener('pointerup', () => combat?.pointerUp());
 canvas.addEventListener('pointermove', (e) => {
   if (active === combat && combat && e.buttons) combat.pointerDown(toNdc(e));

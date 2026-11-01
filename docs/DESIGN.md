@@ -126,3 +126,7 @@ STATES="VA WV" sh scripts/fetch-osm-roads.sh data-src/osm-test   # a quick test 
 - Online leaderboards.
 - Package for app stores with Capacitor.
 - Offline region packs for detailed routing in one state, and atlases beyond the US.
+
+## Round two (build plan, 2026-11-01)
+
+- **Dashboard and swipes (phase 1).** A dashboard above the driving buttons shows your speed in big numbers, the clock and live fuel economy (mpg, from the ride, engine upgrades and difficulty). Swipe on the road to drive: sideways changes lanes, up speeds up, down slows down. The lane and speed buttons stay as a backup, and the middle one now shows the posted limit. A one-time hint explains the swipes.
