@@ -32,7 +32,7 @@ interface Fx {
 export class CombatScene implements GameScene {
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(60, 1, 0.3, 400);
-  private car = makeCar();
+  private car: THREE.Group;
   private roadTex = makeRoadTexture();
   private road: THREE.Mesh;
   private props: THREE.Group = new THREE.Group();
@@ -49,6 +49,7 @@ export class CombatScene implements GameScene {
     private state: GameState,
     private cb: CombatCallbacks,
   ) {
+    this.car = makeCar(undefined, state.upgrades);
     this.scene.background = new THREE.Color(combat.title.includes('cat') ? 0x2a1f4a : 0xe8a868);
     this.scene.fog = new THREE.Fog(this.scene.background as THREE.Color, 60, 160);
     addLights(this.scene);

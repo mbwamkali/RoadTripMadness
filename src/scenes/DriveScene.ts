@@ -43,7 +43,7 @@ export class DriveScene implements GameScene {
   paused = false;
 
   private chunks = new Map<number, THREE.Group>();
-  private car = makeCar();
+  private car: THREE.Group;
   private ground: THREE.Mesh;
   private roadTex = makeRoadTexture();
   private roadMat: THREE.MeshLambertMaterial;
@@ -66,6 +66,7 @@ export class DriveScene implements GameScene {
     private path: Path,
     private cb: DriveCallbacks,
   ) {
+    this.car = makeCar(undefined, state.upgrades);
     this.biome = biomeFor(state);
     this.scene.background = new THREE.Color(this.biome.sky);
     this.scene.fog = new THREE.Fog(this.biome.sky, 300, 1300);
@@ -119,6 +120,18 @@ export class DriveScene implements GameScene {
   /** The player chose to turn off at a stop; the car signals and takes the turn when it gets there. */
   takeTurn(stop: Stop): void {
     this.pendingTurn = stop;
+  }
+
+  /** Rebuilds the car model after an upgrade. */
+  refreshCar(): void {
+    const pos = this.car.position.clone();
+    const rot = this.car.quaternion.clone();
+    this.scene.remove(this.car);
+    disposeTree(this.car);
+    this.car = makeCar(undefined, this.state.upgrades);
+    this.car.position.copy(pos);
+    this.car.quaternion.copy(rot);
+    this.scene.add(this.car);
   }
 
   /** Changed their mind before reaching the turn. */

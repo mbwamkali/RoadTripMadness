@@ -65,6 +65,8 @@ export interface CombatState {
   kills: number;
   loot: Partial<Inventory>;
   title: string;
+  gunDamage: number;
+  ramDamage: number;
 }
 
 export const ENEMY_STATS: Record<EnemyType, { hp: number; name: string }> = {
@@ -92,6 +94,10 @@ export interface CombatOptions {
   progress: number;
   /** An ambush while scavenging only has ground threats. */
   ambush?: boolean;
+  /** Machine gun damage multiplier from the roof turret upgrade. */
+  gunDamage?: number;
+  /** Damage the car takes from hitting a zombie (ram plate upgrade lowers it). */
+  ramDamage?: number;
 }
 
 export function createCombat(opts: CombatOptions): CombatState {
@@ -133,6 +139,8 @@ export function createCombat(opts: CombatOptions): CombatState {
     kills: 0,
     loot: {},
     title: titles[theme],
+    gunDamage: opts.gunDamage ?? 1,
+    ramDamage: opts.ramDamage ?? 6,
   };
 }
 
@@ -213,7 +221,7 @@ export function stepCombat(c: CombatState, dt: number): number {
       if (!stunned) e.x += Math.sign(c.carX - e.x) * Math.min(Math.abs(c.carX - e.x), 1.8 * dt);
       if (e.z > -1.5 && e.z < 1.5 && Math.abs(e.x - c.carX) < 1.5) {
         // Ploughing into a zombie hurts the car unless you're boosting through.
-        if (!boosting) hitCar(6, 'zombie');
+        if (!boosting && c.ramDamage > 0) hitCar(c.ramDamage, 'zombie');
         kill(c, e, false);
       }
     } else if (e.type === 'outlaw') {
@@ -292,6 +300,7 @@ export function fireAt(c: CombatState, inv: Inventory, enemyId: number): boolean
     if (e.hp <= 0) continue;
     const d = Math.hypot(e.x - target.x, e.z - target.z, e.y - target.y);
     let dmg = e === target ? w.dmg : d <= w.splash ? (weapon === 'catnip' ? w.dmg : w.dmg / 2) : 0;
+    if (weapon === 'bullets') dmg *= c.gunDamage;
     if (dmg <= 0) continue;
     if (weapon === 'catnip' && e.type === 'catship') dmg *= 3;
     if (weapon === 'catnip' && e.type !== 'catship') e.stunned = Math.max(e.stunned, 1.5);

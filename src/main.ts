@@ -12,14 +12,15 @@ import {
   clearSave,
   FUEL_PRICE,
   loadGame,
-  MAX_HEALTH,
+  maxHealth,
+  buyUpgrade,
   newGame,
   PLACE_TITLES,
   repair,
   repairCost,
   saveGame,
   search,
-  TANK,
+  tankSize,
   type ActionResult,
   type GameState,
 } from './game/state';
@@ -30,6 +31,7 @@ import { DriveScene } from './scenes/DriveScene';
 import { CombatScene } from './scenes/CombatScene';
 import { clearUi, fmtKm, h, ui } from './ui/dom';
 import { Minimap } from './ui/minimap';
+import { gunDamageFor, MAX_LEVEL, ramDamageFor, upgradeCost, UPGRADES, type UpgradeKind } from './game/upgrades';
 import { sound } from './audio/sound';
 
 const canvas = document.getElementById('view') as HTMLCanvasElement;
@@ -426,8 +428,8 @@ function showDriveHud(): void {
   let lastInv = '';
   let frameCount = 0;
   hudTick = () => {
-    fuel.set(s.inv.fuel, TANK);
-    hp.set(s.health, MAX_HEALTH);
+    fuel.set(s.inv.fuel, tankSize(s));
+    hp.set(s.health, maxHealth(s));
     const key = JSON.stringify(s.inv);
     if (key !== lastInv) {
       inv.replaceChildren(inventoryLine(s));
@@ -498,8 +500,8 @@ function showStop(stop: Stop): void {
   const hp = bar('hp', '🔧');
   meters.append(fuel.el, hp.el);
   const refresh = () => {
-    fuel.set(s.inv.fuel, TANK);
-    hp.set(s.health, MAX_HEALTH);
+    fuel.set(s.inv.fuel, tankSize(s));
+    hp.set(s.health, maxHealth(s));
     invEl.replaceChildren(inventoryLine(s));
     cards.replaceChildren(...stop.places.map(placeCard));
   };
@@ -517,13 +519,14 @@ function showStop(stop: Stop): void {
     const n = s.searches[`${stop.id}:${place}`] ?? 0;
     const actions: HTMLElement[] = [];
     if (place === 'pumps') {
-      const want = Math.max(0, Math.floor(TANK - s.inv.fuel));
+      const want = Math.max(0, Math.floor(tankSize(s) - s.inv.fuel));
       actions.push(h('button', { class: 'btn small primary', onclick: () => say(buyFuel(s)), disabled: want === 0 }, `Fill up ($${Math.min(want * FUEL_PRICE, Math.floor(s.inv.cash / FUEL_PRICE) * FUEL_PRICE)})`));
     }
     if (place === 'garage') {
       const cost = repairCost(s);
       actions.push(
         h('button', { class: 'btn small primary', onclick: () => say(repair(s)), disabled: cost.hp === 0 }, cost.hp ? `Repair (${cost.scrap} scrap or $${cost.cash})` : 'Car is fine'),
+        h('button', { class: 'btn small', onclick: () => showUpgrades(s, say) }, '🔧 Upgrades'),
       );
     }
     actions.push(h('button', { class: 'btn small', onclick: () => say(search(s, stop.id, place)) }, n === 0 ? 'Search' : `Search again (${n === 1 ? 'risky' : 'very risky'})`));
@@ -558,12 +561,69 @@ function showStop(stop: Stop): void {
   refresh();
 }
 
+/** The garage's upgrade shop, as a modal over the explore screen. */
+function showUpgrades(s: GameState, say: (r: ActionResult) => void): void {
+  const list = h('div', { class: 'upgrades' });
+  const wallet = h('p', { class: 'muted' });
+  const render = () => {
+    wallet.textContent = `You have ${Math.floor(s.inv.scrap)} scrap and $${Math.floor(s.inv.cash)}.`;
+    list.replaceChildren(
+      ...(Object.keys(UPGRADES) as UpgradeKind[]).map((k) => {
+        const u = UPGRADES[k];
+        const level = s.upgrades[k];
+        const maxed = level >= MAX_LEVEL;
+        const cost = upgradeCost(level);
+        const afford = s.inv.scrap >= cost.scrap && s.inv.cash >= cost.cash;
+        return h(
+          'div',
+          { class: 'upgrade' },
+          h('span', { class: 'icon' }, u.icon),
+          h(
+            'div',
+            { class: 'info' },
+            h('strong', {}, u.name),
+            h('span', { class: 'pips' }, '●'.repeat(level) + '○'.repeat(MAX_LEVEL - level)),
+            h('small', {}, maxed ? u.describe(level) : `Next: ${u.describe(level + 1)}`),
+          ),
+          h(
+            'button',
+            {
+              class: `btn small ${afford && !maxed ? 'primary' : ''}`,
+              disabled: maxed || !afford,
+              onclick: () => {
+                const r = buyUpgrade(s, k);
+                say(r);
+                if (r.ok) drive?.refreshCar();
+                render();
+              },
+            },
+            maxed ? 'Maxed' : `${cost.scrap}🔩 $${cost.cash}`,
+          ),
+        );
+      }),
+    );
+  };
+  const overlay = h(
+    'div',
+    { class: 'modal' },
+    h('div', { class: 'card wide' }, h('h2', {}, 'Garage upgrades'), wallet, list, h('button', { class: 'btn primary', onclick: () => overlay.remove() }, 'Done')),
+  );
+  render();
+  ui().append(overlay);
+}
+
 // --------------------------------------------------------------- combat
 
 function startCombat(ambush: boolean, stop?: Stop): void {
   const s = state!;
   sound.stopMusic();
-  const c = createCombat({ seed: s.seed + s.encounters * 31 + (ambush ? 7 : 0) + Math.floor(s.distance), progress: s.distance / path!.length, ambush });
+  const c = createCombat({
+    seed: s.seed + s.encounters * 31 + (ambush ? 7 : 0) + Math.floor(s.distance),
+    progress: s.distance / path!.length,
+    ambush,
+    gunDamage: gunDamageFor(s.upgrades),
+    ramDamage: ramDamageFor(s.upgrades),
+  });
   combat?.dispose();
   combat = new CombatScene(c, s, {
     onCarHit: () => {
@@ -626,7 +686,7 @@ function showCombatHud(c: CombatState): void {
     ),
   );
   hudTick = () => {
-    hp.set(s.health, MAX_HEALTH);
+    hp.set(s.health, maxHealth(s));
     esc.set(c.escape, c.escapeAt, `${c.enemies.length + c.queue.length} left`);
     hornBtn.classList.toggle('cooling', c.hornCooldown > 0);
     boostBtn.classList.toggle('cooling', c.boostCooldown > 0 || s.inv.fuel < BOOST_FUEL + 1);

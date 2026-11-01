@@ -1,6 +1,7 @@
 import { pathFromRoute, type RouteData } from '../geo/route';
 import type { Path } from '../geo/geo';
 import { fillLandmarks, type Landmark } from './landmarks';
+import { fuelEfficiency, MAX_LEVEL, maxHealthFor, noUpgrades, tankFor, upgradeCost, UPGRADES, type UpgradeKind, type Upgrades } from './upgrades';
 import { generateStops, type PlaceKind, type Stop } from './stops';
 import { hashString, makeRng, range, rangeInt, type Rng } from './rng';
 
@@ -25,6 +26,7 @@ export interface GameState {
   distance: number;
   health: number;
   inv: Inventory;
+  upgrades: Upgrades;
   /** Stop ids already passed or visited. */
   passed: string[];
   /** Searches done per stop+place, which raises the ambush risk. */
@@ -37,8 +39,12 @@ export interface GameState {
   log: string[];
 }
 
+/** Base values before upgrades. */
 export const MAX_HEALTH = 100;
 export const TANK = 100;
+
+export const maxHealth = (s: GameState) => maxHealthFor(s.upgrades);
+export const tankSize = (s: GameState) => tankFor(s.upgrades);
 export const FUEL_PRICE = 2; // cash per fuel unit
 export const REPAIR_SCRAP_PER_HP = 0.5;
 export const REPAIR_CASH_PER_HP = 1;
@@ -60,6 +66,7 @@ export function newGame(route: RouteData, seed = Date.now() & 0xffffffff): GameS
     landmarks: fillLandmarks(route, path.length, stops, route.landmarks ?? [], seed),
     distance: 0,
     health: MAX_HEALTH,
+    upgrades: noUpgrades(),
     inv: { fuel: 70, cash: 60, scrap: 10, bullets: 60, shells: 6, catnip: 1 },
     passed: [],
     searches: {},
@@ -85,7 +92,7 @@ export function advance(
   if (s.status !== 'driving') return { arrived: false, outOfFuel: false, encounter: false };
   const step = Math.min(dist, path.length - s.distance);
   s.distance += step;
-  s.inv.fuel = Math.max(0, s.inv.fuel - step * fuelRate);
+  s.inv.fuel = Math.max(0, s.inv.fuel - step * fuelRate * fuelEfficiency(s.upgrades));
   const arrived = s.distance >= path.length - 0.01;
   if (arrived) {
     s.status = 'won';
@@ -130,7 +137,7 @@ export interface ActionResult {
 }
 
 export function buyFuel(s: GameState): ActionResult {
-  const want = Math.floor(TANK - s.inv.fuel);
+  const want = Math.floor(tankSize(s) - s.inv.fuel);
   if (want <= 0) return { ok: false, message: 'Your tank is already full.' };
   const afford = Math.floor(s.inv.cash / FUEL_PRICE);
   const units = Math.min(want, afford);
@@ -141,13 +148,13 @@ export function buyFuel(s: GameState): ActionResult {
 }
 
 export function repairCost(s: GameState): { hp: number; scrap: number; cash: number } {
-  const hp = Math.ceil(MAX_HEALTH - s.health);
+  const hp = Math.ceil(maxHealth(s) - s.health);
   return { hp, scrap: Math.ceil(hp * REPAIR_SCRAP_PER_HP), cash: Math.ceil(hp * REPAIR_CASH_PER_HP) };
 }
 
 /** Repairs as much as the player can pay for, scrap first and cash for the rest. */
 export function repair(s: GameState): ActionResult {
-  const need = Math.ceil(MAX_HEALTH - s.health);
+  const need = Math.ceil(maxHealth(s) - s.health);
   if (need <= 0) return { ok: false, message: 'The mechanic says your car is fine.' };
   let hp = 0;
   while (hp < need) {
@@ -158,7 +165,7 @@ export function repair(s: GameState): ActionResult {
   }
   s.inv.scrap = Math.round(s.inv.scrap * 10) / 10;
   if (hp === 0) return { ok: false, message: 'You need scrap or cash to pay for repairs.' };
-  s.health = Math.min(MAX_HEALTH, s.health + hp);
+  s.health = Math.min(maxHealth(s), s.health + hp);
   return { ok: true, message: `Repaired ${hp} damage.` };
 }
 
@@ -209,11 +216,28 @@ export function search(s: GameState, stopId: string, place: PlaceKind): ActionRe
   for (const [k, v] of Object.entries(loot) as [keyof Inventory, number][]) {
     const amount = Math.floor((v ?? 0) * factor);
     if (amount <= 0) continue;
-    s.inv[k] = k === 'fuel' ? Math.min(TANK, s.inv[k] + amount) : s.inv[k] + amount;
+    s.inv[k] = k === 'fuel' ? Math.min(tankSize(s), s.inv[k] + amount) : s.inv[k] + amount;
     found.push(`${amount} ${k === 'cash' ? 'dollars' : k}`);
   }
   if (!found.length) return { ok: true, message: 'Picked clean. Nothing useful left here.' };
   return { ok: true, message: `Found ${found.join(', ')}.` };
+}
+
+/** Buys the next level of an upgrade, paying scrap first and cash for the rest of the price. */
+export function buyUpgrade(s: GameState, kind: UpgradeKind): ActionResult {
+  const level = s.upgrades[kind];
+  if (level >= MAX_LEVEL) return { ok: false, message: `${UPGRADES[kind].name} is already maxed out.` };
+  const cost = upgradeCost(level);
+  if (s.inv.scrap < cost.scrap || s.inv.cash < cost.cash) {
+    return { ok: false, message: `You need ${cost.scrap} scrap and $${cost.cash} for that.` };
+  }
+  s.inv.scrap -= cost.scrap;
+  s.inv.cash -= cost.cash;
+  const before = maxHealth(s);
+  s.upgrades[kind] = level + 1;
+  // New armor arrives in good shape.
+  if (kind === 'armor') s.health += maxHealth(s) - before;
+  return { ok: true, message: `Installed ${UPGRADES[kind].name} level ${level + 1}. ${UPGRADES[kind].describe(level + 1)}.` };
 }
 
 // ---------------------------------------------------------------- saving
@@ -234,6 +258,7 @@ export function loadGame(): GameState | null {
     if (!raw) return null;
     const s = JSON.parse(raw) as GameState;
     if (s.version !== 1 || s.status !== 'driving') return null;
+    s.upgrades ??= noUpgrades();
     // Saves from before landmarks existed.
     s.landmarks ??= fillLandmarks(s.route, pathFromRoute(s.route).length, s.stops, s.route.landmarks ?? [], s.seed);
     return s;

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { Vec2 } from '../geo/geo';
+import type { Upgrades } from '../game/upgrades';
 
 /** Game plane (x east, y north) to three.js world (x, 0, -y). */
 export const to3 = (p: Vec2, h = 0) => new THREE.Vector3(p.x, h, -p.y);
@@ -73,7 +74,7 @@ export function setBlinkers(car: THREE.Object3D, side: 'L' | 'R' | null, lit: bo
 }
 
 /** A chunky low-poly muscle car built from boxes. Faces +z. */
-export function makeCar(color = 0xd9482b): THREE.Group {
+export function makeCar(color = 0xd9482b, up?: Upgrades): THREE.Group {
   const car = new THREE.Group();
   const paint = new THREE.MeshLambertMaterial({ color });
   const dark = new THREE.MeshLambertMaterial({ color: 0x1d1d22 });
@@ -147,6 +148,7 @@ export function makeCar(color = 0xd9482b): THREE.Group {
     glow.name = `glow${side}`;
     car.add(glow);
   }
+  if (up) addUpgradeParts(car, up, metal, dark);
   const shadow = new THREE.Mesh(
     new THREE.PlaneGeometry(2.6, 4.8),
     new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35, depthWrite: false }),
@@ -203,4 +205,46 @@ export function addLights(scene: THREE.Scene): void {
   const sun = new THREE.DirectionalLight(0xffffff, 1.8);
   sun.position.set(40, 80, 30);
   scene.add(sun);
+}
+
+/** Bolts visible upgrades onto the car so players can see what they bought. */
+function addUpgradeParts(car: THREE.Group, up: Upgrades, metal: THREE.Material, dark: THREE.Material): void {
+  const plate = new THREE.MeshLambertMaterial({ color: 0x5d6168 });
+  for (let i = 0; i < up.armor; i++) {
+    for (const x of [-1.06, 1.06]) {
+      const p = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.5, 1.1), plate);
+      p.position.set(x, 0.85, 1.3 - i * 1.25);
+      car.add(p);
+    }
+  }
+  if (up.tank > 0) {
+    const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.35 + up.tank * 0.05, 0.35 + up.tank * 0.05, 1.6, 10), new THREE.MeshLambertMaterial({ color: 0x3f6b3a }));
+    drum.rotation.z = Math.PI / 2;
+    drum.position.set(0, 1.4, -1.6);
+    car.add(drum);
+  }
+  if (up.engine > 0) {
+    const scoop = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.25 + up.engine * 0.08, 0.9), dark);
+    scoop.position.set(0, 1.15 + up.engine * 0.04, 1.4);
+    car.add(scoop);
+    for (const x of [-0.75, 0.75]) {
+      const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.8, 6), metal);
+      pipe.rotation.x = Math.PI / 2;
+      pipe.position.set(x, 0.45, -2.3);
+      car.add(pipe);
+    }
+  }
+  const gun = car.getObjectByName('gun') as THREE.Mesh | undefined;
+  if (gun && up.turret > 0) {
+    gun.scale.set(1 + up.turret * 0.4, 1 + up.turret * 0.4, 1 + up.turret * 0.25);
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.5, 0.3, 8), dark);
+    base.position.set(0, 1.85, 0);
+    car.add(base);
+  }
+  if (up.ram > 0) {
+    const ram = new THREE.Mesh(new THREE.BoxGeometry(2.3 + up.ram * 0.1, 0.4 + up.ram * 0.2, 0.25), metal);
+    ram.position.set(0, 0.6 + up.ram * 0.08, 2.45);
+    ram.rotation.x = -0.25;
+    car.add(ram);
+  }
 }
