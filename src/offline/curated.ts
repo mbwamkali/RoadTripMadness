@@ -15,9 +15,9 @@ export interface CuratedRoute {
 }
 
 export const CURATED_ROUTES: CuratedRoute[] = [
-  { id: 'route-66', title: 'Route 66', blurb: 'Chicago to Santa Monica on the Mother Road, through Tulsa, Amarillo and Flagstaff.', km: 3680 },
+  { id: 'route-66', title: 'Route 66', blurb: 'Chicago to Santa Monica on the Mother Road, through Tulsa, Amarillo and Flagstaff.', km: 3516 },
   { id: 'pacific-coast', title: 'Pacific Coast Highway', blurb: 'San Francisco to San Diego along the cliffs of Big Sur.', km: 977 },
-  { id: 'coast-to-coast', title: 'New York to Los Angeles', blurb: 'The full cross-country haul, sea to shining sea.', km: 4503 },
+  { id: 'coast-to-coast', title: 'New York to Los Angeles', blurb: 'The full cross-country haul, sea to shining sea.', km: 4472 },
   { id: 'overseas-highway', title: 'Overseas Highway', blurb: 'Miami to Key West, island-hopping over open water.', km: 257 },
   { id: 'vegas-run', title: 'Vegas Run', blurb: 'Los Angeles to Las Vegas across the Mojave. Short and nasty.', km: 426 },
 ];

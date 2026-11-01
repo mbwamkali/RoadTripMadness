@@ -30,7 +30,11 @@ describe('real places along the route', () => {
 
   it('names stops after real towns on the way', () => {
     const stops = generateStops(route66, path.length, 1);
-    const towns = new Set((route66.landmarks ?? []).filter((l) => l.kind === 'citysign').map((l) => l.name));
+    // Real towns: town signs from the atlas, and the OpenStreetMap towns the route passes (its town turn-offs).
+    const towns = new Set([
+      ...(route66.landmarks ?? []).filter((l) => l.kind === 'citysign').map((l) => l.name),
+      ...route66.steps.filter((s) => s.type === 'town').map((s) => s.name),
+    ]);
     const real = stops.filter((s) => towns.has(s.name) || [...towns].some((t) => s.name.startsWith(`${t} `)));
     console.log(stops.map((s) => `${s.kind}: ${s.name}`).join(' | '));
     expect(real.length).toBeGreaterThanOrEqual(stops.length - 2);
