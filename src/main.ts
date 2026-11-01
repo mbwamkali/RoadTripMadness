@@ -43,6 +43,7 @@ import { addScore, loadScores, scoreFor, type ScoreEntry } from './game/scores';
 import { CREW, rollEvent, type RoadEvent } from './game/events';
 import { mpg, swipeAction } from './game/driving';
 import { installButton } from './ui/install';
+import { showHowToPlay } from './ui/howToPlay';
 import { narrateUi, narrator } from './audio/narrator';
 import { choiceIcon, kidChoices, kidMode, oneLine } from './game/kidMode';
 import { BOSS_SCENES, eventScenes, playEventScene, sceneKindFor, type SceneKind } from './scenes/eventScene';
@@ -156,6 +157,7 @@ function showTitle(): void {
       h('button', { class: 'btn', onclick: () => showClassics(pick, showTitle) }, 'Classic road trips'),
       savedTrips > 0 && h('button', { class: 'btn', onclick: () => showSavedTrips(pick, showTitle) }, `Saved trips (${savedTrips})`),
       h('button', { class: 'btn', onclick: () => previewRoute(buildRouteData(demoRawRoute(Date.now() % 1000)), undefined, showTitle) }, 'Quick demo trip (made-up map)'),
+      h('button', { class: 'btn', onclick: () => showHowToPlay(showTitle) }, '❓ How to play'),
       h('button', { class: 'btn ghost', onclick: showScores }, '🏆 High scores'),
       kidModeButton(),
       installButton(),

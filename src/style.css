@@ -1453,3 +1453,84 @@ body.kid .shoot-row .btn.shoot {
   pointer-events: none;
   visibility: hidden;
 }
+
+/* ------------------------------------------------------------------ how to play */
+.screen.howto {
+  background: var(--bg);
+}
+.howto-jump {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  position: sticky;
+  top: -24px;
+  z-index: 1;
+  background: var(--bg);
+  padding: 6px 0;
+}
+.howto-jump .btn {
+  width: auto;
+  min-width: 48px;
+  font-size: 22px;
+  padding: 6px 10px;
+}
+.howto-section {
+  scroll-margin-top: 70px;
+}
+.howto-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.howto-head h3 {
+  margin: 8px 0;
+  font-size: 22px;
+}
+.howto-head .speak {
+  width: auto;
+  font-size: 22px;
+  padding: 4px 12px;
+}
+.howto-tips {
+  display: grid;
+  gap: 8px;
+}
+.howto-tip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+  background: var(--panel);
+  color: var(--ink);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 10px 12px;
+  font: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.howto-tip:active {
+  border-color: var(--accent);
+}
+.howto-tip > span:last-child {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.howto-tip .muted {
+  font-size: 14px;
+}
+.howto-icon {
+  font-size: 34px;
+  line-height: 1;
+  flex: 0 0 44px;
+  text-align: center;
+}
+body.kid .howto-icon {
+  font-size: 44px;
+  flex-basis: 56px;
+}
+body.kid .howto-tip b {
+  font-size: 20px;
+}

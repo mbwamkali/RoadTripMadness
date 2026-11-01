@@ -66,11 +66,14 @@ export const narrator = {
     }
     if (!on) synth()?.cancel();
   },
-  /** Reads a line aloud (when narration is on), cutting off whatever was being read. */
-  say(text: string): void {
+  /**
+   * Reads a line aloud (when narration is on), cutting off whatever was being read.
+   * `always` reads it even with narration off (the player tapped a "read to me" button).
+   */
+  say(text: string, always = false): void {
     const s = synth();
     const line = speakable(text);
-    if (!(enabled || kidMode.on) || !s || !line) return;
+    if (!(enabled || kidMode.on || always) || !s || !line) return;
     s.cancel();
     const u = new SpeechSynthesisUtterance(line);
     voice = voice ?? pickVoice();
