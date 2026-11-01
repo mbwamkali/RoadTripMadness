@@ -84,7 +84,6 @@ export function generateStops(route: RouteData, pathLength: number, seed: number
     // Fuel stops go to a real gas station when there is one; other stops prefer a real town.
     let station = fuel ? closest(stations, ideal, spacing * 0.35, (t) => usedStations.has(t.at)) : undefined;
     const town = station ? undefined : closest(towns, ideal, spacing * 0.35, (t) => usedTowns.has(t.name));
-    if (!station && !town) station = closest(stations, ideal, spacing * 0.35, (t) => usedStations.has(t.at));
     const turn = town || station ? undefined : realTurns.find((t) => Math.abs(t.at - ideal) < spacing * 0.3);
     // A town's turn-off comes just after its sign.
     const at = station ? station.at : town ? town.at + 60 : turn ? turn.at : ideal + (rng() - 0.5) * spacing * 0.3;
@@ -107,7 +106,13 @@ export function generateStops(route: RouteData, pathLength: number, seed: number
     else {
       // Out-of-town stops borrow the nearest real town's name, the way real ones do.
       const nearby = nearestTown(at, spacing);
-      name = nearby ? `${nearby.name} ${pick(rng, OUTSKIRTS[kind])}` : pick(rng, MADE_UP_NAMES);
+      if (nearby) name = `${nearby.name} ${pick(rng, OUTSKIRTS[kind])}`;
+      else {
+        // Made-up towns, without repeats until we run out.
+        const left = MADE_UP_NAMES.filter((n) => !stops.some((st) => st.name === n));
+        name = pick(rng, left.length ? left : MADE_UP_NAMES);
+      }
+      if (stops.some((st) => st.name === name)) name = `${name} ${pick(rng, OUTSKIRTS[kind])}`;
     }
     if (town) usedTowns.add(town.name);
     stops.push({

@@ -55,32 +55,67 @@ export function simplify(coords: LatLng[], max = 300, tolerance = 250): LatLng[]
   }
 }
 
-/** One query for everything worth seeing near the route line. */
+/**
+ * Builds Overpass selectors for "near this route". A single around-filter on a
+ * long line makes the server test every matching object in the world against
+ * every segment, which times out on long trips; splitting the line into pieces
+ * and narrowing each piece by its bounding box first keeps queries fast.
+ */
+function nearRoute(coords: LatLng[], max: number, tolerance: number) {
+  const pts = simplify(coords, max, tolerance);
+  const pieces: LatLng[][] = [];
+  for (let i = 0; i < pts.length - 1; i += 12) pieces.push(pts.slice(i, i + 13));
+  if (!pieces.length) pieces.push(pts);
+  return (type: 'node' | 'way' | 'nwr', filter: string, radius: number): string => {
+    // Pad the box by the search radius (degrees; longitude scaled for latitude).
+    return pieces
+      .map((p) => {
+        const lat = p[0].lat;
+        const dLat = radius / 111_000;
+        const dLng = radius / (111_000 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
+        const s = Math.min(...p.map((c) => c.lat)) - dLat;
+        const n = Math.max(...p.map((c) => c.lat)) + dLat;
+        const w = Math.min(...p.map((c) => c.lng)) - dLng;
+        const e = Math.max(...p.map((c) => c.lng)) + dLng;
+        const line = p.map((c) => `${c.lat.toFixed(4)},${c.lng.toFixed(4)}`).join(',');
+        return `${type}${filter}(${s.toFixed(3)},${w.toFixed(3)},${n.toFixed(3)},${e.toFixed(3)})(around:${radius},${line});`;
+      })
+      .join('\n');
+  };
+}
+
+/** Rivers, mountains and towns near the route. */
 export function buildOverpassQuery(coords: LatLng[]): string {
-  const line = simplify(coords)
-    .map((c) => `${c.lat.toFixed(5)},${c.lng.toFixed(5)}`)
-    .join(',');
-  const near = (r: number) => `(around:${r},${line})`;
-  return `[out:json][timeout:25];
+  const near = nearRoute(coords, 120, 400);
+  return `[out:json][timeout:40];
 (
-  way["waterway"~"^(river|canal)$"]["name"]${near(2500)};
-  node["natural"~"^(peak|volcano)$"]["name"]${near(15000)};
-  nwr["tourism"~"^(attraction|viewpoint|theme_park)$"]["name"]${near(2500)};
-  nwr["historic"~"^(monument|memorial|castle|fort|ruins|battlefield)$"]["name"]${near(2500)};
-  nwr["man_made"~"^(tower|lighthouse|water_tower|windmill)$"]["name"]${near(2500)};
-  node["place"~"^(city|town)$"]["name"]${near(3000)};
-  node["place"="village"]["name"]${near(1200)};
+${near('way', '["waterway"="river"]["name"]', 1500)}
+${near('node', '["natural"~"^(peak|volcano)$"]["name"]', 8000)}
+${near('node', '["place"~"^(city|town)$"]["name"]', 3000)}
+${near('node', '["place"="village"]["name"]', 1200)}
 );
 out geom 700;`;
 }
 
+/** Sights right by the road: attractions, monuments, towers. */
+export function buildSightsQuery(coords: LatLng[]): string {
+  const near = nearRoute(coords, 120, 400);
+  return `[out:json][timeout:40];
+(
+${near('node', '["tourism"~"^(attraction|viewpoint|theme_park)$"]["name"]', 2000)}
+${near('node', '["historic"~"^(monument|memorial|castle|fort|ruins|battlefield)$"]["name"]', 2000)}
+${near('node', '["man_made"~"^(tower|lighthouse|water_tower|windmill)$"]["name"]', 2000)}
+);
+out 400;`;
+}
+
 /** Gas stations close to the road. A separate query so a long route's stations can't crowd out its sights. */
 export function buildFuelQuery(coords: LatLng[]): string {
-  const line = simplify(coords, 300, 150)
-    .map((c) => `${c.lat.toFixed(5)},${c.lng.toFixed(5)}`)
-    .join(',');
-  return `[out:json][timeout:25];
-nwr["amenity"="fuel"](around:350,${line});
+  const near = nearRoute(coords, 240, 150);
+  return `[out:json][timeout:40];
+(
+${near('nwr', '["amenity"="fuel"]', 350)}
+);
 out center tags 600;`;
 }
 
@@ -142,12 +177,16 @@ export function parseOverpass(json: { elements?: OsmElement[] }): MapFeature[] {
 }
 
 /** Fetches landmarks and gas stations near a route. Never throws: a trip without real map data still works. */
-export async function fetchMapFeatures(coords: LatLng[], timeoutMs = 20000): Promise<MapFeature[]> {
-  const [sights, fuel] = await Promise.all([runQuery(buildOverpassQuery(coords), timeoutMs), runQuery(buildFuelQuery(coords), timeoutMs)]);
-  return [...sights, ...fuel];
+export async function fetchMapFeatures(coords: LatLng[], timeoutMs = 45000): Promise<MapFeature[]> {
+  // Three smaller queries finish where one big one times out. The public server
+  // runs two at a time per user, so the third starts when the first is done.
+  const towns = runQuery(buildOverpassQuery(coords), timeoutMs);
+  const sights = runQuery(buildSightsQuery(coords), timeoutMs);
+  const fuel = towns.then(() => runQuery(buildFuelQuery(coords), timeoutMs));
+  return (await Promise.all([towns, sights, fuel])).flat();
 }
 
-async function runQuery(query: string, timeoutMs: number): Promise<MapFeature[]> {
+async function runQuery(query: string, timeoutMs: number, retry = true): Promise<MapFeature[]> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
@@ -156,6 +195,12 @@ async function runQuery(query: string, timeoutMs: number): Promise<MapFeature[]>
       body: new URLSearchParams({ data: query }),
       signal: ctrl.signal,
     });
+    // Busy (429) or overloaded (504): wait a moment and try once more.
+    if ((res.status === 429 || res.status === 504) && retry) {
+      clearTimeout(timer);
+      await new Promise((r) => setTimeout(r, 4000));
+      return runQuery(query, timeoutMs, false);
+    }
     if (!res.ok) return [];
     return parseOverpass(await res.json());
   } catch {

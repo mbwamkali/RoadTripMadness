@@ -167,3 +167,14 @@ describe('real gas stations', () => {
     expect(real.some((s) => s.name.startsWith('Phillips 66'))).toBe(true);
   });
 });
+
+describe('stop names', () => {
+  it('never repeats a stop name on a trip', async () => {
+    const { demoRawRoute } = await import('../src/geo/demoRoute');
+    for (const seed of [1, 2, 3, 4, 5]) {
+      const r = buildRouteData({ ...demoRawRoute(seed), steps: [] });
+      const names = generateStops(r, pathFromRoute(r).length, seed).map((s) => s.name);
+      expect(new Set(names).size).toBe(names.length);
+    }
+  });
+});

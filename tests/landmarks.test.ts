@@ -54,8 +54,11 @@ describe('landmarks', () => {
 
   it('builds a polyline Overpass query', () => {
     const q = buildOverpassQuery(raw.coords);
-    expect(q).toContain('around:2500,');
+    expect(q).toContain('around:1500,');
     expect(q).toContain('out geom');
+    // Every selector is narrowed by a bounding box before the around filter.
+    for (const line of q.split('\n').filter((l) => l.includes('around:'))) expect(line).toMatch(/\)\(around:\d+,[-\d.,]+\);$/);
+    expect(q.split('\n').filter((l) => l.includes('around:')).every((l) => /^(node|way|nwr)\[.*\]\([-\d.]+,[-\d.]+,[-\d.]+,[-\d.]+\)\(around/.test(l))).toBe(true);
     expect(fillLandmarks(route, path.length, [], [], 1).length).toBeGreaterThan(5);
   });
 });
