@@ -24,8 +24,11 @@ export interface RoadFile {
   names: string[];
   /** Flat [lng, lat, ...] in 1/q degrees. Nodes with equal integers are the same place in every file. */
   nodes: number[];
-  /** [a, b, class, refIndex, nameIndex, meters, flags, speedKmh, lanes, deltas]. flags bit 0: one way a→b. */
-  edges: [number, number, number, number, number, number, number, number, number, number[]][];
+  /**
+   * [a, b, class, refIndex, nameIndex, meters, flags, speedKmh, lanes, deltas, spans?]. flags bit 0: one
+   * way a→b. spans: bridges and tunnels as [startMeters, endMeters, kind] from a; kind 1 bridge, 2 tunnel.
+   */
+  edges: [number, number, number, number, number, number, number, number, number, number[], ([number, number, number][] | undefined)?][];
   /** Backbone only: [node, exit number, exit name]. */
   exits?: [number, string, string][];
 }
@@ -400,6 +403,11 @@ export class RoadNet {
     return this.files[this.eFile[ei]].edges[this.eIx[ei]][8];
   }
 
+  /** Bridges and tunnels on an edge: [startMeters, endMeters, kind] from its a end. */
+  edgeSpans(ei: number): [number, number, number][] {
+    return this.files[this.eFile[ei]].edges[this.eIx[ei]][10] ?? [];
+  }
+
   /** Posted speed limit in km/h, or 0 when OpenStreetMap doesn't say. */
   edgeSpeed(ei: number): number {
     return this.files[this.eFile[ei]].edges[this.eIx[ei]][7];
@@ -419,6 +427,7 @@ export class RoadNet {
     let sinceStep = Infinity;
     const exits: NonNullable<RawRoute['exits']> = [];
     const limits: NonNullable<RawRoute['limits']> = [];
+    const structures: NonNullable<RawRoute['structures']> = [];
     let lastKmh = -1;
     // The trip in pieces: maybe part of a road to the first junction, whole roads, maybe part of one at the end.
     const pieces: { edge: number; from: number; shape: LatLng[]; meters: number }[] = [];
@@ -450,6 +459,16 @@ export class RoadNet {
         sinceStep = 0;
       }
       if (name) prevName = name;
+      // Bridges and tunnels on whole edges, turned round when the edge is driven b→a.
+      if (leg.from >= 0) {
+        const spans = this.edgeSpans(leg.edge);
+        const forward = this.ea[leg.edge] === leg.from;
+        for (const [a, b, kind] of spans) {
+          const s0 = forward ? a : leg.meters - b;
+          const s1 = forward ? b : leg.meters - a;
+          structures.push({ from: pointAlong(shape, s0 / leg.meters), to: pointAlong(shape, s1 / leg.meters), kind: kind === 2 ? 'tunnel' : 'bridge', meters: b - a });
+        }
+      }
       for (let i = 1; i < shape.length; i++) push(shape[i]);
       const m = leg.meters;
       meters += m;
@@ -468,6 +487,7 @@ export class RoadNet {
       steps,
       ...(exits.length ? { exits } : {}),
       ...(limits.length ? { limits } : {}),
+      ...(structures.length ? { structures } : {}),
       attribution: `Route ${this.attribution}, planned on this device`,
     };
   }
@@ -603,4 +623,19 @@ export async function loadRoadNet(
     local = json ? joinLocalStreets(json, files) : null;
   }
   return Object.assign(new RoadNet(local ? [...files, local] : files, towns), { localStreets: !!local });
+}
+
+/** The point a share t (0..1) of the way along a line. */
+export function pointAlong(line: LatLng[], t: number): LatLng {
+  const total = lineMeters(line);
+  let want = Math.max(0, Math.min(1, t)) * total;
+  for (let i = 1; i < line.length; i++) {
+    const seg = haversineMeters(line[i - 1], line[i]);
+    if (want <= seg || i === line.length - 1) {
+      const k = seg > 0 ? Math.min(1, want / seg) : 0;
+      return { lat: line[i - 1].lat + (line[i].lat - line[i - 1].lat) * k, lng: line[i - 1].lng + (line[i].lng - line[i - 1].lng) * k };
+    }
+    want -= seg;
+  }
+  return line[line.length - 1];
 }

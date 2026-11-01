@@ -1,6 +1,7 @@
 import { placeFeatures, placeFuel, type FuelStation, type Landmark, type MapFeature } from '../game/landmarks';
 import { chaikin, dedupe, makeProjection, Path, resample, type LatLng, type Vec2 } from './geo';
 import { stateLines, stateMap, type StateLine } from './states';
+import { placeStructures, type Structure } from '../game/structures';
 
 /** One maneuver on the real route, placed along the game path. */
 export interface RouteStep {
@@ -41,6 +42,8 @@ export interface RouteData {
   exits?: { at: number; ref: string; name: string }[];
   /** Posted speed limits where they change along the route, in mph; 0 = not known from here on. */
   limits?: { at: number; mph: number }[];
+  /** Bridges and tunnels to draw, in game distance (see game/structures.ts). */
+  structures?: Structure[];
 }
 
 /** Cruise speed of the car in game units per second. */
@@ -76,6 +79,8 @@ export interface RawRoute {
   exits?: { location: LatLng; ref: string; name: string }[];
   /** Posted speed limits where they change, in km/h; 0 = not known from here on. */
   limits?: { location: LatLng; kmh: number }[];
+  /** Bridges and tunnels on the way (own-routing trips), with their real length. */
+  structures?: { from: LatLng; to: LatLng; kind: 'bridge' | 'tunnel'; meters: number }[];
 }
 
 /** Converts a real-world route into game geometry: project, scale, smooth and resample. */
@@ -129,6 +134,10 @@ export function buildRouteData(raw: RawRoute): RouteData {
     data.limits = raw.limits
       .map((l) => ({ at: at(l.location), mph: l.kmh > 0 ? Math.round(l.kmh / 1.609344 / 5) * 5 : 0 }))
       .sort((a, b) => a.at - b.at);
+  }
+  if (raw.structures?.length) {
+    const placed = placeStructures(raw.structures.map((st) => ({ from: at(st.from), to: at(st.to), kind: st.kind, meters: st.meters })), path.length);
+    if (placed.length) data.structures = placed;
   }
   if (raw.features?.length) {
     const path = pathFromRoute(data);

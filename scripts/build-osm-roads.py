@@ -26,7 +26,9 @@ Every file uses the same compact road format (version 2):
             speedKmh, lanes, [delta-encoded shape points from A]]
            class: 0 motorway, 1 trunk, 2 primary; flags bit 0 = one way
            (A to B only); speedKmh and lanes are 0 when OpenStreetMap
-           doesn't say
+           doesn't say. An optional 11th item lists bridges and tunnels:
+           [[startMeters, endMeters, kind], ...] measured from A, kind 1 =
+           bridge, 2 = tunnel (only spans of MIN_SPAN_M or more)
   exits    backbone only: [node, exit number, exit name]
 
 The data is from OpenStreetMap and must stay under the ODbL; see
@@ -45,6 +47,7 @@ import osmium
 
 Q = 100_000  # 1e-5 degree, about 1 m; fine enough that shared nodes line up exactly
 TILE_DEG = 2
+MIN_SPAN_M = 60  # shorter bridges (most overpasses) and tunnels are left out
 SIMPLIFY_DEG = 0.0003  # about 30 m: plenty for a game road, and junctions are kept exactly
 CLASS = {'motorway': 0, 'motorway_link': 0, 'trunk': 1, 'trunk_link': 1, 'primary': 2, 'primary_link': 2}
 ATTRIBUTION = '© OpenStreetMap contributors (ODbL)'
@@ -90,6 +93,8 @@ class Reader(osmium.SimpleHandler):
         # nodes too. Only exact repeats (and repeated towns) are skipped.
         self.seen_ways = set()
         self.seen_towns = set()
+        # Road segments (pairs of node ids, smaller first) on bridges and in tunnels.
+        self.structure = {}
 
     def node(self, n):
         t = n.tags
@@ -120,6 +125,11 @@ class Reader(osmium.SimpleHandler):
         oneway = t.get('oneway', '')
         if oneway == '-1':
             pts.reverse()
+        kind = structure_kind(t)
+        if kind:
+            for i in range(1, len(pts)):
+                u, v = pts[i - 1][0], pts[i][0]
+                self.structure[(u, v) if u < v else (v, u)] = kind
         ow = oneway in ('yes', '1', 'true', '-1') or (hw in ('motorway', 'motorway_link') and oneway != 'no') or t.get('junction') == 'roundabout'
         self.ways.append({
             'c': c,
@@ -130,6 +140,32 @@ class Reader(osmium.SimpleHandler):
             'lanes': parse_lanes(t.get('lanes', '')),
             'pts': pts,
         })
+
+
+def structure_kind(t) -> int:
+    """1 for a bridge, 2 for a tunnel, 0 for an ordinary road."""
+    if t.get('tunnel', 'no') in ('yes', 'building_passage', 'avalanche_protector'):
+        return 2
+    if t.get('bridge', 'no') not in ('no', ''):
+        return 1
+    return 0
+
+
+def spans_along(pts, structure):
+    """Bridge and tunnel spans along a run of points, in metres from its start."""
+    out = []
+    m = 0.0
+    for i in range(1, len(pts)):
+        u, v = pts[i - 1][0], pts[i][0]
+        step = haversine((pts[i - 1][1], pts[i - 1][2]), (pts[i][1], pts[i][2]))
+        kind = structure.get((u, v) if u < v else (v, u), 0)
+        if kind:
+            if out and out[-1][2] == kind and m - out[-1][1] < 5:
+                out[-1][1] = m + step
+            else:
+                out.append([m, m + step, kind])
+        m += step
+    return [[round(a), round(b), k] for a, b, k in out if b - a >= MIN_SPAN_M]
 
 
 def haversine(a, b):
@@ -304,7 +340,8 @@ def merge_chains(edges, keep_nodes):
 class RoadFile:
     """Accumulates one output file in the compact road format."""
 
-    def __init__(self):
+    def __init__(self, structure=None):
+        self.structure = structure or {}
         self.node_ix = {}
         self.nodes = []
         self.refs, self.ref_ix = [], {}
@@ -313,6 +350,7 @@ class RoadFile:
         self.exits = []
         self.exit_nodes = set()
         self.meters = 0
+        self.spans = 0
 
     def _node(self, p):
         key = (round(p[1] * Q), round(p[2] * Q))
@@ -342,12 +380,17 @@ class RoadFile:
             if (qx, qy) != (x, y):
                 deltas += [qx - x, qy - y]
                 x, y = qx, qy
-        self.edges.append([
+        edge = [
             a, b, e['c'],
             self._string(self.refs, self.ref_ix, e['ref']),
             self._string(self.names, self.name_ix, e['name']),
             meters, 1 if e['ow'] else 0, e['speed'], e['lanes'], deltas,
-        ])
+        ]
+        spans = spans_along(pts, self.structure)
+        if spans:
+            edge.append(spans)
+            self.spans += len(spans)
+        self.edges.append(edge)
         if exits is not None:
             for p in (pts[0], pts[-1]):
                 n = self._node(p)
@@ -392,7 +435,7 @@ def main():
     edges = split_at_junctions(r.ways, r.exits)
     edges = merge_chains(edges, set(r.exits))
 
-    backbone = RoadFile()
+    backbone = RoadFile(r.structure)
     tiles = {}
     for e in edges:
         if e['c'] < 2:
@@ -400,7 +443,7 @@ def main():
         else:
             p = e['pts'][0]
             key = (math.floor(p[1] / TILE_DEG), math.floor(p[2] / TILE_DEG))
-            tiles.setdefault(key, RoadFile()).add(e, None)
+            tiles.setdefault(key, RoadFile(r.structure)).add(e, None)
 
     built = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     os.makedirs(os.path.join(args.out, 'tiles'), exist_ok=True)
@@ -433,6 +476,7 @@ def main():
         print(f'tiles: {len(tile_gz)}, {sum(tile_gz) / 1e6:.2f} MB gzipped in total, '
               f'median {tile_gz[len(tile_gz) // 2] / 1e3:.0f} KB, largest {tile_gz[-1] / 1e3:.0f} KB')
     print(f'towns: {len(r.towns)}')
+    print(f'bridges and tunnels kept: {backbone.spans + sum(t.spans for t in tiles.values())}')
 
     # Sanity check: almost every road should join one network across all files.
     parent = {}

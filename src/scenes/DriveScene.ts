@@ -4,6 +4,8 @@ import type { Path, Vec2 } from '../geo/geo';
 import { CRUISE_SPEED, postedLimit } from '../geo/route';
 import { advance, damage, fuelPerUnit, upcomingStop, type GameState } from '../game/state';
 import { brakeRange, crashScale, speedFuelFactor } from '../game/driving';
+import { structureAt, type Structure } from '../game/structures';
+import { buildStructurePart } from './structures';
 import { coolRage, HOSTILE_RANGE, hostileShot, rageOf, rollHostile, shootVehicle } from '../game/rage';
 import { clampLane, defaultLane, laneCenter, oncoming, Traffic, type Vehicle, type VehicleKind } from '../game/traffic';
 import { Obstacles, ramObstacle, shootObstacle, SHOOT_RANGE, type Obstacle, type ObstacleKind } from '../game/obstacles';
@@ -173,6 +175,7 @@ export class DriveScene implements GameScene {
   private stopping = false;
   private clock = 0;
   private rageRng: Rng;
+  private structures: Structure[];
   private lastBlink = false;
   private atmosphere: Atmosphere;
   private skyTimer = 0;
@@ -190,6 +193,10 @@ export class DriveScene implements GameScene {
     this.car = makeRide(state.ride ?? 'car', state.upgrades);
     this.fuelRate = fuelPerUnit(path.length);
     this.rageRng = makeRng(state.seed ^ 0x2a6e);
+    // A river landmark already draws its own crossing, so skip a bridge right on top of one.
+    this.structures = (state.route.structures ?? []).filter(
+      (st) => st.kind === 'tunnel' || !state.landmarks.some((l) => l.kind === 'river' && l.at > st.from - 150 && l.at < st.to + 150),
+    );
     this.biomes = biomeSpans(state.route, path);
     const q = quality.profile;
     this.ahead = AHEAD * q.drawScale;
@@ -884,6 +891,7 @@ export class DriveScene implements GameScene {
     const stopsHere = this.state.stops.filter((s) => s.at > from - 200 && s.at < to + 200);
     const marksHere = this.state.landmarks.filter((l) => l.at > from - 120 && l.at < to + 120 && l.kind !== 'mountains' && l.kind !== 'peak' && l.kind !== 'mesa');
     const clear = (d: number, side: number) =>
+      !!structureAt(this.structures, d, 30) ||
       marksHere.some((l) => (l.kind === 'river' ? Math.abs(l.at - d) < 45 : Math.abs(l.at - d) < (WIDE_SIGHTS.has(l.kind) ? 75 : 30) && l.side === side));
     const total = this.path.length;
     // Every town sign, real or made up, starts a town: a few blocks for a small
@@ -972,6 +980,9 @@ export class DriveScene implements GameScene {
     this.addMileMarkers(g, from, to);
     for (const l of this.state.landmarks) {
       if (l.at >= from && l.at < from + CHUNK) g.add(buildLandmark(l, this.path, (d) => this.edge(d)));
+    }
+    for (const st of this.structures) {
+      if (st.to > from && st.from < to) g.add(buildStructurePart(st, this.path, from, to, (d) => this.edge(d)));
     }
     if (k === Math.floor(this.path.length / CHUNK)) g.add(this.buildFinish());
     if (this.shadows) castShadows(g, true);
