@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { chaikin, haversineMeters, Path, resample } from '../src/geo/geo';
-import { buildRouteData, CRUISE_SPEED, pathFromRoute, targetDriveSeconds } from '../src/geo/route';
-import { parseOsrm, osrmRouteUrl, type OsrmResponse } from '../src/geo/osrm';
+import { buildRouteData, CRUISE_SPEED, pathFromRoute, targetDriveSeconds, type RawRoute } from '../src/geo/route';
 import { demoRawRoute } from '../src/geo/demoRoute';
 import { shortLabel } from '../src/geo/geocode';
 
@@ -34,56 +33,30 @@ describe('geo helpers', () => {
   });
 });
 
-const osrmFixture: OsrmResponse = {
-  code: 'Ok',
-  routes: [
-    {
-      distance: 120000,
-      duration: 4800,
-      geometry: {
-        type: 'LineString',
-        coordinates: [
-          [-105.0, 39.7],
-          [-104.8, 39.6],
-          [-104.6, 39.4],
-          [-104.4, 39.2],
-          [-104.2, 39.0],
-        ],
-      },
-      legs: [
-        {
-          steps: [
-            { name: 'Colfax Avenue', maneuver: { location: [-105.0, 39.7], type: 'depart' } },
-            { name: 'Main Street', ref: 'US 85', maneuver: { location: [-104.6, 39.4], type: 'turn', modifier: 'left' } },
-            { name: '', maneuver: { location: [-104.2, 39.0], type: 'arrive' } },
-          ],
-        },
-      ],
-    },
+const rawFixture: RawRoute = {
+  source: 'osm',
+  startLabel: 'Denver',
+  endLabel: 'Colorado Springs',
+  coords: [
+    { lat: 39.7, lng: -105.0 },
+    { lat: 39.6, lng: -104.8 },
+    { lat: 39.4, lng: -104.6 },
+    { lat: 39.2, lng: -104.4 },
+    { lat: 39.0, lng: -104.2 },
   ],
+  realMeters: 120000,
+  realSeconds: 4800,
+  steps: [
+    { location: { lat: 39.7, lng: -105.0 }, name: 'Colfax Avenue', type: 'depart' },
+    { location: { lat: 39.4, lng: -104.6 }, name: 'Main Street US 85', type: 'turn', modifier: 'left' },
+    { location: { lat: 39.0, lng: -104.2 }, name: '', type: 'arrive' },
+  ],
+  attribution: '© OpenStreetMap contributors (ODbL)',
 };
 
-describe('OSRM routing', () => {
-  it('builds a request with lng,lat order and full geometry', () => {
-    const url = osrmRouteUrl({ lat: 39.7, lng: -105 }, { lat: 39, lng: -104.2 });
-    expect(url).toContain('/route/v1/driving/-105.000000,39.700000;-104.200000,39.000000');
-    expect(url).toContain('overview=full');
-    expect(url).toContain('steps=true');
-  });
-
-  it('parses steps and geometry', () => {
-    const raw = parseOsrm(osrmFixture, 'Denver', 'Colorado Springs');
-    expect(raw.coords).toHaveLength(5);
-    expect(raw.coords[0]).toEqual({ lat: 39.7, lng: -105 });
-    expect(raw.steps[1]).toMatchObject({ name: 'Main Street US 85', modifier: 'left' });
-  });
-
-  it('reports a missing route clearly', () => {
-    expect(() => parseOsrm({ code: 'NoRoute' }, 'a', 'b')).toThrow(/no driving route/);
-  });
-
+describe('route data', () => {
   it('scales a route to a playable length and places steps in order', () => {
-    const data = buildRouteData(parseOsrm(osrmFixture, 'Denver', 'Colorado Springs'));
+    const data = buildRouteData(rawFixture);
     const path = pathFromRoute(data);
     const expected = targetDriveSeconds(120000) * CRUISE_SPEED;
     expect(path.length / expected).toBeGreaterThan(0.9);

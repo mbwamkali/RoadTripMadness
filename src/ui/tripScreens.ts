@@ -32,7 +32,7 @@ export function showClassics(onPick: (raw: RawRoute) => void, onBack: () => void
       h('div', { class: 'trip-list' }, ...CURATED_ROUTES.map(card)),
       err,
       h('button', { class: 'btn ghost', onclick: onBack }, '← Back'),
-      h('p', { class: 'fine' }, 'Routes © OpenStreetMap contributors, OSRM.'),
+      h('p', { class: 'fine' }, 'Routes © OpenStreetMap contributors (ODbL), planned with the game\'s own router.'),
     ),
   );
 }

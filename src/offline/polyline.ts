@@ -2,7 +2,7 @@ import type { LatLng } from '../geo/geo';
 
 /**
  * Douglas–Peucker simplification of a lat/lng polyline. Tolerance is in
- * metres. OSRM gives every curve of every on-ramp; the game rescales and
+ * metres. A route has every curve of every on-ramp; the game rescales and
  * smooths routes anyway, so a few tens of metres of tolerance is invisible
  * and shrinks a cross-country route by 90% or more.
  */

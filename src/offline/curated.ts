@@ -4,7 +4,7 @@ import { atlasFeatures } from './planner';
 
 /**
  * Classic road trips that ship with the game, pre-baked from OpenStreetMap
- * by scripts/bake-routes.mjs into public/data/routes/. They always work
+ * by scripts/bake-routes.ts into public/data/routes/. They always work
  * offline. Keep the ids in sync with that script.
  */
 export interface CuratedRoute {
@@ -15,9 +15,9 @@ export interface CuratedRoute {
 }
 
 export const CURATED_ROUTES: CuratedRoute[] = [
-  { id: 'route-66', title: 'Route 66', blurb: 'Chicago to Santa Monica on the Mother Road, through Tulsa, Amarillo and Flagstaff.', km: 3503 },
-  { id: 'pacific-coast', title: 'Pacific Coast Highway', blurb: 'San Francisco to San Diego along the cliffs of Big Sur.', km: 923 },
-  { id: 'coast-to-coast', title: 'New York to Los Angeles', blurb: 'The full cross-country haul, sea to shining sea.', km: 4497 },
+  { id: 'route-66', title: 'Route 66', blurb: 'Chicago to Santa Monica on the Mother Road, through Tulsa, Amarillo and Flagstaff.', km: 3680 },
+  { id: 'pacific-coast', title: 'Pacific Coast Highway', blurb: 'San Francisco to San Diego along the cliffs of Big Sur.', km: 977 },
+  { id: 'coast-to-coast', title: 'New York to Los Angeles', blurb: 'The full cross-country haul, sea to shining sea.', km: 4503 },
   { id: 'overseas-highway', title: 'Overseas Highway', blurb: 'Miami to Key West, island-hopping over open water.', km: 257 },
   { id: 'vegas-run', title: 'Vegas Run', blurb: 'Los Angeles to Las Vegas across the Mojave. Short and nasty.', km: 426 },
 ];

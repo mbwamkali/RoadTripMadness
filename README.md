@@ -31,7 +31,7 @@ npm install
 npm run dev
 ```
 
-Open the printed network URL on a phone or tablet on the same Wi-Fi. "Quick demo trip" works offline; planning a real trip needs internet access to OpenStreetMap's search and the OSRM routing server.
+Open the printed network URL on a phone or tablet on the same Wi-Fi. "Quick demo trip" works offline; planning a real trip needs internet access to OpenStreetMap's search and the game's road files. To route locally, download the `osm-roads` release and unpack it into `public/data/osm` (see docs/DESIGN.md).
 
 Map data © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors.
 

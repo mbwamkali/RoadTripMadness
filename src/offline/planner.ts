@@ -1,6 +1,5 @@
 import type { Place } from '../geo/geocode';
 import { searchPlaces } from '../geo/geocode';
-import { fetchRoute } from '../geo/osrm';
 import { fetchLocalStreets } from '../geo/localStreets';
 import { fetchMapFeatures } from '../geo/overpass';
 import type { RawRoute } from '../geo/route';
@@ -15,18 +14,15 @@ import { tripCache } from './tripCache';
  *     online, the local streets at each end are looked up too, so the trip
  *     starts on the right street; without them it starts with a straight
  *     link to the nearest highway.
- *  2. The public OSRM server, if the road files can't be loaded (for example
- *     in local development before a road build). Add ?router=osrm to the page
- *     address to use it first, for comparing routes.
- *  3. A saved trip between the same places.
- *  4. The bundled Natural Earth highway atlas.
+ *  2. A saved trip between the same places.
+ *  3. The bundled Natural Earth highway atlas.
+ * No routing server is used. In local development without a road build,
+ * download the release into public/data/osm (see docs/DESIGN.md).
  */
 
-export type PlannedVia = 'roads' | 'online' | 'saved' | 'atlas';
+export type PlannedVia = 'roads' | 'saved' | 'atlas';
 
 export const isOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
-
-const preferOsrm = () => typeof location !== 'undefined' && new URLSearchParams(location.search).get('router') === 'osrm';
 
 /** Landmarks for a planned route: the live OpenStreetMap lookup when online, plus the atlas's sights when that finds none. */
 async function addFeatures(raw: RawRoute, progress: (message: string) => void): Promise<void> {
@@ -54,26 +50,13 @@ export async function planTrip(
     tripCache.save(raw, { start: from, end: to });
     return { raw, via: 'roads' as const };
   };
-  const osrm = async () => {
-    const raw = await fetchRoute(from, to, from.label, to.label);
-    await addFeatures(raw, progress);
-    tripCache.save(raw, { start: from, end: to });
-    return { raw, via: 'online' as const };
-  };
-  const order = preferOsrm() ? [osrm, own] : [own, osrm];
-  for (const plan of order) {
-    if (plan === osrm && isOffline()) continue;
-    try {
-      return await plan();
-    } catch (e) {
-      const msg = (e as Error).message;
-      // A real "no route" answer is final; anything else means try the next way.
-      if (/no driving route/i.test(msg)) throw e;
-      problems.push(msg);
-    }
+  try {
+    return await own();
+  } catch (e) {
+    problems.push((e as Error).message);
   }
   const saved = tripCache.find(from, to, from.label, to.label);
-  if (saved) return { raw: saved, via: 'saved', note: 'No connection, so this is the copy saved on your device.' };
+  if (saved) return { raw: saved, via: 'saved', note: isOffline() ? 'No connection, so this is the copy saved on your device.' : "The road map couldn't load, so this is the copy saved on your device." };
   try {
     const atlas = await loadAtlas();
     const raw = atlas.planTrip(from, to, from.label, to.label);

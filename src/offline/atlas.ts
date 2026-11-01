@@ -203,7 +203,7 @@ export class Atlas {
     };
   }
 
-  /** Plans a trip and returns it in the same shape the game gets from OSRM. */
+  /** Plans a trip and returns it as the game's raw route. */
   planTrip(start: LatLng, end: LatLng, startLabel: string, endLabel: string): RawRoute {
     const p = this.route(start, end);
     const coords: LatLng[] = [start];
@@ -322,7 +322,7 @@ export interface AtlasPath {
   endConnectorM: number;
 }
 
-/** Left or right turn from heading a→b onto b→c, OSRM style. */
+/** Left or right turn from heading a→b onto b→c. */
 export function turnModifier(a: LatLng, b: LatLng, c: LatLng): string {
   const k = Math.cos((b.lat * Math.PI) / 180);
   const h1 = Math.atan2(b.lat - a.lat, (b.lng - a.lng) * k);

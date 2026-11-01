@@ -2,14 +2,14 @@ import { placeFeatures, placeFuel, type FuelStation, type Landmark, type MapFeat
 import { chaikin, dedupe, makeProjection, Path, resample, type LatLng, type Vec2 } from './geo';
 import { stateLines, stateMap, type StateLine } from './states';
 
-/** One maneuver on the real route (from OSRM), placed along the game path. */
+/** One maneuver on the real route, placed along the game path. */
 export interface RouteStep {
   /** Distance along the game path, in game units. */
   at: number;
   name: string;
   type: string;
   modifier?: string;
-  /** The road after this step is a motorway (from OSRM's road classes). */
+  /** The road after this step is a motorway. */
   motorway?: boolean;
 }
 
@@ -18,6 +18,7 @@ export interface RouteStep {
  * projected to meters and then scaled so every trip takes a playable amount of time.
  */
 export interface RouteData {
+  /** 'osrm' only on trips saved before the game stopped using the OSRM server. */
   source: 'osrm' | 'osm' | 'demo' | 'offline' | 'curated';
   startLabel: string;
   endLabel: string;

@@ -147,7 +147,7 @@ export class Path {
     return { x: dx / len, y: dy / len };
   }
 
-  /** Distance along the path of the vertex closest to p (used to place OSRM maneuvers). */
+  /** Distance along the path of the vertex closest to p (used to place route maneuvers). */
   nearestDistance(p: Vec2): number {
     let best = Infinity;
     let bestD = 0;

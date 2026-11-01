@@ -48,11 +48,11 @@ With no ammo left for a weapon, the player throws rocks. They are weak, but neve
 ## Map data
 
 - Place search: Nominatim (OpenStreetMap). Searches only run when the player presses Search, to respect the one-request-per-second usage policy.
-- Routing: the public OSRM demo server, asking for full geometry and turn-by-turn steps.
-- When either service is unreachable, the game falls back to the offline options below, and as a last resort offers a demo route through a made-up desert.
+- Routing: the game's own router on the device, over road files built from OpenStreetMap (see "Road files from OpenStreetMap" below). No routing server is used.
+- When search or the road files are unreachable, the game falls back to the offline options below, and as a last resort offers a demo route through a made-up desert.
 - The screens credit OpenStreetMap contributors as the licence requires.
 
-Before a public release, routing and search should move to our own OSRM/Nominatim instances or a commercial provider, because the free public servers are for light use only.
+The game is free and non-commercial, which the public Nominatim and Overpass servers allow at light use. A paid release would need search and the local-streets lookup moved off them.
 
 ## Offline play
 
@@ -64,7 +64,7 @@ Phones lose signal on exactly the kind of long drives this game is about, so the
    - Route planning runs A* over the atlas on the device. A cross-country trip takes around 40 ms, and its distances come within a few percent of real road distances. The start and end join the nearest highways with a short straight stretch.
    - Cities beside the route become the named turn-offs, on the side of the road they are actually on, and highway changes (for example onto I-40) become left and right turns.
    - The preview tells the player the trip was planned offline and follows the major highways.
-3. **Classic road trips.** A handful of famous drives are pre-baked from OpenStreetMap and OSRM and ship with the game, so they always work: Route 66, the Pacific Coast Highway, New York to Los Angeles, the Overseas Highway to Key West, and the Vegas Run. All five together come to about 115 KB.
+3. **Classic road trips.** A handful of famous drives are pre-baked from OpenStreetMap with the game's own router and ship with the game, so they always work: Route 66, the Pacific Coast Highway, New York to Los Angeles, the Overseas Highway to Key West, and the Vegas Run. They carry real exits and speed limits too, and all five together come to about 285 KB.
 
 The game itself is installable. A service worker, generated at build time, precaches the app, the atlas and the classic routes. After one visit, the game opens and plays with no connection, and players can add it to their home screen. Map service requests are never cached by the service worker, because the game saves the trips it plans itself.
 
@@ -75,12 +75,12 @@ Possible later steps are downloadable region packs for detailed routing in one s
 ```
 sh scripts/fetch-natural-earth.sh data-src/ne        # ~90 MB of Natural Earth GeoJSON
 node scripts/build-atlas.mjs data-src/ne public/data/atlas-us.json
-node scripts/bake-routes.mjs                          # needs router.project-osrm.org
+npx vite-node scripts/bake-routes.ts                 # uses the road files on the live site (or ROADS=<folder>)
 ```
 
 ### Road files from OpenStreetMap (own routing)
 
-The game plans trips with its own road network instead of the public OSRM server: highways down to US and state routes, built from OpenStreetMap into static files and routed on the phone (`src/offline/roadNet.ts`, A* over the backbone plus the tiles around the start and end). Trips get real exit numbers and posted speed limits from the same data. `src/offline/planner.ts` tries, in order: the road files, OSRM (only if the road files can't load, or first with `?router=osrm` in the page address, for comparing), a saved trip, and the Natural Earth atlas. The service worker keeps road files in their own cache (`roads-osm`) that survives app updates; a new road build replaces them. See the "Own routing plan" doc in the project.
+The game plans trips with its own road network instead of the public OSRM server: highways down to US and state routes, built from OpenStreetMap into static files and routed on the phone (`src/offline/roadNet.ts`, A* over the backbone plus the tiles around the start and end). Trips get real exit numbers and posted speed limits from the same data. `src/offline/planner.ts` tries, in order: the road files, a saved trip, and the Natural Earth atlas. When a start or end is more than 300 m from a junction, the router also joins the nearest road part way along, so places on long rural roads (Big Sur, say) start on the road itself. The game no longer uses the OSRM server; it was dropped once the router matched it (New York to Los Angeles 4,503 km against OSRM's 4,497). The service worker keeps road files in their own cache (`roads-osm`) that survives app updates; a new road build replaces them. See the "Own routing plan" doc in the project.
 
 - `.github/workflows/osm-roads.yml` runs monthly (or by hand from the Actions tab). It runs `scripts/fetch-osm-roads.sh` (state-by-state OpenStreetMap extracts, filtered with osmium) and `scripts/build-osm-roads.py`, and stores the result on the `osm-roads` release as `osm-roads.tar.gz`.
 - The Pages deploy unpacks that release into `data/osm/` on the site: `index.json`, `backbone.json` (interstates and major highways), `tiles/<x>_<y>.json` (US and state routes per 2° square), `towns.json` and `LICENSE-ODbL.txt`. They are copied in after the build so the service worker doesn't precache them all.
@@ -91,7 +91,7 @@ Build them locally (needs osmium-tool and `pip install osmium`; about 14 GB of d
 
 ```
 sh scripts/fetch-osm-roads.sh data-src/osm
-python3 scripts/build-osm-roads.py data-src/osm/us-roads.osm.pbf public/data/osm
+python3 scripts/build-osm-roads.py data-src/osm/roads-*.osm.pbf public/data/osm
 STATES="VA WV" sh scripts/fetch-osm-roads.sh data-src/osm-test   # a quick test with two states
 ```
 
