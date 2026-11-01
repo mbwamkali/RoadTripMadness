@@ -8,7 +8,7 @@ import { Obstacles, ramObstacle, shootObstacle, SHOOT_RANGE, type Obstacle, type
 import { DIFFICULTIES } from '../game/difficulty';
 import { rideOf } from '../game/rides';
 import { STOP_TITLES, type Stop } from '../game/stops';
-import { hashString, makeRng, type Rng } from '../game/rng';
+import { hashString, makeRng, pick, type Rng } from '../game/rng';
 import { ANNOUNCED, roadAt, type Landmark } from '../game/landmarks';
 import { interstateNumber, latLngAt, stateMap } from '../geo/states';
 import { castShadows, disposeTree, makeObstacle, makeRide, makeTrafficVehicle, makeLaneTexture, makeRoadTexture, setBlinkers, textSprite, to3, type GameScene } from './common';
@@ -17,6 +17,7 @@ import { buildLandmark, waterTexture } from './landmarkModels';
 import { sound } from '../audio/sound';
 import { Atmosphere } from './atmosphere';
 import { quality } from './quality';
+import { MODEL_SPECS, modelGeometry, modelMaterial, modelMesh, treeModelsWanted, type ModelName } from './models';
 import { detailTexture } from './textures';
 import { daylight, hourOf, weatherAt } from '../game/time';
 import { BIOMES, biomeAtDistance, biomeSpans, groundColorAt, type BiomeId, type BiomeSpan, type PlantKind } from '../game/biomes';
@@ -102,6 +103,21 @@ const PLANT_PARTS: Record<PlantKind, string[]> = {
   palm: ['palmTrunk', 'palmLeaves'],
   crops: ['crops'],
 };
+
+/** CC0 models that stand in for each plant when they're loaded (trees only on High). */
+const PLANT_MODELS: Partial<Record<PlantKind, ModelName[]>> = {
+  saguaro: ['cactus-1', 'cactus-2', 'cactus-3'],
+  shrub: ['bush-1', 'bush-2'],
+  grass: ['grass'],
+  oak: ['oak-1', 'oak-2', 'oak-3'],
+  pine: ['pine-1', 'pine-2'],
+  palm: ['palm-1', 'palm-2'],
+};
+const TREES = new Set<PlantKind>(['oak', 'pine', 'palm']);
+const ROCK_MODELS: ModelName[] = ['rock-1', 'rock-2', 'rock-3'];
+/** Small-town buildings and the taller ones for busier blocks. */
+const HOUSE_MODELS: ModelName[] = ['house-1', 'house-2', 'house-3', 'house-4', 'house-5', 'shop'];
+const BLOCK_MODELS: ModelName[] = ['flat-1', 'flat-2', 'shop', 'hospital'];
 
 /** The on-rails road trip view: the car follows the route and the world streams in around it. */
 export class DriveScene implements GameScene {
@@ -221,6 +237,13 @@ export class DriveScene implements GameScene {
       delineator: new THREE.BoxGeometry(0.12, 1.1, 0.12).translate(0, 0.55, 0),
       reflector: new THREE.BoxGeometry(0.15, 0.2, 0.15).translate(0, 0.95, 0),
     };
+    // CC0 models on Medium and High, when they've loaded (see models.ts).
+    for (const name of Object.keys(MODEL_SPECS) as ModelName[]) {
+      const g = modelGeometry(name);
+      if (!g) continue;
+      this.geos[`m:${name}`] = g;
+      this.mats[`m:${name}`] = modelMaterial;
+    }
 
     this.ground = new THREE.Mesh(
       new THREE.PlaneGeometry(GROUND_SIZE, GROUND_SIZE),
@@ -571,8 +594,12 @@ export class DriveScene implements GameScene {
       if (o.kind === 'zombie') {
         m.rotation.y = face + Math.PI + Math.sin(this.clock * 2 + o.id) * 0.2;
         const arm = Math.sin(this.clock * 4 + o.id) * 0.3;
-        m.getObjectByName('armL')!.rotation.x = arm;
-        m.getObjectByName('armR')!.rotation.x = -arm;
+        const armL = m.getObjectByName('armL');
+        const armR = m.getObjectByName('armR');
+        if (armL && armR) {
+          armL.rotation.x = arm;
+          armR.rotation.x = -arm;
+        } else m.rotation.z = arm * 0.25;
       } else m.rotation.y = face + (o.kind === 'roadblock' ? m.userData.turn * 0.3 : m.userData.turn * 1.5);
     }
     for (const [id, m] of this.obstacleMeshes) {
@@ -806,8 +833,16 @@ export class DriveScene implements GameScene {
           const off = side * (12 + wide + rng() * 20);
           const w = 6 + rng() * 10;
           const h = 4 + rng() * (city && urban > 0.5 ? 34 : urban > 0.6 ? 18 : 6);
-          placeAt(inst.building, p, right, off, rng() * Math.PI, w, h, 6 + rng() * 8);
-          buildingColors.push(new THREE.Color().setHSL(0.08 + rng() * 0.1, 0.25, 0.55 + rng() * 0.25));
+          const tower = city && urban > 0.5 && h > 16;
+          const model = !tower && this.model(pick(rng, urban > 0.6 ? BLOCK_MODELS : HOUSE_MODELS));
+          if (model) {
+            // Models face the road, a little crooked so the street doesn't look stamped out.
+            const face = Math.atan2(-side * f.y, -side * f.x) + (rng() - 0.5) * 0.3;
+            placeAt(inst[model], p, right, side * (14 + wide + rng() * 14), face, 0.85 + rng() * 0.35);
+          } else {
+            placeAt(inst.building, p, right, off, rng() * Math.PI, w, h, 6 + rng() * 8);
+            buildingColors.push(new THREE.Color().setHSL(0.08 + rng() * 0.1, 0.25, 0.55 + rng() * 0.25));
+          }
         } else {
           const b = BIOMES[biomeAtDistance(this.biomes, d)];
           const r2 = rng();
@@ -823,10 +858,14 @@ export class DriveScene implements GameScene {
               const off = side * (10 + wide + rng() * 70);
               const s = 0.7 + rng() * 0.8;
               const rot = rng() * 6;
-              for (const part of PLANT_PARTS[kind]) placeAt(inst[part], p, right, off, rot, s);
+              const models = PLANT_MODELS[kind];
+              const model = models && (!TREES.has(kind) || treeModelsWanted()) ? this.model(pick(rng, models)) : null;
+              if (model) placeAt(inst[model], p, right, off, rot, s);
+              else for (const part of PLANT_PARTS[kind]) placeAt(inst[part], p, right, off, rot, s);
             }
           } else if (r2 < b.density * this.density + b.rocks * 0.5 * this.density) {
-            placeAt(inst.rock, p, right, side * (10 + wide + rng() * 80), rng() * 6, 0.5 + rng() * 2);
+            const rock = this.model(pick(rng, ROCK_MODELS));
+            placeAt(inst[rock ?? 'rock'], p, right, side * (10 + wide + rng() * 80), rng() * 6, (0.5 + rng() * 2) * (rock ? 1.8 : 1));
           }
         }
       }
@@ -848,6 +887,11 @@ export class DriveScene implements GameScene {
     if (k === Math.floor(this.path.length / CHUNK)) g.add(this.buildFinish());
     if (this.shadows) castShadows(g, true);
     return g;
+  }
+
+  /** The instancing key for a model, or null when it isn't loaded. */
+  private model(name: ModelName): string | null {
+    return this.geos[`m:${name}`] ? `m:${name}` : null;
   }
 
   /** Pavement for one chunk: two-lane roads, four-lane highways, or divided interstates. */
@@ -939,13 +983,22 @@ export class DriveScene implements GameScene {
     for (let i = 0; i < 4 + rng() * 4; i++) {
       const w = 8 + rng() * 10;
       const h = 4 + rng() * 8;
+      const along = (rng() - 0.5) * 70;
+      const out = len - 10 + rng() * 40;
+      const model = modelMesh(pick(rng, stop.kind === 'town' || stop.kind === 'mall' ? BLOCK_MODELS : HOUSE_MODELS));
+      if (model) {
+        model.position.copy(to3({ x: p.x + side.x * out + f.x * along, y: p.y + side.y * out + f.y * along }, 0));
+        // Face back down the side road.
+        model.rotation.y = Math.atan2(-side.x, side.y) + (rng() - 0.5) * 0.4;
+        model.scale.setScalar(0.9 + rng() * 0.4);
+        g.add(model);
+        continue;
+      }
       const box = new THREE.Mesh(
         new THREE.BoxGeometry(w, h, 8 + rng() * 6),
         new THREE.MeshLambertMaterial({ color: new THREE.Color().setHSL(rng(), 0.3, 0.6) }),
       );
       (box.material as THREE.Material).userData.chunkOwned = true;
-      const along = (rng() - 0.5) * 70;
-      const out = len - 10 + rng() * 40;
       box.position.copy(to3({ x: p.x + side.x * out + f.x * along, y: p.y + side.y * out + f.y * along }, h / 2));
       box.rotation.y = rng();
       g.add(box);
@@ -991,11 +1044,11 @@ export class DriveScene implements GameScene {
     const gm = this.ground.material as THREE.MeshLambertMaterial;
     for (const m of [gm, this.medianMat, this.shoulderMat]) m.map?.dispose();
     gm.dispose();
-    Object.values(this.geos).forEach((x) => x.dispose());
+    Object.values(this.geos).forEach((x) => !x.userData.shared && x.dispose());
     const bm = this.mats.building as THREE.MeshLambertMaterial;
     bm.map?.dispose();
     bm.emissiveMap?.dispose();
-    Object.values(this.mats).forEach((x) => x.dispose());
+    Object.values(this.mats).forEach((x) => !x.userData.shared && x.dispose());
     for (const m of [this.roadMat, this.highwayMat, this.carriageMat, this.carriage2Mat, this.medianMat, this.shoulderMat]) m.dispose();
     this.roadTex.dispose();
     this.laneTex.forEach((t) => t.dispose());
@@ -1038,7 +1091,7 @@ function disposeChunk(g: THREE.Group): void {
       return;
     }
     if (o instanceof THREE.Mesh) {
-      o.geometry.dispose();
+      if (!o.geometry.userData.shared) o.geometry.dispose();
       // Building materials are made per chunk; the rest are shared and freed in dispose().
       const mat = o.material as THREE.MeshBasicMaterial;
       if (mat.userData.chunkOwned) {

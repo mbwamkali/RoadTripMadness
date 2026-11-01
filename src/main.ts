@@ -5,6 +5,7 @@ import { currentPosition, type Place } from './geo/geocode';
 import { ANNOUNCED, LANDMARK_ICONS, LANDMARK_TITLES, readMoreUrl, roadAt, type Landmark } from './game/landmarks';
 import { demoRawRoute } from './geo/demoRoute';
 import type { ObstacleKind } from './game/obstacles';
+import { loadModels, modelsReady, modelsWanted } from './scenes/models';
 import { canUseBike, planBikeRide, rideForGas } from './game/rescue';
 import { loadRide, RIDE_IDS, RIDES, rideOf, saveRide, type Ride } from './game/rides';
 import { addStateLines, buildRouteData, pathFromRoute, realKmAt, type RawRoute, type RouteData } from './geo/route';
@@ -73,6 +74,7 @@ function applyQuality(): void {
 applyQuality();
 // State outlines for state-line signs and exit numbers (small, cached offline).
 void loadStateMap();
+void loadModels();
 
 let active: GameScene | null = null;
 let state: GameState | null = null;
@@ -446,6 +448,16 @@ function disposeAll(): void {
 }
 
 function startTrip(s: GameState): void {
+  // The CC0 models load in the background at startup; wait for them on the
+  // rare first trip that starts before they arrive (they never block on Low).
+  if (modelsWanted() && !modelsReady()) {
+    void loadModels().then(() => startTripNow(s));
+    return;
+  }
+  startTripNow(s);
+}
+
+function startTripNow(s: GameState): void {
   disposeAll();
   state = s;
   path = pathFromRoute(s.route);

@@ -13,6 +13,8 @@ This product bundles third-party data and assets under their own terms:
   These data files are not covered by the Apache License.
 - Offline atlas and US state outlines from Natural Earth (public domain).
 - Ground, asphalt and gravel textures from Poly Haven (CC0, public domain).
+- Low-poly 3D models (cars, zombie, trees, plants, rocks, buildings)
+  by Quaternius, https://quaternius.com (CC0, public domain).
 - Live weather from Open-Meteo.com (CC BY 4.0), fetched at play time.
 
 See docs/CREDITS.md for details.

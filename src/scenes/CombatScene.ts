@@ -17,6 +17,7 @@ import { detailTexture } from './textures';
 import { hourOf, weatherAt } from '../game/time';
 import { biomeSpans, groundColorAt } from '../game/biomes';
 import { castShadows, disposeTree, makeRide, makeRoadTexture, type GameScene } from './common';
+import { modelMesh } from './models';
 
 export interface CombatCallbacks {
   onCarHit(dmg: number): void;
@@ -462,6 +463,9 @@ function buildEnemy(type: EnemyType): THREE.Group {
     body.add(beam);
     hitRadius = 8;
     barY = 5.5;
+  } else if (type === 'zombie' && modelMesh('zombie')) {
+    // CC0 zombie model (Medium and High).
+    body.add(modelMesh('zombie')!);
   } else if (type === 'zombie' || type === 'brute') {
     box(0.8, 1.1, 0.5, 0x4a5d7a, 0, 1.3); // torn shirt
     box(0.6, 0.6, 0.6, 0x8fbf5a, 0, 2.15); // head
@@ -560,14 +564,20 @@ function animateEnemy(g: THREE.Group, e: Enemy, t: number): void {
   const body = g.getObjectByName('body')!;
   if (e.type === 'zombie' || e.type === 'brute') {
     const swing = Math.sin(t * (e.type === 'brute' ? 2.5 : 6) + e.id) * 0.5 * (e.stunned > 0 ? 0.1 : 1);
-    body.getObjectByName('legL')!.rotation.x = swing;
-    body.getObjectByName('legR')!.rotation.x = -swing;
+    const legL = body.getObjectByName('legL');
+    const legR = body.getObjectByName('legR');
+    if (legL && legR) {
+      legL.rotation.x = swing;
+      legR.rotation.x = -swing;
+    } else body.position.y = Math.abs(swing) * 0.15;
     body.rotation.z = Math.sin(t * 3 + e.id) * 0.12;
     body.rotation.y = e.stunned > 0 ? Math.sin(t * 20) * 0.3 : 0;
     if (e.type === 'brute') {
       // Raises both arms to wind up a stomp.
-      body.getObjectByName('armL')!.rotation.x = e.charging ? -1.4 : 0;
-      body.getObjectByName('armR')!.rotation.x = e.charging ? -1.4 : 0;
+      for (const n of ['armL', 'armR']) {
+        const arm = body.getObjectByName(n);
+        if (arm) arm.rotation.x = e.charging ? -1.4 : 0;
+      }
     }
   } else if (e.type === 'outlaw') {
     body.rotation.z = Math.sin(t * 2 + e.id) * 0.08;

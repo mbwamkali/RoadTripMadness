@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { modelMesh } from './models';
 import { textureImage } from './textures';
 import type { Vec2 } from '../geo/geo';
 import type { Upgrades } from '../game/upgrades';
@@ -366,6 +367,14 @@ export function makeRide(ride: 'car' | 'motorcycle' | 'truck', up?: Upgrades): T
 /** Ordinary traffic: sedans, pickups, vans and big rigs. Faces +z like the player's car. */
 export function makeTrafficVehicle(kind: 'car' | 'pickup' | 'van' | 'truck', color: number): THREE.Group {
   const g = new THREE.Group();
+  // CC0 car models on Medium and High; the colour picks which one.
+  if (kind === 'car') {
+    const model = modelMesh(CAR_MODELS[Math.abs(color) % CAR_MODELS.length]);
+    if (model) {
+      g.add(model);
+      return g;
+    }
+  }
   const paint = new THREE.MeshLambertMaterial({ color });
   const dark = new THREE.MeshLambertMaterial({ color: 0x1d1d22 });
   const glass = new THREE.MeshLambertMaterial({ color: 0x6f93ad, emissive: 0x0b1620 });
@@ -432,6 +441,10 @@ export function makeObstacle(kind: 'debris' | 'zombie' | 'wreck' | 'roadblock'):
     box(0.6, 0.5, 0.6, lam(0x9a6b3a), 0.5, 0.25, -0.3, 0.4);
     box(0.45, 0.4, 0.45, lam(0x7d5530), 0.7, 0.2, 0.5, -0.3);
     box(1.4, 0.05, 0.9, lam(0xb08a5a), 0, 0.03, 0.6, 0.7);
+  } else if (kind === 'zombie' && modelMesh('zombie')) {
+    g.add(modelMesh('zombie')!);
+    g.scale.setScalar(1.15);
+    g.name = 'zombie';
   } else if (kind === 'zombie') {
     const skin = lam(0x8fbf5a);
     box(0.7, 0.9, 0.45, lam(0x4a5d7a), 0, 1.15, 0); // torn shirt
@@ -485,6 +498,8 @@ export function makeObstacle(kind: 'debris' | 'zombie' | 'wreck' | 'roadblock'):
   return g;
 }
 
+const CAR_MODELS = ['car-sedan', 'car-hatch', 'car-suv', 'car-taxi', 'car-sports', 'car-sedan', 'car-cop'] as const;
+
 function mesh3(geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number): THREE.Mesh {
   const m = new THREE.Mesh(geo, mat);
   m.position.set(x, y, z);
@@ -532,10 +547,11 @@ export function textSprite(text: string, sub = '', bg = '#1f6b3a'): THREE.Sprite
 export function disposeTree(obj: THREE.Object3D): void {
   obj.traverse((o) => {
     const m = o as THREE.Mesh;
-    if (m.geometry) m.geometry.dispose();
+    if (m.geometry && !m.geometry.userData.shared) m.geometry.dispose();
     const mat = (m as { material?: THREE.Material | THREE.Material[] }).material;
     const mats = Array.isArray(mat) ? mat : mat ? [mat] : [];
     for (const x of mats) {
+      if (x.userData.shared) continue;
       (x as THREE.MeshBasicMaterial).map?.dispose();
       x.dispose();
     }
