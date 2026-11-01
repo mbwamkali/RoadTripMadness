@@ -382,7 +382,7 @@ export class CombatScene implements GameScene {
 
 // ---------------------------------------------------------------- enemy models
 
-function buildEnemy(type: EnemyType): THREE.Group {
+export function buildEnemy(type: EnemyType): THREE.Group {
   const g = new THREE.Group();
   const body = new THREE.Group();
   body.name = 'body';
