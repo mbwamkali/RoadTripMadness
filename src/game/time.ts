@@ -1,3 +1,4 @@
+import { BIOMES, biomeAtDistance, biomeSpans } from './biomes';
 import type { GameState } from './state';
 import { hashString, makeRng } from './rng';
 
@@ -37,14 +38,14 @@ export const WEATHER_INFO: Record<Weather, { icon: string; name: string }> = {
 
 const WEATHER_SPAN = 3500;
 
-/** Weather for a stretch of road. Deserts get dust, cold northern trips get snow. */
+/** Weather for a stretch of road, from the local climate: deserts get dust, the cold North and mountains get snow. */
 export function weatherAt(s: GameState, distance = s.distance): Weather {
   const span = Math.floor(distance / WEATHER_SPAN);
   if (span === 0) return 'clear';
   const r = makeRng(s.seed ^ hashString(`weather${span}`))();
-  const lat = Math.abs((s.route.start.lat + s.route.end.lat) / 2);
-  const desert = s.route.source === 'demo' || lat < 36;
-  const cold = lat > 45;
+  const climate = BIOMES[biomeAtDistance(biomeSpans(s.route), distance)].weather;
+  const desert = climate === 'dry';
+  const cold = climate === 'cold';
   if (r < 0.55) return 'clear';
   if (r < 0.72) return desert ? 'dust' : cold ? 'snow' : 'rain';
   if (r < 0.87) return desert ? 'clear' : 'rain';

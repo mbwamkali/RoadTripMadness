@@ -35,6 +35,12 @@ export function makeProjection(origin: LatLng) {
         y: toRad(p.lat - origin.lat) * EARTH_RADIUS_M,
       };
     },
+    toLatLng(v: Vec2): LatLng {
+      return {
+        lat: origin.lat + (v.y / EARTH_RADIUS_M) * (180 / Math.PI),
+        lng: origin.lng + (v.x / (EARTH_RADIUS_M * cosLat)) * (180 / Math.PI),
+      };
+    },
   };
 }
 

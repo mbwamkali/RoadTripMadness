@@ -94,3 +94,32 @@ describe('road types', () => {
     for (const s of generateStops(route66, path.length, 3)) if (classAt(segs, s.at) === 'interstate') expect(s.side).toBe('right');
   });
 });
+
+describe('climate', () => {
+  it('knows roughly what the land looks like around the US', async () => {
+    const { biomeAt } = await import('../src/game/biomes');
+    const at = (lat: number, lng: number) => biomeAt({ lat, lng });
+    expect(at(33.45, -112.07)).toBe('desert'); // Phoenix
+    expect(at(39.5, -119.8)).toBe('sagebrush'); // Reno
+    expect(at(38.5, -98.0)).toBe('prairie'); // Kansas
+    expect(at(41.6, -93.6)).toBe('farmland'); // Des Moines
+    expect(at(33.75, -84.39)).toBe('forest'); // Atlanta
+    expect(at(25.76, -80.19)).toBe('subtropical'); // Miami
+    expect(at(47.6, -122.33)).toBe('pinewoods'); // Seattle
+    expect(at(34.05, -118.24)).toBe('coastal'); // Los Angeles
+    expect(at(39.5, -106.0)).toBe('mountains'); // Colorado Rockies
+    expect(at(60, 25)).toBe('tundra'); // Finland
+  });
+
+  it('changes scenery across Route 66', async () => {
+    const { biomeSpans } = await import('../src/game/biomes');
+    const spans = biomeSpans(route66, path);
+    const ids = spans.map((s) => s.id);
+    console.log(spans.map((s) => `${s.id} ${Math.round(((s.to - s.from) / path.length) * 100)}%`).join(' → '));
+    expect(ids[0]).toBe('farmland');
+    expect(ids).toContain('prairie');
+    expect(ids).toContain('desert');
+    expect(ids[ids.length - 1]).toBe('coastal');
+    for (let i = 1; i < spans.length; i++) expect(spans[i].from).toBe(spans[i - 1].to);
+  });
+});

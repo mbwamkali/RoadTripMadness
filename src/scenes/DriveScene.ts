@@ -12,6 +12,8 @@ import { buildLandmark, waterTexture } from './landmarkModels';
 import { sound } from '../audio/sound';
 import { Atmosphere } from './atmosphere';
 import { hourOf, weatherAt } from '../game/time';
+import { BIOMES, biomeAtDistance, biomeSpans, groundColorAt, type BiomeId, type BiomeSpan, type PlantKind } from '../game/biomes';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 const CHUNK = 400;
 const BEHIND = 250;
@@ -28,17 +30,64 @@ export interface DriveCallbacks {
   onLandmark(l: Landmark): void;
   onRoadEvent(): void;
   onBoss(boss: BossKind): void;
+  /** Driving into a different kind of country. */
+  onBiome?(icon: string, name: string): void;
   onTick(): void;
 }
 
-type Biome = { ground: number; shoulder: number; plant: 'cactus' | 'pine' | 'round'; sky: number };
-
-function biomeFor(state: GameState): Biome {
-  const lat = Math.abs(state.route.start.lat + state.route.end.lat) / 2;
-  if (state.route.source === 'demo' || lat < 36) return { ground: 0xd8b07a, shoulder: 0xb88c5a, plant: 'cactus', sky: 0xf2c58f };
-  if (lat > 45) return { ground: 0x6f8f55, shoulder: 0x8a7a5a, plant: 'pine', sky: 0xbcd6ea };
-  return { ground: 0x9fae62, shoulder: 0x9b8661, plant: 'round', sky: 0xc9dff0 };
+/** Shared plant models; trees are a trunk plus a crown so each part gets its own colour. */
+function plantModels(): { geos: Record<string, THREE.BufferGeometry>; mats: Record<string, THREE.Material> } {
+  const saguaro = mergeGeometries([
+    new THREE.CylinderGeometry(0.55, 0.65, 6, 7).translate(0, 3, 0),
+    new THREE.CylinderGeometry(0.35, 0.35, 2.2, 6).translate(-1.2, 3.6, 0),
+    new THREE.CylinderGeometry(0.35, 0.35, 0.4, 6).rotateZ(Math.PI / 2).translate(-0.8, 2.6, 0),
+    new THREE.CylinderGeometry(0.35, 0.35, 1.8, 6).translate(1.1, 4.2, 0),
+    new THREE.CylinderGeometry(0.35, 0.35, 0.4, 6).rotateZ(Math.PI / 2).translate(0.75, 3.4, 0),
+  ])!;
+  const palmLeaves = mergeGeometries(
+    [0, 1, 2, 3, 4, 5].map((i) =>
+      new THREE.ConeGeometry(0.5, 4.2, 4)
+        .rotateZ(Math.PI / 2 + 0.35)
+        .translate(1.9, 9.2, 0)
+        .rotateY((i / 6) * Math.PI * 2),
+    ),
+  )!;
+  return {
+    geos: {
+      saguaro,
+      shrub: new THREE.IcosahedronGeometry(1.1, 0).scale(1.3, 0.7, 1.3).translate(0, 0.6, 0),
+      grass: new THREE.ConeGeometry(0.6, 1.4, 5).translate(0, 0.7, 0),
+      oakTop: new THREE.IcosahedronGeometry(2.8, 0).translate(0, 4.5, 0),
+      pineTop: new THREE.ConeGeometry(2.2, 8, 7).translate(0, 5, 0),
+      trunk: new THREE.CylinderGeometry(0.3, 0.4, 2, 6).translate(0, 1, 0),
+      palmTrunk: new THREE.CylinderGeometry(0.25, 0.4, 9.5, 6).translate(0, 4.75, 0),
+      palmLeaves,
+      crops: new THREE.BoxGeometry(1.1, 1.5, 24).translate(0, 0.75, 0),
+    },
+    mats: {
+      saguaro: new THREE.MeshLambertMaterial({ color: 0x4f8a3c }),
+      shrub: new THREE.MeshLambertMaterial({ color: 0x8a9a6a }),
+      grass: new THREE.MeshLambertMaterial({ color: 0xb3a95a }),
+      oakTop: new THREE.MeshLambertMaterial({ color: 0x3f7a35 }),
+      pineTop: new THREE.MeshLambertMaterial({ color: 0x2f5f35 }),
+      trunk: new THREE.MeshLambertMaterial({ color: 0x6b4a2b }),
+      palmTrunk: new THREE.MeshLambertMaterial({ color: 0x8a6a45 }),
+      palmLeaves: new THREE.MeshLambertMaterial({ color: 0x3f8a3a }),
+      crops: new THREE.MeshLambertMaterial({ color: 0x6f9a3a }),
+    },
+  };
 }
+
+/** Which instanced parts make up each plant. */
+const PLANT_PARTS: Record<PlantKind, string[]> = {
+  saguaro: ['saguaro'],
+  shrub: ['shrub'],
+  grass: ['grass'],
+  oak: ['trunk', 'oakTop'],
+  pine: ['trunk', 'pineTop'],
+  palm: ['palmTrunk', 'palmLeaves'],
+  crops: ['crops'],
+};
 
 /** The on-rails road trip view: the car follows the route and the world streams in around it. */
 export class DriveScene implements GameScene {
@@ -63,7 +112,8 @@ export class DriveScene implements GameScene {
   private shoulderMat: THREE.MeshLambertMaterial;
   private mats: Record<string, THREE.Material>;
   private geos: Record<string, THREE.BufferGeometry>;
-  private biome: Biome;
+  private biomes: BiomeSpan[];
+  private lastBiome: BiomeId | null = null;
   private camPos = new THREE.Vector3();
   private camLook = new THREE.Vector3();
   private promptStop: Stop | null = null;
@@ -82,8 +132,8 @@ export class DriveScene implements GameScene {
     private cb: DriveCallbacks,
   ) {
     this.car = makeCar(undefined, state.upgrades);
-    this.biome = biomeFor(state);
-    this.atmosphere = new Atmosphere(this.scene, this.biome.sky, 300, 1300);
+    this.biomes = biomeSpans(state.route, path);
+    this.atmosphere = new Atmosphere(this.scene, groundColorAt(this.biomes, state.distance, 'sky'), 300, 1300);
     this.atmosphere.attachHeadlights(this.car);
     this.atmosphere.set(hourOf(state), weatherAt(state));
 
@@ -92,17 +142,17 @@ export class DriveScene implements GameScene {
     this.highwayMat = new THREE.MeshLambertMaterial({ map: this.laneTex[0], polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
     this.carriageMat = new THREE.MeshLambertMaterial({ map: this.laneTex[1], polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
     this.medianMat = new THREE.MeshLambertMaterial({
-      color: new THREE.Color(this.biome.ground).multiplyScalar(0.85),
+      color: new THREE.Color(groundColorAt(this.biomes, state.distance)).multiplyScalar(0.85),
       polygonOffset: true,
       polygonOffsetFactor: -1,
       polygonOffsetUnits: -2,
     });
     this.segments = roadSegments(state.route, path.length);
     this.lane = this.laneAt(state.distance);
-    this.shoulderMat = new THREE.MeshLambertMaterial({ color: this.biome.shoulder, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
+    this.shoulderMat = new THREE.MeshLambertMaterial({ color: groundColorAt(this.biomes, state.distance, 'shoulder'), polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
+    const plants = plantModels();
     this.mats = {
-      plant: new THREE.MeshLambertMaterial({ color: this.biome.plant === 'cactus' ? 0x4f8a3c : 0x2f6b35 }),
-      trunk: new THREE.MeshLambertMaterial({ color: 0x6b4a2b }),
+      ...plants.mats,
       rock: new THREE.MeshLambertMaterial({ color: 0x9c8a78 }),
       pole: new THREE.MeshLambertMaterial({ color: 0x5a4632 }),
       building: new THREE.MeshLambertMaterial({ color: 0xffffff, vertexColors: false }),
@@ -110,15 +160,8 @@ export class DriveScene implements GameScene {
       canopy: new THREE.MeshLambertMaterial({ color: 0xc8302c }),
       white: new THREE.MeshLambertMaterial({ color: 0xeeeeee }),
     };
-    const plantGeo =
-      this.biome.plant === 'cactus'
-        ? new THREE.CylinderGeometry(0.5, 0.6, 5, 7).translate(0, 2.5, 0)
-        : this.biome.plant === 'pine'
-          ? new THREE.ConeGeometry(2.2, 8, 7).translate(0, 5, 0)
-          : new THREE.IcosahedronGeometry(2.8, 0).translate(0, 4.5, 0);
     this.geos = {
-      plant: plantGeo,
-      trunk: new THREE.CylinderGeometry(0.3, 0.4, 2, 6).translate(0, 1, 0),
+      ...plants.geos,
       rock: new THREE.DodecahedronGeometry(1.4, 0),
       pole: new THREE.CylinderGeometry(0.15, 0.18, 8, 5).translate(0, 4, 0),
       building: new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0),
@@ -127,7 +170,7 @@ export class DriveScene implements GameScene {
 
     this.ground = new THREE.Mesh(
       new THREE.PlaneGeometry(4000, 4000),
-      new THREE.MeshLambertMaterial({ color: this.biome.ground, polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 4 }),
+      new THREE.MeshLambertMaterial({ color: groundColorAt(this.biomes, state.distance), polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 4 }),
     );
     this.ground.rotation.x = -Math.PI / 2;
     this.scene.add(this.ground);
@@ -148,6 +191,20 @@ export class DriveScene implements GameScene {
   private laneAt(d: number): number {
     const cls = classAt(this.segments, d);
     return laneOffset(cls) * (this.edge(d) / edgeOf(cls));
+  }
+
+  /** The land changes colour gradually as you drive from one climate into another. */
+  private applyBiomeColours(): void {
+    const d = this.state.distance;
+    (this.ground.material as THREE.MeshLambertMaterial).color.setHex(groundColorAt(this.biomes, d));
+    this.medianMat.color.setHex(groundColorAt(this.biomes, d)).multiplyScalar(0.85);
+    this.shoulderMat.color.setHex(groundColorAt(this.biomes, d, 'shoulder'));
+    this.atmosphere.daySky = groundColorAt(this.biomes, d, 'sky');
+  }
+
+  /** The kind of country at a distance (for the HUD). */
+  biomeName(d = this.state.distance): string {
+    return BIOMES[biomeAtDistance(this.biomes, d)].name;
   }
 
   resize(w: number, h: number): void {
@@ -212,6 +269,7 @@ export class DriveScene implements GameScene {
     this.skyTimer -= dt;
     if (this.skyTimer <= 0) {
       this.skyTimer = 0.25;
+      this.applyBiomeColours();
       this.atmosphere.set(hourOf(this.state), weatherAt(this.state));
     }
     this.atmosphere.update(dt, this.camera);
@@ -280,6 +338,11 @@ export class DriveScene implements GameScene {
     }
     if (this.promptStop) this.cb.onPrompt(this.promptStop, this.promptStop.at - s.distance);
     this.announceLandmarks();
+    const biome = biomeAtDistance(this.biomes, s.distance);
+    if (biome !== this.lastBiome) {
+      if (this.lastBiome) this.cb.onBiome?.(BIOMES[biome].icon, BIOMES[biome].name);
+      this.lastBiome = biome;
+    }
     this.cb.onTick();
   }
 
@@ -431,7 +494,8 @@ export class DriveScene implements GameScene {
     this.buildRoad(g, from, to);
 
     const rng = makeRng(this.state.seed ^ hashString(`chunk${k}`));
-    const inst: Record<string, THREE.Matrix4[]> = { plant: [], trunk: [], rock: [], pole: [], building: [], roof: [] };
+    const inst: Record<string, THREE.Matrix4[]> = {};
+    for (const k of Object.keys(this.geos)) inst[k] = [];
     const buildingColors: THREE.Color[] = [];
     const stopsHere = this.state.stops.filter((s) => s.at > from - 200 && s.at < to + 200);
     const marksHere = this.state.landmarks.filter((l) => l.at > from - 120 && l.at < to + 120 && l.kind !== 'mountains' && l.kind !== 'peak');
@@ -461,13 +525,26 @@ export class DriveScene implements GameScene {
           const h = 4 + rng() * (urban > 0.6 ? 18 : 6);
           placeAt(inst.building, p, right, off, rng() * Math.PI, w, h, 6 + rng() * 8);
           buildingColors.push(new THREE.Color().setHSL(0.08 + rng() * 0.1, 0.25, 0.55 + rng() * 0.25));
-        } else if (r < 0.5) {
-          const off = side * (10 + wide + rng() * 70);
-          const s = 0.7 + rng() * 0.8;
-          placeAt(inst.plant, p, right, off, rng() * 6, s);
-          if (this.biome.plant !== 'cactus') placeAt(inst.trunk, p, right, off, 0, s);
-        } else if (r < 0.62) {
-          placeAt(inst.rock, p, right, side * (10 + wide + rng() * 80), rng() * 6, 0.5 + rng() * 2);
+        } else {
+          const b = BIOMES[biomeAtDistance(this.biomes, d)];
+          const r2 = rng();
+          if (r2 < b.density) {
+            const kind = pickPlant(b.plants, rng());
+            if (kind === 'crops') {
+              // Rows of crops run alongside the road, in fields set back from it.
+              if (Math.round(d) % 24 < 8) {
+                const yaw = Math.atan2(f.x, -f.y);
+                for (let row = 0; row < 6; row++) placeAt(inst.crops, p, right, side * (16 + wide + row * 4 + rng()), yaw, 1, 0.8 + rng() * 0.4, 1);
+              }
+            } else {
+              const off = side * (10 + wide + rng() * 70);
+              const s = 0.7 + rng() * 0.8;
+              const rot = rng() * 6;
+              for (const part of PLANT_PARTS[kind]) placeAt(inst[part], p, right, off, rot, s);
+            }
+          } else if (r2 < b.density + b.rocks * 0.5) {
+            placeAt(inst.rock, p, right, side * (10 + wide + rng() * 80), rng() * 6, 0.5 + rng() * 2);
+          }
         }
       }
     }
@@ -603,6 +680,16 @@ export class DriveScene implements GameScene {
 const tmpM = new THREE.Matrix4();
 const tmpQ = new THREE.Quaternion();
 const tmpE = new THREE.Euler();
+
+function pickPlant(weights: Partial<Record<PlantKind, number>>, r: number): PlantKind {
+  const entries = Object.entries(weights) as [PlantKind, number][];
+  let t = r * entries.reduce((a, [, w]) => a + w, 0);
+  for (const [k, w] of entries) {
+    t -= w;
+    if (t <= 0) return k;
+  }
+  return entries[0][0];
+}
 
 function placeAt(list: THREE.Matrix4[], p: Vec2, right: Vec2, offset: number, rotY: number, sx: number, sy = sx, sz = sx): void {
   const pos = new THREE.Vector3(p.x + right.x * offset, 0, -(p.y + right.y * offset));

@@ -13,6 +13,7 @@ import { damage, type GameState } from '../game/state';
 import { sound } from '../audio/sound';
 import { Atmosphere } from './atmosphere';
 import { hourOf, weatherAt } from '../game/time';
+import { biomeSpans, groundColorAt } from '../game/biomes';
 import { disposeTree, makeCar, makeRoadTexture, type GameScene } from './common';
 
 export interface CombatCallbacks {
@@ -61,7 +62,7 @@ export class CombatScene implements GameScene {
     this.atmosphere.set(hourOf(state), weatherAt(state));
     this.atmosphere.attachHeadlights(this.car);
 
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshLambertMaterial({ color: 0xc89a62 }));
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshLambertMaterial({ color: groundColorAt(biomeSpans(state.route), state.distance) }));
     ground.rotation.x = -Math.PI / 2;
     this.scene.add(ground);
 

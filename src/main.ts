@@ -334,6 +334,7 @@ function startTrip(s: GameState): void {
     onPrompt: (stop, dist) => updatePrompt(stop, dist),
     onEnterStop: (stop) => showStop(stop),
     onLandmark: (l) => showLandmarkToast(l),
+    onBiome: (icon, name) => showToast(icon, 'Now entering', name),
     onRoadEvent: () => showRoadEvent(rollEvent(s)),
     onBoss: (boss) => showBossIntro(boss),
     onTick: () => hudTick?.(),

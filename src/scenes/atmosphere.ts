@@ -20,7 +20,7 @@ export class Atmosphere {
   /** Fog distances for clear daytime; weather and night pull them in. */
   constructor(
     private scene: THREE.Scene,
-    private daySky: number,
+    public daySky: number,
     private fogNear: number,
     private fogFar: number,
   ) {
