@@ -1,6 +1,7 @@
 import { pathFromRoute, type RouteData } from '../geo/route';
 import type { Path } from '../geo/geo';
 import { fillLandmarks, type Landmark } from './landmarks';
+import type { CrewMember } from './events';
 import { fuelEfficiency, MAX_LEVEL, maxHealthFor, noUpgrades, tankFor, upgradeCost, UPGRADES, type UpgradeKind, type Upgrades } from './upgrades';
 import { generateStops, type PlaceKind, type Stop } from './stops';
 import { hashString, makeRng, range, rangeInt, type Rng } from './rng';
@@ -27,6 +28,9 @@ export interface GameState {
   health: number;
   inv: Inventory;
   upgrades: Upgrades;
+  crew: CrewMember[];
+  nextEventAt: number;
+  eventsSeen: number;
   /** Stop ids already passed or visited. */
   passed: string[];
   /** Searches done per stop+place, which raises the ambush risk. */
@@ -67,6 +71,9 @@ export function newGame(route: RouteData, seed = Date.now() & 0xffffffff): GameS
     distance: 0,
     health: MAX_HEALTH,
     upgrades: noUpgrades(),
+    crew: [],
+    nextEventAt: path.length * range(rng, 0.05, 0.09),
+    eventsSeen: 0,
     inv: { fuel: 70, cash: 60, scrap: 10, bullets: 60, shells: 6, catnip: 1 },
     passed: [],
     searches: {},
@@ -88,7 +95,7 @@ export function advance(
   path: Path,
   dist: number,
   fuelRate = fuelPerUnit(path.length),
-): { arrived: boolean; outOfFuel: boolean; encounter: boolean } {
+): { arrived: boolean; outOfFuel: boolean; encounter: boolean; event?: boolean } {
   if (s.status !== 'driving') return { arrived: false, outOfFuel: false, encounter: false };
   const step = Math.min(dist, path.length - s.distance);
   s.distance += step;
@@ -111,7 +118,16 @@ export function advance(
     const rng = makeRng(s.seed + s.encounters * 977);
     s.nextEncounterAt = s.distance + encounterGap(rng, path.length);
   }
-  return { arrived: false, outOfFuel: false, encounter };
+  let event = false;
+  if (!encounter && s.distance >= s.nextEventAt) {
+    event = true;
+    s.eventsSeen++;
+    const rng = makeRng(s.seed ^ hashString(`gap${s.eventsSeen}`));
+    s.nextEventAt = s.distance + range(rng, 0.08, 0.14) * path.length;
+    // Keep events and fights from landing on top of each other.
+    if (Math.abs(s.nextEventAt - s.nextEncounterAt) < 0.03 * path.length) s.nextEventAt += 0.04 * path.length;
+  }
+  return { arrived: false, outOfFuel: false, encounter, event };
 }
 
 /** The next stop the player hasn't passed, if it's within `lookahead` units. */
@@ -206,7 +222,7 @@ export function search(s: GameState, stopId: string, place: PlaceKind): ActionRe
   const n = s.searches[key] ?? 0;
   s.searches[key] = n + 1;
   const rng = makeRng(s.seed ^ hashString(`${key}:${n}`));
-  const ambushChance = Math.min(0.75, 0.15 + n * 0.2);
+  const ambushChance = Math.min(0.75, 0.15 + n * 0.2) - (s.crew.includes('dog') ? 0.1 : 0);
   if (rng() < ambushChance) {
     return { ok: true, ambush: true, message: 'Something heard you. They\'re coming!' };
   }
@@ -259,6 +275,9 @@ export function loadGame(): GameState | null {
     const s = JSON.parse(raw) as GameState;
     if (s.version !== 1 || s.status !== 'driving') return null;
     s.upgrades ??= noUpgrades();
+    s.crew ??= [];
+    s.eventsSeen ??= 0;
+    s.nextEventAt ??= s.distance + 500;
     // Saves from before landmarks existed.
     s.landmarks ??= fillLandmarks(s.route, pathFromRoute(s.route).length, s.stops, s.route.landmarks ?? [], s.seed);
     return s;

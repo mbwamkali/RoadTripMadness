@@ -773,3 +773,44 @@ body.hurt::after {
   min-height: 40px;
   height: 40px;
 }
+
+/* ------------------------------------------------------------------ road events */
+
+.card.event {
+  border: 2px solid var(--accent);
+}
+
+.event-icon {
+  font-size: 54px;
+  line-height: 1;
+}
+
+.event-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.btn.choice {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.btn.choice small {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.outcome {
+  font-size: 17px;
+}
+
+.outcome.good {
+  color: var(--good);
+}
+
+.outcome.bad {
+  color: #ff9d8a;
+}

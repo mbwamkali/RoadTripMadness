@@ -22,6 +22,7 @@ export interface DriveCallbacks {
   onPrompt(stop: Stop | null, distanceTo: number): void;
   onEnterStop(stop: Stop): void;
   onLandmark(l: Landmark): void;
+  onRoadEvent(): void;
   onTick(): void;
 }
 
@@ -211,6 +212,11 @@ export class DriveScene implements GameScene {
     if (res.encounter && !this.pendingTurn) {
       this.stopping = true;
       this.cb.onEncounter();
+      return;
+    }
+    if (res.event && !this.pendingTurn) {
+      this.stopping = true;
+      this.cb.onRoadEvent();
       return;
     }
     // Stop prompts.

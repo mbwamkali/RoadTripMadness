@@ -67,6 +67,8 @@ export interface CombatState {
   title: string;
   gunDamage: number;
   ramDamage: number;
+  gunner: boolean;
+  gunnerTimer: number;
 }
 
 export const ENEMY_STATS: Record<EnemyType, { hp: number; name: string }> = {
@@ -98,6 +100,10 @@ export interface CombatOptions {
   gunDamage?: number;
   /** Damage the car takes from hitting a zombie (ram plate upgrade lowers it). */
   ramDamage?: number;
+  /** A crew gunner fires at enemies on their own. */
+  gunner?: boolean;
+  /** Force the kind of fight (from a road event). */
+  theme?: EnemyType;
 }
 
 export function createCombat(opts: CombatOptions): CombatState {
@@ -106,7 +112,7 @@ export function createCombat(opts: CombatOptions): CombatState {
   const count = Math.round(5 + p * 9 + rng() * 3);
   const types: EnemyType[] = [];
   // Each fight leans toward one kind of threat so they feel distinct.
-  const theme = opts.ambush ? (rng() < 0.6 ? 'zombie' : 'outlaw') : pickTheme(rng, p);
+  const theme = opts.theme ?? (opts.ambush ? (rng() < 0.6 ? 'zombie' : 'outlaw') : pickTheme(rng, p));
   for (let i = 0; i < count; i++) {
     const r = rng();
     let t: EnemyType = theme;
@@ -141,6 +147,8 @@ export function createCombat(opts: CombatOptions): CombatState {
     title: titles[theme],
     gunDamage: opts.gunDamage ?? 1,
     ramDamage: opts.ramDamage ?? 6,
+    gunner: !!opts.gunner,
+    gunnerTimer: 2,
   };
 }
 
@@ -259,6 +267,7 @@ export function stepCombat(c: CombatState, dt: number): number {
       }
     }
   }
+  if (c.gunner) gunnerFire(c, dt);
   // Anything that falls far behind is gone (left in the dust, not killed).
   c.enemies = c.enemies.filter((e) => e.hp > 0 && e.z < 40);
   return carDamage;
@@ -279,6 +288,19 @@ function kill(c: CombatState, e: Enemy, byPlayer: boolean): void {
     add('scrap', 4);
     if (c.rng() < 0.5) add('catnip', 1);
   }
+}
+
+/** The crew gunner picks off the closest threat every so often, with their own ammo. */
+function gunnerFire(c: CombatState, dt: number): void {
+  c.gunnerTimer -= dt;
+  if (c.gunnerTimer > 0) return;
+  c.gunnerTimer = 1.3;
+  const target = c.enemies.filter((e) => e.hp > 0 && e.z > -45).sort((a, b) => Math.abs(a.z) - Math.abs(b.z))[0];
+  if (!target) return;
+  c.events.push({ kind: 'shot', weapon: 'bullets', x: target.x, y: target.y, z: target.z });
+  target.hp -= 1;
+  c.events.push({ kind: 'hit', enemy: target.id, dmg: 1 });
+  if (target.hp <= 0) kill(c, target, true);
 }
 
 /** Fires the current weapon at an enemy. Spends ammo from the inventory. */

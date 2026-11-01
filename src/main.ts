@@ -25,7 +25,8 @@ import {
   type GameState,
 } from './game/state';
 import { STOP_TITLES, type PlaceKind, type Stop } from './game/stops';
-import { BOOST_FUEL, boost, createCombat, horn, WEAPONS, type CombatState, type WeaponKind } from './game/combat';
+import { BOOST_FUEL, boost, createCombat, horn, WEAPONS, type CombatState, type EnemyType, type WeaponKind } from './game/combat';
+import { CREW, rollEvent, type RoadEvent } from './game/events';
 import type { GameScene } from './scenes/common';
 import { DriveScene } from './scenes/DriveScene';
 import { CombatScene } from './scenes/CombatScene';
@@ -256,6 +257,7 @@ function startTrip(s: GameState): void {
     onPrompt: (stop, dist) => updatePrompt(stop, dist),
     onEnterStop: (stop) => showStop(stop),
     onLandmark: (l) => showLandmarkToast(l),
+    onRoadEvent: () => showRoadEvent(rollEvent(s)),
     onTick: () => hudTick?.(),
   });
   setScene(drive);
@@ -386,6 +388,7 @@ function inventoryLine(s: GameState): HTMLElement {
     h('span', { title: 'Bullets' }, `🔫 ${i.bullets}`),
     h('span', { title: 'Shotgun shells' }, `💥 ${i.shells}`),
     h('span', { title: 'Catnip bombs' }, `🌿 ${i.catnip}`),
+    ...s.crew.map((c) => h('span', { title: `${CREW[c].name}: ${CREW[c].perk}` }, CREW[c].icon)),
   );
 }
 
@@ -430,7 +433,7 @@ function showDriveHud(): void {
   hudTick = () => {
     fuel.set(s.inv.fuel, tankSize(s));
     hp.set(s.health, maxHealth(s));
-    const key = JSON.stringify(s.inv);
+    const key = JSON.stringify(s.inv) + s.crew.join();
     if (key !== lastInv) {
       inv.replaceChildren(inventoryLine(s));
       lastInv = key;
@@ -484,6 +487,49 @@ function showPauseMenu(): void {
       ),
     ),
   );
+  ui().append(overlay);
+}
+
+// --------------------------------------------------------------- road events
+
+function showRoadEvent(ev: RoadEvent): void {
+  const s = state!;
+  saveGame(s);
+  const body = h('div', { class: 'event-body' });
+  const card = h('div', { class: 'card event' }, h('div', { class: 'event-icon' }, ev.icon), h('h2', {}, ev.title), h('p', {}, ev.text), body);
+  const overlay = h('div', { class: 'modal' }, card);
+  const finish = (fight?: EnemyType) => {
+    overlay.remove();
+    if (s.status === 'lost') return showEnd();
+    if (fight) return startCombat(false, undefined, fight);
+    drive?.resume();
+    hudTick?.();
+  };
+  body.replaceChildren(
+    ...ev.choices.map((ch) =>
+      h(
+        'button',
+        {
+          class: 'btn choice',
+          disabled: !ch.enabled,
+          onclick: () => {
+            const out = ch.apply();
+            if (out.fight) sound.bad();
+            else if (out.ok) sound.coin();
+            else sound.bad();
+            hudTick?.();
+            body.replaceChildren(
+              h('p', { class: `outcome ${out.ok ? 'good' : 'bad'}` }, out.message),
+              h('button', { class: 'btn primary', onclick: () => finish(out.fight) }, out.fight ? 'Fight!' : 'Continue'),
+            );
+          },
+        },
+        h('b', {}, ch.label),
+        ch.hint ? h('small', {}, ch.hint) : null,
+      ),
+    ),
+  );
+  sound.charge();
   ui().append(overlay);
 }
 
@@ -614,10 +660,12 @@ function showUpgrades(s: GameState, say: (r: ActionResult) => void): void {
 
 // --------------------------------------------------------------- combat
 
-function startCombat(ambush: boolean, stop?: Stop): void {
+function startCombat(ambush: boolean, stop?: Stop, theme?: EnemyType): void {
   const s = state!;
   sound.stopMusic();
   const c = createCombat({
+    theme,
+    gunner: s.crew.includes('gunner'),
     seed: s.seed + s.encounters * 31 + (ambush ? 7 : 0) + Math.floor(s.distance),
     progress: s.distance / path!.length,
     ambush,
@@ -720,6 +768,11 @@ function endCombat(c: CombatState, outcome: 'cleared' | 'escaped' | 'wrecked', s
     found.push(`${v} ${k}`);
   }
   s.log.push(`${c.title} ${outcome === 'cleared' ? 'Wiped them out' : 'Got away'}.`);
+  let patched = 0;
+  if (s.crew.includes('mechanic')) {
+    patched = Math.min(8, maxHealth(s) - s.health);
+    s.health += patched;
+  }
   saveGame(s);
   ui().append(
     h(
@@ -731,6 +784,7 @@ function endCombat(c: CombatState, outcome: 'cleared' | 'escaped' | 'wrecked', s
         h('h2', {}, outcome === 'cleared' ? 'Wiped them out!' : 'You got away!'),
         h('p', {}, `${c.kills} taken down. Car at ${Math.round(s.health)}%.`),
         found.length > 0 && h('p', {}, `Picked up ${found.join(', ')}.`),
+        patched > 0 && h('p', {}, `🧰 Your mechanic patches ${Math.round(patched)} damage.`),
         h(
           'button',
           {
