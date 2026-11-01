@@ -16,7 +16,7 @@ import { quality } from './quality';
 import { detailTexture } from './textures';
 import { hourOf, weatherAt } from '../game/time';
 import { biomeSpans, groundColorAt } from '../game/biomes';
-import { castShadows, disposeTree, makeCar, makeRoadTexture, type GameScene } from './common';
+import { castShadows, disposeTree, makeRide, makeRoadTexture, type GameScene } from './common';
 
 export interface CombatCallbacks {
   onCarHit(dmg: number): void;
@@ -60,7 +60,7 @@ export class CombatScene implements GameScene {
     private state: GameState,
     private cb: CombatCallbacks,
   ) {
-    this.car = makeCar(undefined, state.upgrades);
+    this.car = makeRide(state.ride ?? 'car', state.upgrades);
     this.atmosphere = new Atmosphere(this.scene, combat.title.includes('cat') || combat.boss === 'mothership' ? 0x5a3f8a : 0xe8a868, 60, 170, this.shadows ? { size: quality.profile.shadowSize, range: 45 } : null);
     this.atmosphere.minFogFar = combat.boss ? 90 : 55;
     this.atmosphere.set(hourOf(state), weatherAt(state));

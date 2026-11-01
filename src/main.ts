@@ -5,6 +5,7 @@ import { currentPosition, type Place } from './geo/geocode';
 import { ANNOUNCED, LANDMARK_ICONS, LANDMARK_TITLES, readMoreUrl, roadAt, type Landmark } from './game/landmarks';
 import { demoRawRoute } from './geo/demoRoute';
 import type { ObstacleKind } from './game/obstacles';
+import { loadRide, RIDE_IDS, RIDES, rideOf, saveRide, type Ride } from './game/rides';
 import { addStateLines, buildRouteData, pathFromRoute, realKmAt, type RawRoute, type RouteData } from './geo/route';
 import { latLngAt, loadStateMap } from './geo/states';
 import { overpassStreets } from './geo/streets';
@@ -312,6 +313,28 @@ function previewRoute(route: RouteData, note?: string, back: () => void = showSe
   );
   const syncDiff = () => diffBtns.forEach((b, i) => b.classList.toggle('selected', DIFFICULTY_IDS[i] === difficulty));
   syncDiff();
+  let ride: Ride = loadRide();
+  const rideBtns = RIDE_IDS.map((r) =>
+    h(
+      'button',
+      {
+        class: 'btn ride',
+        onclick: () => {
+          ride = r;
+          saveRide(r);
+          syncRide();
+        },
+      },
+      h('span', { class: 'icon' }, RIDES[r].icon),
+      h('b', {}, RIDES[r].name),
+    ),
+  );
+  const rideBlurb = h('p', { class: 'ride-blurb muted' }, '');
+  const syncRide = () => {
+    rideBtns.forEach((b, i) => b.classList.toggle('selected', RIDE_IDS[i] === ride));
+    rideBlurb.textContent = RIDES[ride].blurb;
+  };
+  syncRide();
   const p = pathFromRoute(route);
   // Real weather along the route and the real time at the start (Open-Meteo).
   let live: Promise<LiveConditions | null> | null = null;
@@ -349,7 +372,7 @@ function previewRoute(route: RouteData, note?: string, back: () => void = showSe
         .catch(() => null)
     : null;
   const go = () => {
-    const g = newGame(route, s.seed, difficulty);
+    const g = newGame(route, s.seed, difficulty, ride);
     startTrip(g);
     void streets?.then((names) => {
       if (!names || state !== g) return;
@@ -389,6 +412,8 @@ function previewRoute(route: RouteData, note?: string, back: () => void = showSe
       ),
       note && h('p', { class: 'note' }, note),
       h('div', { class: 'difficulty' }, ...diffBtns),
+      h('div', { class: 'rides' }, ...rideBtns),
+      rideBlurb,
       h('button', { class: 'btn primary', onclick: go }, 'Hit the road'),
       realMap && liveBtn,
       h('button', { class: 'btn ghost', onclick: back }, back === showSetup ? '← Pick different places' : '← Back'),
@@ -1022,8 +1047,10 @@ function startCombat(ambush: boolean, stop?: Stop, theme?: EnemyType, boss?: Bos
     seed: s.seed + s.encounters * 31 + (ambush ? 7 : 0) + Math.floor(s.distance),
     progress: s.distance / path!.length + nightDanger(hourOf(s)),
     ambush,
-    gunDamage: gunDamageFor(s.upgrades),
-    ramDamage: ramDamageFor(s.upgrades),
+    gunDamage: gunDamageFor(s.upgrades) * rideOf(s).gun,
+    ramDamage: ramDamageFor(s.upgrades) * rideOf(s).ram,
+    dodge: rideOf(s).dodge,
+    steerScale: rideOf(s).steer,
   });
   combat?.dispose();
   combat = new CombatScene(c, s, {

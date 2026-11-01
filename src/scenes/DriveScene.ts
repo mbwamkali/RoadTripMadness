@@ -6,11 +6,12 @@ import { advance, damage, upcomingStop, type GameState } from '../game/state';
 import { clampLane, defaultLane, laneCenter, oncoming, Traffic, type Vehicle, type VehicleKind } from '../game/traffic';
 import { Obstacles, ramObstacle, shootObstacle, SHOOT_RANGE, type Obstacle, type ObstacleKind } from '../game/obstacles';
 import { DIFFICULTIES } from '../game/difficulty';
+import { rideOf } from '../game/rides';
 import { STOP_TITLES, type Stop } from '../game/stops';
 import { hashString, makeRng, type Rng } from '../game/rng';
 import { ANNOUNCED, roadAt, type Landmark } from '../game/landmarks';
 import { interstateNumber, latLngAt, stateMap } from '../geo/states';
-import { castShadows, disposeTree, makeCar, makeObstacle, makeTrafficVehicle, makeLaneTexture, makeRoadTexture, setBlinkers, textSprite, to3, type GameScene } from './common';
+import { castShadows, disposeTree, makeObstacle, makeRide, makeTrafficVehicle, makeLaneTexture, makeRoadTexture, setBlinkers, textSprite, to3, type GameScene } from './common';
 import { classAt, edgeAt, edgeOf, isDivided, PROFILES, roadSegments, SPEED, urbanZones, type RoadClass, type RoadSegment } from '../game/roads';
 import { buildLandmark, waterTexture } from './landmarkModels';
 import { sound } from '../audio/sound';
@@ -161,7 +162,7 @@ export class DriveScene implements GameScene {
     private path: Path,
     private cb: DriveCallbacks,
   ) {
-    this.car = makeCar(undefined, state.upgrades);
+    this.car = makeRide(state.ride ?? 'car', state.upgrades);
     this.biomes = biomeSpans(state.route, path);
     const q = quality.profile;
     this.ahead = AHEAD * q.drawScale;
@@ -328,7 +329,7 @@ export class DriveScene implements GameScene {
     const rot = this.car.quaternion.clone();
     this.scene.remove(this.car);
     disposeTree(this.car);
-    this.car = makeCar(undefined, this.state.upgrades);
+    this.car = makeRide(this.state.ride ?? 'car', this.state.upgrades);
     this.atmosphere.attachHeadlights(this.car);
     castShadows(this.car, this.shadows);
     this.car.position.copy(pos);
@@ -409,7 +410,7 @@ export class DriveScene implements GameScene {
     this.roadSpeed += (want - this.roadSpeed) * Math.min(1, dt * 0.8);
     this.followRoadChanges();
     this.crashCooldown -= dt;
-    let speed = CRUISE_SPEED * this.roadSpeed * this.throttle * this.warp;
+    let speed = CRUISE_SPEED * rideOf(s).speed * this.roadSpeed * this.throttle * this.warp;
     if (this.promptStop) speed = Math.min(speed, CRUISE_SPEED * 0.7);
     // Brake behind a slower vehicle in your lane (fast-forward drives through traffic).
     if (this.warp === 1 && !oncoming(this.playerLane)) {
@@ -474,7 +475,7 @@ export class DriveScene implements GameScene {
   /** Hitting another vehicle hurts, knocks it off the road and slows you down. */
   private checkCrash(): void {
     if (this.crashCooldown > 0) return;
-    const o = this.obstacles.hit(this.state.distance, this.lane, (x) => this.obstacleX(x));
+    const o = this.obstacles.hit(this.state.distance, this.lane, (x) => this.obstacleX(x), rideOf(this.state).length);
     if (o) {
       const cost = ramObstacle(this.state, o);
       this.obstacles.remove(o);
@@ -486,12 +487,12 @@ export class DriveScene implements GameScene {
       this.cb.onRam?.(o.kind, cost);
       return;
     }
-    const v = this.traffic.hit(this.state.distance, this.lane, (x) => this.vehicleX(x));
+    const v = this.traffic.hit(this.state.distance, this.lane, (x) => this.vehicleX(x), rideOf(this.state).length);
     if (!v) return;
     const headOn = oncoming(v.lane);
     const base = v.kind === 'truck' ? 18 : 10;
     // The ram plate softens it.
-    const amount = Math.round(base * (headOn ? 1.6 : 1) * Math.max(0.4, 1 - this.state.upgrades.ram * 0.2));
+    const amount = Math.round(base * (headOn ? 1.6 : 1) * Math.max(0.4, 1 - this.state.upgrades.ram * 0.2) * rideOf(this.state).ram);
     damage(this.state, amount);
     sound.carHit();
     this.traffic.remove(v);
@@ -679,7 +680,7 @@ export class DriveScene implements GameScene {
     const want = this.laneAt(d);
     // Jumps (loading, debug teleports) snap; otherwise change lanes at a steady pace.
     const jumped = this.car.position.distanceTo(p) > 150;
-    this.lane = snap || jumped ? want : this.lane + Math.sign(want - this.lane) * Math.min(Math.abs(want - this.lane), 5 * dt);
+    this.lane = snap || jumped ? want : this.lane + Math.sign(want - this.lane) * Math.min(Math.abs(want - this.lane), 5 * rideOf(this.state).steer * dt);
     p.addScaledVector(new THREE.Vector3(f.y, 0, f.x), this.lane);
     this.car.position.copy(p);
     this.car.lookAt(p.clone().add(fwd));

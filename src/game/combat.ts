@@ -81,6 +81,10 @@ export interface CombatState {
   minionTimer: number;
   hpScale: number;
   dmgScale: number;
+  /** Chance an enemy hit misses (a nimble ride). */
+  dodge: number;
+  /** How fast the car steers sideways. */
+  steerScale: number;
 }
 
 export const ENEMY_STATS: Record<EnemyType, { hp: number; name: string }> = {
@@ -145,6 +149,8 @@ export interface CombatOptions {
   /** Difficulty: enemy health and damage multipliers. */
   hpScale?: number;
   dmgScale?: number;
+  dodge?: number;
+  steerScale?: number;
 }
 
 export function createCombat(opts: CombatOptions): CombatState {
@@ -174,6 +180,8 @@ export function createCombat(opts: CombatOptions): CombatState {
     minionTimer: 6,
     hpScale: opts.hpScale ?? 1,
     dmgScale: opts.dmgScale ?? 1,
+    dodge: opts.dodge ?? 0,
+    steerScale: opts.steerScale ?? 1,
   };
   if (opts.boss) {
     return {
@@ -271,13 +279,14 @@ export function stepCombat(c: CombatState, dt: number): number {
   c.boostTime = Math.max(0, c.boostTime - dt);
   c.escape += dt * (boosting ? 2.5 : 1);
 
-  c.carX = Math.max(-LANE_LIMIT, Math.min(LANE_LIMIT, c.carX + c.steer * 7 * dt));
+  c.carX = Math.max(-LANE_LIMIT, Math.min(LANE_LIMIT, c.carX + c.steer * 7 * c.steerScale * dt));
 
   while (c.queue.length && c.queue[0].t <= c.time) spawn(c, c.queue.shift()!.type);
 
   const roadSpeed = ROAD_SPEED * (boosting ? 2.2 : 1);
   let carDamage = 0;
   const hitCar = (raw: number, from: EnemyType) => {
+    if (c.dodge > 0 && c.rng() < c.dodge) return;
     const dmg = raw * c.dmgScale;
     carDamage += dmg;
     c.events.push({ kind: 'carHit', dmg, from });

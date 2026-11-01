@@ -169,9 +169,9 @@ export class Traffic {
   }
 
   /** A vehicle overlapping the player (lateral offsets in road units), if any. */
-  hit(playerD: number, playerX: number, xOf: (v: Vehicle) => number): Vehicle | null {
+  hit(playerD: number, playerX: number, xOf: (v: Vehicle) => number, playerLength = PLAYER_LENGTH): Vehicle | null {
     for (const v of this.vehicles) {
-      if (Math.abs(v.d - playerD) > (VEHICLE_LENGTH[v.kind] + PLAYER_LENGTH) / 2) continue;
+      if (Math.abs(v.d - playerD) > (VEHICLE_LENGTH[v.kind] + playerLength) / 2) continue;
       if (Math.abs(xOf(v) - playerX) < 2.1) return v;
     }
     return null;

@@ -3,6 +3,7 @@ import { makeRng, range, type Rng } from './rng';
 import type { GameState } from './state';
 import { damage } from './state';
 import { DIFFICULTIES } from './difficulty';
+import { rideOf } from './rides';
 
 /**
  * Small threats on the road itself: dodge them, ram them or shoot them.
@@ -100,7 +101,7 @@ export class Obstacles {
 
 /** Driving into one: costs car health, clears it, and a zombie counts as a kill. */
 export function ramObstacle(s: GameState, o: Obstacle): number {
-  const cost = ramCost(o.kind, s.upgrades.ram, DIFFICULTIES[s.difficulty].dmg);
+  const cost = ramCost(o.kind, s.upgrades.ram, DIFFICULTIES[s.difficulty].dmg * rideOf(s).ram);
   damage(s, cost);
   if (o.kind === 'zombie') s.kills++;
   return cost;
@@ -114,7 +115,7 @@ export function shootObstacle(s: GameState, o: Obstacle): { destroyed: boolean; 
   const ammo = s.inv.bullets > 0 ? 'bullets' : s.inv.shells > 0 ? 'shells' : null;
   if (!ammo) return null;
   s.inv[ammo]--;
-  o.hp -= (ammo === 'shells' ? 3 : 1) + s.upgrades.turret;
+  o.hp -= ((ammo === 'shells' ? 3 : 1) + s.upgrades.turret) * Math.max(1, rideOf(s).gun);
   if (o.hp > 0) return { destroyed: false, scrap: 0, ammo };
   const scrap = OBSTACLES[o.kind].scrap;
   s.inv.scrap += scrap;

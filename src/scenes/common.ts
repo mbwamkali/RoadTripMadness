@@ -267,6 +267,102 @@ export function makeCar(color = 0xd9482b, up?: Upgrades): THREE.Group {
   return car;
 }
 
+/** The player's ride: the muscle car, a motorcycle or a pickup truck. Faces +z. */
+export function makeRide(ride: 'car' | 'motorcycle' | 'truck', up?: Upgrades): THREE.Group {
+  if (ride === 'car') return makeCar(undefined, up);
+  const g = new THREE.Group();
+  const paint = new THREE.MeshLambertMaterial({ color: ride === 'truck' ? 0x2f5d8a : 0xd9482b });
+  const dark = new THREE.MeshLambertMaterial({ color: 0x1d1d22 });
+  const metal = new THREE.MeshLambertMaterial({ color: 0x9a9a9a });
+  const glass = new THREE.MeshLambertMaterial({ color: 0x8fc6e8, emissive: 0x112233 });
+  const head = new THREE.MeshBasicMaterial({ color: 0xfff3b0 });
+  const tail = new THREE.MeshBasicMaterial({ color: 0xd8261a });
+  const wheel = (r: number, w: number, x: number, z: number) => {
+    const wg = new THREE.Group();
+    wg.add(new THREE.Mesh(new THREE.CylinderGeometry(r, r, w, 14).rotateZ(Math.PI / 2), dark));
+    wg.add(new THREE.Mesh(new THREE.CylinderGeometry(r * 0.55, r * 0.55, w + 0.02, 10).rotateZ(Math.PI / 2), metal));
+    const spoke = new THREE.Mesh(new THREE.BoxGeometry(w + 0.03, 0.05, r * 0.95), dark);
+    wg.add(spoke, spoke.clone().rotateX(Math.PI / 2));
+    wg.position.set(x, r, z);
+    wg.name = 'wheel';
+    g.add(wg);
+  };
+  const signals = (x: number, y: number, zf: number, zb: number) => {
+    for (const side of ['L', 'R'] as const) {
+      const sx = side === 'L' ? x : -x;
+      const mat = new THREE.MeshBasicMaterial({ color: BLINK_OFF });
+      for (const z of [zf, zb]) {
+        const b = mesh3(new THREE.BoxGeometry(0.2, 0.16, 0.08), mat, sx, y, z);
+        b.name = `blink${side}`;
+        g.add(b);
+      }
+      const glow = new THREE.Mesh(
+        new THREE.PlaneGeometry(1.2, 1.2),
+        new THREE.MeshBasicMaterial({ color: BLINK_ON, map: glowTexture(), transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }),
+      );
+      glow.position.set(sx * 1.05, y, zb - 0.03);
+      glow.name = `glow${side}`;
+      g.add(glow);
+    }
+  };
+  if (ride === 'motorcycle') {
+    // A dirt-bike-ish bike with a rider in a red helmet and a gun strapped to the bars.
+    wheel(0.36, 0.16, 0, 0.75);
+    wheel(0.36, 0.2, 0, -0.75);
+    g.add(new THREE.Mesh(profile(0.34, [[0.75, 0.4], [0.35, 0.95], [-0.5, 0.95], [-0.85, 0.7], [-0.75, 0.4]]), paint));
+    g.add(mesh3(new THREE.BoxGeometry(0.42, 0.18, 0.7), dark, 0, 1.0, -0.35)); // seat
+    g.add(mesh3(new THREE.BoxGeometry(0.8, 0.06, 0.06), metal, 0, 1.25, 0.55)); // handlebars
+    g.add(mesh3(new THREE.BoxGeometry(0.06, 0.6, 0.06), metal, 0, 0.95, 0.65));
+    // Rider: leaning forward, arms to the bars.
+    const jacket = new THREE.MeshLambertMaterial({ color: 0x3a2a1a });
+    const torso = mesh3(new THREE.BoxGeometry(0.5, 0.7, 0.32), jacket, 0, 1.45, -0.15);
+    torso.rotation.x = 0.35;
+    g.add(torso);
+    g.add(mesh3(new THREE.SphereGeometry(0.2, 10, 8), paint, 0, 1.95, 0.0)); // helmet
+    g.add(mesh3(new THREE.BoxGeometry(0.3, 0.1, 0.06), glass, 0, 1.95, 0.18)); // visor
+    for (const x of [-0.26, 0.26]) {
+      const arm = mesh3(new THREE.BoxGeometry(0.12, 0.12, 0.6), jacket, x, 1.45, 0.25);
+      arm.rotation.x = 0.4;
+      g.add(arm, mesh3(new THREE.BoxGeometry(0.14, 0.5, 0.14), dark, x * 0.9, 0.85, -0.2));
+    }
+    const gun = mesh3(new THREE.BoxGeometry(0.1, 0.1, 0.7), dark, 0.28, 1.12, 0.6);
+    gun.name = 'gun';
+    g.add(gun);
+    g.add(mesh3(new THREE.BoxGeometry(0.22, 0.14, 0.05), head, 0, 1.05, 0.79));
+    g.add(mesh3(new THREE.BoxGeometry(0.2, 0.1, 0.05), tail, 0, 0.92, -0.88));
+    signals(0.22, 1.0, 0.72, -0.9);
+    const shadow = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 2.2), new THREE.MeshBasicMaterial({ color: 0, transparent: true, opacity: 0.35, depthWrite: false }));
+    shadow.rotation.x = -Math.PI / 2;
+    shadow.position.y = 0.03;
+    g.add(shadow);
+    return g;
+  }
+  // Pickup truck: tall cab, open bed with a roll bar and a heavy gun, big tires.
+  g.add(new THREE.Mesh(profile(2.0, [[-2.2, 0.55], [2.2, 0.55], [2.2, 1.15], [1.1, 1.25], [-2.2, 1.25]]), paint));
+  g.add(new THREE.Mesh(profile(1.9, [[1.05, 1.23], [-0.2, 1.23], [-0.2, 1.95], [0.65, 1.95]]), glass));
+  g.add(mesh3(new THREE.BoxGeometry(1.94, 0.08, 0.85), paint, 0, 1.98, 0.22)); // cab roof
+  g.add(mesh3(new THREE.BoxGeometry(1.84, 0.2, 1.9), dark, 0, 1.18, -1.2)); // bed floor
+  for (const x of [-0.95, 0.95]) g.add(mesh3(new THREE.BoxGeometry(0.08, 1.0, 0.08), metal, x, 1.75, -0.45));
+  g.add(mesh3(new THREE.BoxGeometry(1.98, 0.08, 0.08), metal, 0, 2.25, -0.45)); // roll bar
+  const gun = mesh3(new THREE.BoxGeometry(0.24, 0.24, 1.5), dark, 0, 2.05, -0.9);
+  gun.name = 'gun';
+  g.add(gun);
+  g.add(mesh3(new THREE.BoxGeometry(2.3, 0.35, 0.3), metal, 0, 0.7, 2.25)); // bull bar
+  for (const [x, z] of [[-1.02, 1.35], [1.02, 1.35], [-1.02, -1.4], [1.02, -1.4]]) wheel(0.55, 0.42, x, z);
+  for (const x of [-0.7, 0.7]) {
+    g.add(mesh3(new THREE.BoxGeometry(0.4, 0.22, 0.05), head, x, 0.95, 2.23));
+    g.add(mesh3(new THREE.BoxGeometry(0.35, 0.3, 0.05), tail, x * 1.2, 1.0, -2.23));
+  }
+  signals(0.92, 1.05, 2.24, -2.24);
+  if (up) addUpgradeParts(g, { ...up, tank: 0 }, metal, dark);
+  const shadow = new THREE.Mesh(new THREE.PlaneGeometry(2.7, 5), new THREE.MeshBasicMaterial({ color: 0, transparent: true, opacity: 0.35, depthWrite: false }));
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.y = 0.03;
+  g.add(shadow);
+  g.scale.set(1.08, 1.08, 1.12);
+  return g;
+}
+
 /** Ordinary traffic: sedans, pickups, vans and big rigs. Faces +z like the player's car. */
 export function makeTrafficVehicle(kind: 'car' | 'pickup' | 'van' | 'truck', color: number): THREE.Group {
   const g = new THREE.Group();

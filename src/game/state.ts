@@ -9,6 +9,7 @@ import { generateStops, type PlaceKind, type Stop } from './stops';
 import { hashString, makeRng, range, rangeInt, type Rng } from './rng';
 import { DIFFICULTIES, type Difficulty } from './difficulty';
 import type { BossKind } from './combat';
+import { rideOf, type Ride } from './rides';
 
 export type AmmoKind = 'bullets' | 'shells' | 'catnip';
 
@@ -46,6 +47,8 @@ export interface GameState {
   nextEncounterAt: number;
   encounters: number;
   difficulty: Difficulty;
+  /** What you drive (older saves: the car). */
+  ride?: Ride;
   /** 0: halfway boss to come, 1: final boss to come, 2: both done. */
   bossStage: number;
   bossesBeaten: number;
@@ -59,8 +62,8 @@ export interface GameState {
 export const MAX_HEALTH = 100;
 export const TANK = 100;
 
-export const maxHealth = (s: GameState) => maxHealthFor(s.upgrades);
-export const tankSize = (s: GameState) => tankFor(s.upgrades);
+export const maxHealth = (s: GameState) => Math.round(maxHealthFor(s.upgrades) * rideOf(s).health);
+export const tankSize = (s: GameState) => Math.round(tankFor(s.upgrades) * rideOf(s).tank);
 export const FUEL_PRICE = 2; // cash per fuel unit
 export const REPAIR_SCRAP_PER_HP = 0.5;
 export const REPAIR_CASH_PER_HP = 1;
@@ -70,11 +73,13 @@ export function fuelPerUnit(pathLength: number): number {
   return TANK / (pathLength / 3.2);
 }
 
-export function newGame(route: RouteData, seed = Date.now() & 0xffffffff, difficulty: Difficulty = 'normal'): GameState {
+export function newGame(route: RouteData, seed = Date.now() & 0xffffffff, difficulty: Difficulty = 'normal', ride: Ride = 'car'): GameState {
   const path = pathFromRoute(route);
   const rng = makeRng(seed);
   const stops = generateStops(route, path.length, seed);
-  return {
+  const r = rideOf({ ride });
+  const start = DIFFICULTIES[difficulty].start;
+  const s: GameState = {
     version: 1,
     seed,
     route,
@@ -87,18 +92,27 @@ export function newGame(route: RouteData, seed = Date.now() & 0xffffffff, diffic
     nextEventAt: path.length * range(rng, 0.05, 0.09),
     eventsSeen: 0,
     hoursSpent: 0,
-    inv: { ...DIFFICULTIES[difficulty].start },
+    inv: {
+      ...start,
+      fuel: Math.round(start.fuel * r.tank),
+      bullets: Math.round(start.bullets * r.carry),
+      shells: Math.round(start.shells * r.carry),
+      catnip: Math.round(start.catnip * r.carry),
+    },
     passed: [],
     searches: {},
     nextEncounterAt: encounterGap(rng, path.length, difficulty) * 0.7,
     encounters: 0,
     difficulty,
+    ...(ride !== 'car' ? { ride } : {}),
     bossStage: 0,
     bossesBeaten: 0,
     kills: 0,
     status: 'driving',
     log: [`Set out from ${route.startLabel} for ${route.endLabel}.`],
   };
+  s.health = maxHealth(s);
+  return s;
 }
 
 export function encounterGap(rng: Rng, pathLength: number, difficulty: Difficulty = 'normal'): number {
@@ -129,7 +143,7 @@ export function advance(
   const toBoss = s.bossStage < 2 ? Math.max(0, bosses[s.bossStage] - s.distance) + 0.001 : Infinity;
   const step = Math.min(dist, path.length - s.distance, toBoss);
   s.distance += step;
-  s.inv.fuel = Math.max(0, s.inv.fuel - step * fuelRate * fuelEfficiency(s.upgrades) * DIFFICULTIES[s.difficulty].fuel);
+  s.inv.fuel = Math.max(0, s.inv.fuel - step * fuelRate * fuelEfficiency(s.upgrades) * rideOf(s).fuel * DIFFICULTIES[s.difficulty].fuel);
   const arrived = s.distance >= path.length - 0.01;
   if (arrived) {
     s.status = 'won';
