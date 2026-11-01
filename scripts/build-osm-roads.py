@@ -156,53 +156,72 @@ def simplify(pts, tol):
     return [p for p, kk in zip(pts, keep) if kk]
 
 
-def join_cut_ends(ways, max_m=5.0):
+# Nodes the extract provider added where it cut roads at a state line have ids
+# from 30,000,000,000 up (https://osm.download.movisda.io/ "Synthetic IDs").
+CUT_NODE_MIN_ID = 30_000_000_000
+
+
+def join_cut_ends(ways, max_m=60.0):
     """Rejoins roads cut apart at state lines.
 
-    State extracts cut every road at the border and add a new node on each
-    side; the two nodes are often a metre apart and have different ids, so
-    the road would stop at the border. Dead ends that lie within max_m of
-    another way's dead end are made into one node. Returns how many were joined.
+    Each state extract cuts every road at its own copy of the border and adds
+    a new node there (sometimes it keeps a real node instead), so the two halves of a road end up to tens of metres
+    apart with different ids, and the road would stop at the border. Each
+    cut end is joined to the nearest cut end of another road within max_m,
+    preferring the same route number, and for one-way roads only an end to a
+    start (so a divided highway never joins across its median).
+    Returns how many road ends were moved.
     """
-    count = {}
+    ends = {}
+    seen = {}
     for wi, w in enumerate(ways):
-        last = len(w['pts']) - 1
-        for i, (nid, lon, lat) in enumerate(w['pts']):
-            c = count.setdefault(nid, [0, wi, lon, lat])
-            c[0] += 1 if i in (0, last) else 2
-    cell = 0.0003
+        pts = w['pts']
+        for i, (nid, _, _) in enumerate(pts):
+            seen[nid] = seen.get(nid, 0) + (1 if i in (0, len(pts) - 1) else 2)
+    for wi, w in enumerate(ways):
+        pts = w['pts']
+        for pos, i in (('start', 0), ('end', len(pts) - 1)):
+            nid, lon, lat = pts[i]
+            if seen[nid] == 1:
+                ends[nid] = (wi, pos, lon, lat)
+    cell = 0.001
     grid = {}
-    for nid, (n, wi, lon, lat) in count.items():
-        if n == 1:
-            grid.setdefault((math.floor(lon / cell), math.floor(lat / cell)), []).append(nid)
+    for nid, (_, _, lon, lat) in ends.items():
+        grid.setdefault((math.floor(lon / cell), math.floor(lat / cell)), []).append(nid)
+    pairs = []
+    for a, (wa, pa, lon, lat) in ends.items():
+        cx, cy = math.floor(lon / cell), math.floor(lat / cell)
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for b in grid.get((cx + dx, cy + dy), []):
+                    if b <= a or (a < CUT_NODE_MIN_ID and b < CUT_NODE_MIN_ID):
+                        continue  # at least one of the two must be a cut the extract made
+                    wb, pb, blon, blat = ends[b]
+                    if wb == wa:
+                        continue
+                    A, B = ways[wa], ways[wb]
+                    if (A['ow'] or B['ow']) and pa == pb:
+                        continue
+                    m = haversine((lon, lat), (blon, blat))
+                    if m <= max_m:
+                        score = m + (0 if A['ref'] == B['ref'] else 40) + (0 if A['c'] == B['c'] else 40)
+                        pairs.append((score, a, b))
+    pairs.sort()
     remap = {}
-    for (cx, cy), ids in list(grid.items()):
-        for a in ids:
-            if a in remap:
-                continue
-            _, wa, lon, lat = count[a]
-            best, best_m = None, max_m
-            for dx in (-1, 0, 1):
-                for dy in (-1, 0, 1):
-                    for b in grid.get((cx + dx, cy + dy), []):
-                        if b == a or b in remap or count[b][1] == wa:
-                            continue
-                        m = haversine((lon, lat), (count[b][2], count[b][3]))
-                        if m <= best_m:
-                            best, best_m = b, m
-            if best is not None:
-                remap[best] = a
-                remap.setdefault(a, a)
-    joined = 0
+    for _, a, b in pairs:
+        if a in remap or b in remap:
+            continue
+        remap[a] = a
+        remap[b] = a
+    moved = 0
     for w in ways:
         pts = w['pts']
         for i in (0, len(pts) - 1):
-            b = pts[i][0]
-            a = remap.get(b)
-            if a is not None and a != b:
-                pts[i] = (a, count[a][2], count[a][3])
-                joined += 1
-    return joined
+            a = remap.get(pts[i][0])
+            if a is not None and a != pts[i][0]:
+                pts[i] = (a, ends[a][2], ends[a][3])
+                moved += 1
+    return moved
 
 
 def split_at_junctions(ways, exits):
