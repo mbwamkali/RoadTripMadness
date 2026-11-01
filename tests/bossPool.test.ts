@@ -133,3 +133,43 @@ describe('Crazy Cat Lady Karen', () => {
     expect(BOSS_INFO.karen.minion).toBeNull();
   });
 });
+
+describe('the rogue drone air force', () => {
+  it('launches waves of one-hit drones up to the swarm limit, and they wind up before shooting', () => {
+    const c = createCombat({ seed: 9, progress: 0.5, boss: 'drones', hordeMax: 20 });
+    expect(c.swarmMax).toBe(7);
+    let most = 0;
+    let windups = 0;
+    let shots = 0;
+    run(c, 30, (c) => {
+      most = Math.max(most, c.enemies.filter((e) => e.type === 'drone').length);
+      for (const ev of c.events) {
+        if (ev.kind === 'windup') windups++;
+        if (ev.kind === 'enemyShot') shots++;
+      }
+      c.events.length = 0;
+    });
+    expect(most).toBeGreaterThan(3);
+    expect(most).toBeLessThanOrEqual(7);
+    expect(shots).toBeGreaterThan(0);
+    expect(windups).toBeGreaterThanOrEqual(shots);
+    const drone = c.enemies.find((e) => e.type === 'drone')!;
+    const items = inv();
+    c.fireCooldown = 0;
+    fireAt(c, items, drone.id);
+    expect(c.enemies.some((e) => e.id === drone.id)).toBe(false);
+  });
+  it('a bigger swarm on Medium/High, and downing the command drone ends the fight', () => {
+    const c = createCombat({ seed: 9, progress: 0.5, boss: 'drones', hordeMax: 40, extra: 2 });
+    expect(c.swarmMax).toBe(16);
+    run(c, 12);
+    const boss = c.enemies.find((e) => e.type === 'drones')!;
+    const items = inv();
+    for (let i = 0; i < 300 && boss.hp > 0; i++) {
+      c.fireCooldown = 0;
+      fireAt(c, items, boss.id);
+    }
+    stepCombat(c, 1 / 30);
+    expect(c.enemies.filter((e) => e.type === 'drone').length).toBe(0);
+  });
+});

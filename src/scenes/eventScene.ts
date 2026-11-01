@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { disposeTree, makeRide } from './common';
 import { modelsWanted } from './models';
 import { sampleCatship, sampleOutlaw, sampleWreck } from './samples';
-import { angryCat, pizzaGeometryParts, sampleHermit, sampleKaren, samplePizzaCar, sampleSweeper, simpleCat, simpleHermit, simpleKaren, simplePizzaCar, simpleSweeper } from './bossModels';
+import { angryCat, paperPlaneGeometry, pizzaGeometryParts, sampleCommandDrone, simpleCommandDrone, sampleHermit, sampleKaren, samplePizzaCar, sampleSweeper, simpleCat, simpleHermit, simpleKaren, simplePizzaCar, simpleSweeper } from './bossModels';
 import { kidMode } from '../game/kidMode';
 import type { Upgrades } from '../game/upgrades';
 
@@ -16,8 +16,8 @@ import type { Upgrades } from '../game/upgrades';
 
 export type SceneKind = 'flat' | 'help' | 'dog' | 'loot' | 'trade' | 'beam' | 'roadblock' | 'bridge' | 'fuel' | BossScene;
 /** Boss intros with their own scene (the older bosses show just their icon). */
-export type BossScene = 'hermit' | 'pizza' | 'sweeper' | 'karen';
-export const BOSS_SCENES: readonly string[] = ['hermit', 'pizza', 'sweeper', 'karen'] satisfies BossScene[];
+export type BossScene = 'hermit' | 'pizza' | 'sweeper' | 'karen' | 'drones';
+export const BOSS_SCENES: readonly string[] = ['hermit', 'pizza', 'sweeper', 'karen', 'drones'] satisfies BossScene[];
 
 /** The scene for each road event (src/game/events.ts ids), plus 'bike' for running out of gas. */
 export function sceneKindFor(eventId: string): SceneKind {
@@ -423,6 +423,39 @@ function stage(kind: SceneKind, ride: 'car' | 'motorcycle' | 'truck', up?: Upgra
           const to = stopX + (i - 1) * 1.4;
           c.position.set(k.position.x + (to - k.position.x) * q, 2.2 + Math.sin(q * Math.PI) * 1.6 - q * 2.2, 1.2 - q * 0.6 + Math.max(0, p - 1) * 6);
           c.rotation.set(0, p * 10, 0);
+        });
+      });
+      break;
+    }
+    case 'drones': {
+      // A cloud of paper-plane drones swoops in behind the giant command drone.
+      stopX = -3;
+      const boss = modelsWanted() ? sampleCommandDrone() : simpleCommandDrone();
+      boss.rotation.y = -Math.PI / 2;
+      boss.scale.setScalar(0.45);
+      scene.add(boss);
+      const geo = paperPlaneGeometry();
+      const paper = lam(0xf4f1e6, { side: THREE.DoubleSide });
+      const n = modelsWanted() ? 12 : 7;
+      const planes = Array.from({ length: n }, (_, i) => {
+        const p = new THREE.Mesh(geo, paper);
+        p.rotation.y = -Math.PI / 2;
+        p.scale.setScalar(0.7);
+        p.userData.off = [((i * 37) % 7) * 0.9, ((i * 13) % 5) * 0.5, ((i * 29) % 3) - 1];
+        scene.add(p);
+        return p;
+      });
+      props.push((t) => {
+        boss.position.set(14 - Math.min(1, t / 3) * 10, 4.6 + Math.sin(t * 2) * 0.2, -1.5);
+        boss.traverse((o) => {
+          if (o.name === 'brush') o.rotation.y = t * 20;
+        });
+        planes.forEach((p, i) => {
+          const [dx, dy, dz] = p.userData.off as number[];
+          const k = Math.min(1, Math.max(0, (t - 0.3 - i * 0.12) / 2.2));
+          p.position.set(16 + dx - k * (14 + dx) , 2.2 + dy + Math.sin(t * 3 + i) * 0.25, dz);
+          p.rotation.x = Math.sin(t * 3 + i) * 0.3;
+          (p.material as THREE.MeshLambertMaterial).color.setHex(0xf4f1e6);
         });
       });
       break;

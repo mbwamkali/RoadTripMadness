@@ -8,11 +8,11 @@ import { makeRng, range, type Rng } from './rng';
  * x is across the road (lanes at about -2.5 .. 2.5), y is height.
  */
 
-export type BossKind = 'brute' | 'warrig' | 'mothership' | 'hermit' | 'pizza' | 'sweeper' | 'karen';
-export type EnemyType = 'zombie' | 'outlaw' | 'catship' | BossKind;
-export const BOSSES: BossKind[] = ['brute', 'warrig', 'mothership', 'hermit', 'pizza', 'sweeper', 'karen'];
+export type BossKind = 'brute' | 'warrig' | 'mothership' | 'hermit' | 'pizza' | 'sweeper' | 'karen' | 'drones';
+export type EnemyType = 'zombie' | 'outlaw' | 'catship' | 'drone' | BossKind;
+export const BOSSES: BossKind[] = ['brute', 'warrig', 'mothership', 'hermit', 'pizza', 'sweeper', 'karen', 'drones'];
 /** The halfway boss is drawn from this pool (the Cat Queen always waits at the end). */
-export const HALF_BOSSES: BossKind[] = ['brute', 'warrig', 'hermit', 'pizza', 'sweeper', 'karen'];
+export const HALF_BOSSES: BossKind[] = ['brute', 'warrig', 'hermit', 'pizza', 'sweeper', 'karen', 'drones'];
 /** Bosses that throw things at the car between their big attacks. */
 const THROWING_BOSSES: Partial<Record<BossKind, { every: [number, number]; dmg: number; dur: number; spread?: number }>> = {
   hermit: { every: [1.8, 2.6], dmg: 5, dur: 1.1 },
@@ -123,6 +123,8 @@ export interface CombatState {
   ramDamage: number;
   gunner: boolean;
   gunnerTimer: number;
+  /** Most drones in the air at once in a drone boss fight (smaller on Low and in kid mode). */
+  swarmMax: number;
   /** Car condition won back in the fight (the pizza driver's pizzas). */
   heal: number;
   /** The boss of a boss fight (no escaping; beat it to win). */
@@ -141,6 +143,7 @@ export const ENEMY_STATS: Record<EnemyType, { hp: number; name: string }> = {
   zombie: { hp: 2, name: 'Zombie' },
   outlaw: { hp: 4, name: 'Outlaw biker' },
   catship: { hp: 6, name: 'Alien cat saucer' },
+  drone: { hp: 1, name: 'Rogue drone' },
   brute: { hp: 45, name: 'Big Rotten Earl' },
   warrig: { hp: 55, name: "Mad Maxine's war rig" },
   mothership: { hp: 70, name: 'The Cat Queen' },
@@ -148,6 +151,7 @@ export const ENEMY_STATS: Record<EnemyType, { hp: number; name: string }> = {
   pizza: { hp: 42, name: 'The Angry Pizza Driver' },
   sweeper: { hp: 50, name: 'The Street Sweeper' },
   karen: { hp: 46, name: 'Crazy Cat Lady Karen' },
+  drones: { hp: 40, name: 'The Rogue Drone Air Force' },
 };
 
 export const BOSS_INFO: Record<BossKind, { title: string; intro: string; minion: EnemyType | null; slamDamage: number; icon: string }> = {
@@ -199,6 +203,13 @@ export const BOSS_INFO: Record<BossKind, { title: string; intro: string; minion:
     minion: null,
     slamDamage: 14,
     icon: '👵',
+  },
+  drones: {
+    title: 'BOSS: The Rogue Drone Air Force',
+    intro: 'A buzzing cloud of paper-plane drones fills the sky, led by a giant command drone. Each little drone falls with one hit, and they blink red before they shoot. Shoot down the big one to send them all home!',
+    minion: 'drone',
+    slamDamage: 14,
+    icon: '✈️',
   },
 };
 
@@ -265,6 +276,7 @@ export function createCombat(opts: CombatOptions): CombatState {
     kills: 0,
     loot: {},
     heal: 0,
+    swarmMax: Math.max(6, Math.round((opts.hordeMax ?? 40) * 0.35) + (opts.extra ?? 0)),
     gunDamage: opts.gunDamage ?? 1,
     ramDamage: opts.ramDamage ?? 6,
     gunner: !!opts.gunner,
@@ -281,6 +293,8 @@ export function createCombat(opts: CombatOptions): CombatState {
       ...common,
       escapeAt: Infinity,
       queue: [{ t: 1, type: opts.boss }],
+      // The drone air force launches its first wave quickly.
+      ...(opts.boss === 'drones' ? { minionTimer: 2.5 } : {}),
       title: BOSS_INFO[opts.boss].title,
       boss: opts.boss,
       horde: false,
@@ -354,9 +368,9 @@ function spawn(c: CombatState, type: EnemyType, horde = false): Enemy {
   if (isBoss(type)) {
     c.bossId = e.id;
     e.x = 0;
-    e.y = type === 'mothership' ? 14 : 0;
+    e.y = type === 'mothership' ? 14 : type === 'drones' ? 9 : 0;
     e.z = -90;
-    e.holdZ = { brute: -20, warrig: -16, hermit: -18, pizza: -10, sweeper: -15, karen: -16, mothership: -34 }[type];
+    e.holdZ = { brute: -20, warrig: -16, hermit: -18, pizza: -10, sweeper: -15, karen: -16, drones: -30, mothership: -34 }[type];
     e.timer = 4;
     if (type === 'hermit') {
       // Leaps out from the roadside and stays off the road, hopping from side to side.
@@ -388,6 +402,14 @@ function spawn(c: CombatState, type: EnemyType, horde = false): Enemy {
         e.timer = range(r, 0.8, 1.6);
       } else if (roll < 0.5) e.role = 'climber';
     }
+  } else if (type === 'drone') {
+    // Swoops in high and hangs over the road ahead, weaving.
+    e.x = range(r, -7, 7);
+    e.y = range(r, 6, 9);
+    e.z = -75 - r() * 10;
+    e.holdZ = range(r, -24, -9);
+    e.holdX = range(r, -3.5, 3.5);
+    e.timer = range(r, 2.5, 4.5);
   } else if (type === 'outlaw') {
     e.x = side * 5.5;
     e.z = 35;
@@ -461,6 +483,8 @@ export function stepCombat(c: CombatState, dt: number): number {
           }
         }
       }
+    } else if (e.type === 'drone') {
+      stepDrone(c, e, dt, stunned, boosting, roadSpeed, hitCar);
     } else if (e.type === 'outlaw') {
       if (boosting) {
         e.z += roadSpeed * 0.6 * dt;
@@ -506,7 +530,16 @@ export function stepCombat(c: CombatState, dt: number): number {
   stepMissiles(c, dt, hitCar);
   if (c.gunner) gunnerFire(c, dt);
   const minion = c.boss ? BOSS_INFO[c.boss].minion : null;
-  if (minion && c.bossId != null) {
+  if (minion === 'drone' && c.bossId != null) {
+    // The command drone launches a wave every few seconds, up to the swarm limit.
+    c.minionTimer -= dt;
+    const flying = c.enemies.filter((e) => e.type === 'drone' && e.hp > 0).length;
+    if (c.minionTimer <= 0 && c.enemies.some((e) => e.id === c.bossId)) {
+      c.minionTimer = range(c.rng, 6, 8);
+      const n = Math.min(c.swarmMax - flying, Math.round(range(c.rng, 4, 8)));
+      for (let i = 0; i < n; i++) spawn(c, 'drone');
+    }
+  } else if (minion && c.bossId != null) {
     c.minionTimer -= dt;
     const count = c.enemies.filter((e) => e.type === minion && e.hp > 0).length;
     if (c.minionTimer <= 0 && c.enemies.some((e) => e.id === c.bossId)) {
@@ -530,6 +563,7 @@ function kill(c: CombatState, e: Enemy, byPlayer: boolean): void {
     add('bullets', 8);
     add('cash', 6);
   }
+  if (e.type === 'drone' && c.rng() < 0.3) add('scrap', 1);
   if (e.type === 'catship') {
     add('scrap', 4);
     if (c.rng() < 0.5) add('catnip', 1);
@@ -573,6 +607,34 @@ function stepThrower(c: CombatState, e: Enemy, dt: number, stunned: boolean, boo
     const m: Missile = { id: c.nextId++, from: 'zombie', x0: e.x, y0: 2, z0: e.z, tx: c.carX, t: 0, dur: 1, dmg: 5 };
     c.missiles.push(m);
     c.events.push({ kind: 'throw', missile: m.id });
+  }
+}
+
+/** A drone hangs over the road ahead, weaving, and fires a small shot after a wind-up (it blinks red). */
+function stepDrone(c: CombatState, e: Enemy, dt: number, stunned: boolean, boosting: boolean, roadSpeed: number, hitCar: (d: number, from: EnemyType) => void): void {
+  if (boosting) e.z += roadSpeed * 0.5 * dt;
+  else e.z += Math.sign(e.holdZ - e.z) * Math.min(Math.abs(e.holdZ - e.z), 16 * dt);
+  const wantX = c.carX + e.holdX + Math.sin(c.time * 1.3 + e.id) * 1.5;
+  e.x += Math.sign(wantX - e.x) * Math.min(Math.abs(wantX - e.x), 5 * dt);
+  e.y += (6 + Math.sin(c.time * 2 + e.id) * 0.8 - e.y) * Math.min(1, dt * 2);
+  if (stunned) {
+    // A stunned drone wobbles and drops a little.
+    e.charging = false;
+    e.y -= dt;
+    return;
+  }
+  if (Math.abs(e.z - e.holdZ) > 3) return;
+  e.timer -= dt;
+  if (!e.charging && e.timer <= WINDUP && e.timer > 0) {
+    e.charging = true;
+    c.events.push({ kind: 'windup', enemy: e.id });
+  }
+  if (e.timer <= 0) {
+    e.charging = false;
+    e.timer = range(c.rng, 2.8, 4.2);
+    const hit = c.rng() < 0.4;
+    c.events.push({ kind: 'enemyShot', enemy: e.id, hit });
+    if (hit) hitCar(2, 'drone');
   }
 }
 
@@ -628,7 +690,7 @@ export function missileAt(m: Missile): { x: number; y: number; z: number } {
  */
 function stepBoss(c: CombatState, e: Enemy, type: BossKind, dt: number, stunned: boolean, hitCar: (d: number, from: EnemyType) => void): void {
   e.z += Math.sign(e.holdZ - e.z) * Math.min(Math.abs(e.holdZ - e.z), 18 * dt);
-  const follow = { brute: 1.2, warrig: 2.2, mothership: 1.6, hermit: 7, pizza: 2.6, sweeper: 1.8, karen: 1.5 }[type];
+  const follow = { brute: 1.2, warrig: 2.2, mothership: 1.6, hermit: 7, pizza: 2.6, sweeper: 1.8, karen: 1.5, drones: 1.4 }[type];
   let wantX = type === 'mothership' ? c.carX * 0.5 + Math.sin(c.time * 0.5) * 4 : c.carX;
   if (type === 'hermit') {
     // Hops from one roadside to the other every so often (a jump arc on the way).
@@ -648,6 +710,7 @@ function stepBoss(c: CombatState, e: Enemy, type: BossKind, dt: number, stunned:
   }
   e.x += Math.sign(wantX - e.x) * Math.min(Math.abs(wantX - e.x), follow * dt);
   if (type === 'mothership') e.y = 14 + Math.sin(c.time * 1.2) * 0.8;
+  if (type === 'drones') e.y = 9 + Math.sin(c.time * 1.5) * 0.6;
   const thrower = THROWING_BOSSES[type];
   if (thrower && !stunned && !e.charging && Math.abs(e.z - e.holdZ) < 3 && e.y < 0.5) {
     // Small throws between big attacks, each with a wind-up flash first.

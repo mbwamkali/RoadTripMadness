@@ -25,7 +25,7 @@ import { castShadows, disposeTree, makeLaneTexture, makeRide, makeRoadTexture, t
 import { modelGeometry, modelMaterial, modelMesh, modelsWanted, treeModelsWanted, type ModelName } from './models';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { sampleBrute, sampleCatship, sampleMothership, sampleOutlaw, sampleWarRig } from './samples';
-import { angryCat, pizzaGeometryParts, sampleHermit, sampleKaren, samplePizzaCar, sampleSweeper, simpleCat, simpleHermit, simpleKaren, simplePizzaCar, simpleSweeper } from './bossModels';
+import { angryCat, paperPlaneGeometry, pizzaGeometryParts, sampleCommandDrone, sampleHermit, sampleKaren, simpleCommandDrone, samplePizzaCar, sampleSweeper, simpleCat, simpleHermit, simpleKaren, simplePizzaCar, simpleSweeper } from './bossModels';
 
 export interface CombatCallbacks {
   onCarHit(dmg: number): void;
@@ -56,6 +56,8 @@ export class CombatScene implements GameScene {
   private scrolling: { tex: THREE.Texture; dir: number }[] = [];
   private props: THREE.Group = new THREE.Group();
   private meshes = new Map<number, THREE.Group>();
+  /** Drones in a drone swarm: one paper plane drawn many times, tinted red while winding up. */
+  private swarm: THREE.InstancedMesh | null = null;
   /** Horde zombies: one shared zombie drawn many times. */
   private horde: THREE.InstancedMesh | null = null;
   private missiles = new Map<number, THREE.Object3D>();
@@ -137,7 +139,7 @@ export class CombatScene implements GameScene {
       if (d < 0.18 && (!near || d < near.d)) near = { id, d };
     };
     for (const [id, g] of this.meshes) consider(id, g.position.clone());
-    for (const e of this.combat.enemies) if (e.horde) consider(e.id, new THREE.Vector3(e.x, e.y, e.z));
+    for (const e of this.combat.enemies) if (e.horde || e.type === 'drone') consider(e.id, new THREE.Vector3(e.x, e.y, e.z));
     return (near as { id: number } | null)?.id ?? null;
   }
 
@@ -264,8 +266,9 @@ export class CombatScene implements GameScene {
           break;
         case 'enemyShot': {
           const g = this.meshes.get(ev.enemy);
-          if (g) {
-            const muzzle = g.position.clone().setY(1.6);
+          const drone = g ? null : c.enemies.find((e) => e.id === ev.enemy);
+          if (g || drone) {
+            const muzzle = g ? g.position.clone().setY(1.6) : new THREE.Vector3(drone!.x, drone!.y - 0.3, drone!.z);
             this.addLine(muzzle, new THREE.Vector3(c.carX + (ev.hit ? 0 : 3), 1, 0), 0xff5533, 0.22);
             this.addBurst(muzzle, 0xffd040, 4);
           }
@@ -327,8 +330,9 @@ export class CombatScene implements GameScene {
   private syncEnemies(): void {
     const alive = new Set<number>();
     this.syncHorde();
+    this.syncSwarm();
     for (const e of this.combat.enemies) {
-      if (e.horde) continue;
+      if (e.horde || e.type === 'drone') continue;
       alive.add(e.id);
       let g = this.meshes.get(e.id);
       if (!g) {
@@ -377,7 +381,7 @@ export class CombatScene implements GameScene {
 
   /** Draws horde zombies as one instanced mesh (the model on Medium and High, simple shapes on Low). */
   private syncHorde(): void {
-    const list = this.combat.enemies.filter((e) => e.horde);
+    const list = this.combat.enemies.filter((e) => e.horde && e.type === 'zombie');
     if (!this.horde) {
       if (!list.length) return;
       const geo = modelGeometry('zombie') ?? simpleZombieGeometry();
@@ -403,6 +407,39 @@ export class CombatScene implements GameScene {
     }
     this.horde.count = n;
     this.horde.instanceMatrix.needsUpdate = true;
+  }
+
+  /** Draws the drones as one instanced paper plane, banking as they weave; red while winding up to shoot. */
+  private syncSwarm(): void {
+    const list = this.combat.enemies.filter((e) => e.type === 'drone');
+    if (!this.swarm) {
+      if (!list.length) return;
+      this.swarm = new THREE.InstancedMesh(paperPlaneGeometry(), new THREE.MeshLambertMaterial({ color: 0xffffff, side: THREE.DoubleSide }), 32);
+      this.swarm.frustumCulled = false;
+      this.swarm.castShadow = this.shadows;
+      this.scene.add(this.swarm);
+    }
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const euler = new THREE.Euler();
+    const pos = new THREE.Vector3();
+    const scale = new THREE.Vector3(2, 2, 2);
+    const paper = new THREE.Color(0xf4f1e6);
+    const red = new THREE.Color(0xff3030);
+    const t = this.combat.time;
+    const n = Math.min(list.length, 32);
+    for (let i = 0; i < n; i++) {
+      const e = list[i];
+      pos.set(e.x, e.y, e.z);
+      // Nose dipped toward the car so the wings show from the camera above.
+      q.setFromEuler(euler.set(0.65, 0, Math.sin(t * 1.3 + e.id) * 0.5));
+      this.swarm.setMatrixAt(i, m.compose(pos, q, scale));
+      // Blink red during the wind-up so there is time to dodge.
+      this.swarm.setColorAt(i, e.charging && Math.sin(t * 30) > -0.3 ? red : paper);
+    }
+    this.swarm.count = n;
+    this.swarm.instanceMatrix.needsUpdate = true;
+    if (this.swarm.instanceColor) this.swarm.instanceColor.needsUpdate = true;
   }
 
   /** Thrown junk tumbling through the air toward the lane it was aimed at. */
@@ -573,6 +610,12 @@ export class CombatScene implements GameScene {
 
   dispose(): void {
     this.atmosphere.dispose();
+    if (this.swarm) {
+      this.swarm.geometry.dispose();
+      (this.swarm.material as THREE.Material).dispose();
+      this.swarm.dispose();
+      this.scene.remove(this.swarm);
+    }
     if (this.horde) {
       if (!this.horde.geometry.userData.shared && this.horde.material !== modelMaterial) {
         this.horde.geometry.dispose();
@@ -636,6 +679,7 @@ const SAMPLE_ENEMIES: Partial<Record<EnemyType, { build: () => THREE.Group; hitR
   pizza: { build: samplePizzaCar, hitRadius: 2.4, barY: 3.6 },
   sweeper: { build: sampleSweeper, hitRadius: 3.0, barY: 4.8 },
   karen: { build: sampleKaren, hitRadius: 1.4, barY: 2.7 },
+  drones: { build: sampleCommandDrone, hitRadius: 3.5, barY: 2.2 },
 };
 
 /** Low graphics versions of the newer bosses (the older ones are built inline below). */
@@ -644,6 +688,7 @@ const SIMPLE_BOSSES: Partial<Record<EnemyType, { build: () => THREE.Group; hitRa
   pizza: { build: simplePizzaCar, hitRadius: 2.4, barY: 3.4 },
   sweeper: { build: simpleSweeper, hitRadius: 3.0, barY: 4.8 },
   karen: { build: simpleKaren, hitRadius: 1.4, barY: 2.7 },
+  drones: { build: simpleCommandDrone, hitRadius: 3.5, barY: 2.2 },
 };
 
 export function buildEnemy(type: EnemyType): THREE.Group {
@@ -804,7 +849,7 @@ export function buildEnemy(type: EnemyType): THREE.Group {
     barY = 1.9;
   }
   const hitbox = new THREE.Mesh(new THREE.SphereGeometry(hitRadius, 8, 6), new THREE.MeshBasicMaterial({ visible: false }));
-  hitbox.position.y = type === 'catship' || type === 'mothership' ? 0.2 : type === 'warrig' ? 1.8 : type === 'pizza' ? 1.4 : type === 'sweeper' ? 2.0 : 1.3;
+  hitbox.position.y = type === 'catship' || type === 'mothership' || type === 'drones' ? 0.2 : type === 'warrig' ? 1.8 : type === 'pizza' ? 1.4 : type === 'sweeper' ? 2.0 : 1.3;
   hitbox.name = 'hitbox';
   g.add(hitbox);
   const hp = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 0.2), new THREE.MeshBasicMaterial({ color: 0xff3030, depthTest: false }));
@@ -826,7 +871,7 @@ export function buildEnemy(type: EnemyType): THREE.Group {
     hp.rotation.y = Math.PI;
   }
   // A bit larger than life so they read well on a phone screen.
-  const scale: Record<EnemyType, number> = { zombie: 1.35, outlaw: 1.35, catship: 1.1, brute: 4.2, warrig: 1.1, mothership: 1, hermit: 1.9, pizza: 1.15, sweeper: 1.3, karen: 2.0 };
+  const scale: Record<EnemyType, number> = { zombie: 1.35, outlaw: 1.35, catship: 1.1, brute: 4.2, warrig: 1.1, mothership: 1, hermit: 1.9, pizza: 1.15, sweeper: 1.3, karen: 2.0, drones: 1.2, drone: 1.5 };
   g.scale.setScalar(scale[type]);
   return g;
 }
@@ -865,6 +910,13 @@ function animateEnemy(g: THREE.Group, e: Enemy, t: number): void {
     const armR = body.getObjectByName('armR');
     if (armL) armL.rotation.x = e.charging ? -2.6 : Math.sin(t * 7) * 0.4;
     if (armR) armR.rotation.x = e.charging || throwing ? -2.6 : Math.sin(t * 7 + 1) * 0.4;
+  } else if (e.type === 'drones') {
+    body.rotation.x = 0.5; // tipped toward the camera so its wings show
+    body.rotation.z = Math.sin(t * 1.2) * 0.12;
+    body.traverse((o) => {
+      if (o.name === 'brush') o.rotation.y += 0.6;
+      if (o.name === 'light') o.visible = e.charging ? Math.sin(t * 30) > 0 : Math.sin(t * 4) > -0.5;
+    });
   } else if (e.type === 'karen') {
     body.rotation.z = Math.sin(t * 2.2) * 0.04;
     const throwing = (e.throwTimer ?? 9) < 0.6;
@@ -908,7 +960,7 @@ function playEventSound(ev: CombatState['events'][number]): void {
       sound.shot(ev.weapon);
       break;
     case 'kill':
-      sound.kill(isBoss(ev.type) ? 'boss' : ev.type);
+      sound.kill(isBoss(ev.type) ? 'boss' : ev.type === 'drone' ? 'catship' : ev.type);
       break;
     case 'carHit':
       sound.carHit();

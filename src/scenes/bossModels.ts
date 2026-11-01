@@ -289,3 +289,72 @@ export function simpleCat(): THREE.Group {
   for (const s of [-1, 1]) add(g, cone(0.1, 0.25, 4), lam(0xff9a3c), [s * 0.15, 0.3, 0.2]);
   return g;
 }
+
+/**
+ * A paper-airplane drone as one plain geometry (nose toward +z, about 1.6
+ * long): two folded wings, a keel and a little propeller pod. Plain so it can
+ * be drawn many times at once and tinted per drone (red while it winds up).
+ */
+export function paperPlaneGeometry(): THREE.BufferGeometry {
+  const v = (x: number, y: number, z: number) => [x, y, z];
+  const tri = (a: number[], b: number[], c: number[]) => [...a, ...b, ...c];
+  const nose = v(0, 0, 0.8);
+  const tailL = v(-0.75, 0.12, -0.8);
+  const tailR = v(0.75, 0.12, -0.8);
+  const keel = v(0, -0.3, -0.8);
+  const spine = v(0, 0, -0.8);
+  const pos = [
+    // Wings (both sides of each, so they show from below and above).
+    ...tri(nose, tailL, spine), ...tri(nose, spine, tailL),
+    ...tri(nose, spine, tailR), ...tri(nose, tailR, spine),
+    // The keel fold underneath.
+    ...tri(nose, keel, spine), ...tri(nose, spine, keel),
+  ];
+  const wings = new THREE.BufferGeometry();
+  wings.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  wings.computeVertexNormals();
+  const pod = new THREE.BoxGeometry(0.22, 0.14, 0.4).translate(0, -0.12, -0.1).toNonIndexed();
+  const prop = new THREE.BoxGeometry(0.6, 0.04, 0.06).translate(0, 0.02, -0.82).toNonIndexed();
+  const merged = new THREE.BufferGeometry();
+  const parts = [wings, pod, prop];
+  const all: number[] = [];
+  const normals: number[] = [];
+  for (const p of parts) {
+    if (!p.getAttribute('normal')) p.computeVertexNormals();
+    all.push(...(p.getAttribute('position').array as Float32Array));
+    normals.push(...(p.getAttribute('normal').array as Float32Array));
+    p.dispose();
+  }
+  merged.setAttribute('position', new THREE.Float32BufferAttribute(all, 3));
+  merged.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  return merged;
+}
+
+/** The command drone: a giant paper plane with four rotors, a camera eye and warning lights. Faces +z. */
+export function sampleCommandDrone(): THREE.Group {
+  const g = new THREE.Group();
+  const plane = new THREE.Mesh(paperPlaneGeometry().scale(5, 4, 5), lam(0xe8e4d8));
+  g.add(plane);
+  add(g, box(1.6, 0.8, 2.4), lam(0x3a3a44), [0, -0.9, 0]);
+  add(g, ball(0.45, 10, 8), glow(0xff3030), [0, -1.1, 1.2], [0, 0, 0], 'light');
+  for (const [x, z] of [[-2.2, -1.5], [2.2, -1.5], [-1.2, 1], [1.2, 1]] as const) {
+    add(g, cyl(0.08, 0.08, 0.7, 6), lam(0x2a2a30), [x, 0.2, z]);
+    const rotor = new THREE.Group();
+    rotor.name = 'brush';
+    rotor.position.set(x, 0.6, z);
+    g.add(rotor);
+    add(rotor, box(1.6, 0.05, 0.14), lam(0x2a2a30));
+    add(rotor, box(0.14, 0.05, 1.6), lam(0x2a2a30));
+  }
+  for (const s of [-1, 1]) add(g, ball(0.18, 6, 4), glow(0xffa020), [s * 3.6, 0.6, -3.8], [0, 0, 0], 'light');
+  return g;
+}
+
+/** Low graphics: the command drone as a flat paper plane and a box. */
+export function simpleCommandDrone(): THREE.Group {
+  const g = new THREE.Group();
+  g.add(new THREE.Mesh(paperPlaneGeometry().scale(5, 4, 5), lam(0xe8e4d8)));
+  add(g, box(1.6, 0.8, 2.4), lam(0x3a3a44), [0, -0.9, 0]);
+  add(g, box(0.6, 0.6, 0.3), glow(0xff3030), [0, -1.1, 1.2], [0, 0, 0], 'light');
+  return g;
+}
