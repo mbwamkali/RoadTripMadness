@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { add, ball, box, capsule, cone, cyl, glow, lam, sampleTraffic } from './samples';
+import { add, ball, box, capsule, catHead, cone, cyl, glow, lam, profile, sampleTraffic, wheel } from './samples';
 
 /**
  * Models for the round four bosses. Each has a detailed version (Medium and
@@ -119,5 +119,92 @@ export function simplePizzaCar(): THREE.Group {
   add(g, box(1.0, 0.6, 0.9), lam(0xe8d8b8), [0, 1.6, -2.45]);
   for (const [x, z] of [[-1, 1.3], [1, 1.3], [-1, -1.3], [1, -1.3]] as const) add(g, box(0.3, 0.8, 0.8), lam(0x151515), [x, 0.4, z]);
   for (const s of [-1, 1]) add(g, box(0.4, 0.25, 0.06), glow(0xc81e14), [s * 0.7, 1.0, -2.12]);
+  return g;
+}
+
+/** A small angry cat (sitting), facing +z, about 0.9 tall. Tail named 'tail'. */
+export function angryCat(fur: number, stripes = 0): THREE.Group {
+  const g = new THREE.Group();
+  add(g, ball(0.32, 8, 6).scale(1, 1.15, 1.1), lam(fur), [0, 0.35, 0]);
+  catHead(g, fur, 0x7cff3a, 0.26, [0, 0.82, 0.08], stripes);
+  // Angry brows.
+  for (const s of [-1, 1]) add(g, box(0.16, 0.04, 0.04), lam(0x101010), [s * 0.11, 0.93, 0.31], [0, 0, s * 0.45]);
+  const tail = new THREE.Group();
+  tail.name = 'tail';
+  tail.position.set(0, 0.2, -0.3);
+  g.add(tail);
+  add(tail, capsule(0.06, 0.5), lam(fur), [0, 0.3, -0.05], [-0.3, 0, 0]);
+  return g;
+}
+
+/** The street sweeper gone bad: a boxy sweeper truck with spinning brushes, a trash hopper and cats at the controls. Faces +z. */
+export function sampleSweeper(): THREE.Group {
+  const g = new THREE.Group();
+  const paint = lam(0xf2f2ea);
+  const stripe = lam(0xf08a24);
+  const dark = lam(0x2a2a30);
+  // Chassis and the tall boxy cab up front.
+  add(g, box(2.6, 0.6, 5.6), dark, [0, 0.8, 0]);
+  add(g, profile(2.6, [[1.0, 1.1], [2.9, 1.1], [2.9, 2.0], [2.6, 3.1], [1.0, 3.1]]), paint);
+  add(g, profile(2.62, [[2.75, 2.1], [2.5, 2.95], [1.6, 2.95], [1.6, 2.1]]), lam(0x5f7f96, 0x0b1620));
+  // The trash hopper at the back, overflowing.
+  add(g, box(2.7, 2.2, 3.4), paint, [0, 2.1, -1.4]);
+  add(g, box(2.72, 0.35, 3.42), stripe, [0, 1.4, -1.4]);
+  add(g, box(2.72, 0.35, 3.42), stripe, [0, 2.6, -1.4]);
+  for (let i = 0; i < 6; i++) add(g, ball(0.32, 6, 4), lam([0x2c3a2a, 0x3a3a3a, 0x6a5a3a][i % 3]), [-0.9 + (i % 3) * 0.9, 3.35, -0.6 - Math.floor(i / 3) * 1.4]);
+  // Back door with hazard chevrons, lights and a flashing beacon.
+  add(g, box(2.5, 1.9, 0.08), stripe, [0, 2.1, -3.14]);
+  for (let i = -2; i <= 2; i++) add(g, box(0.18, 1.9, 0.02), lam(0x1d1d22), [i * 0.5, 2.1, -3.19], [0, 0, 0.5]);
+  for (const s of [-1, 1]) add(g, box(0.35, 0.25, 0.06), glow(0xc81e14), [s * 1.1, 1.0, -3.14]);
+  add(g, cyl(0.2, 0.2, 0.3, 8), glow(0xffa020), [0, 3.4, 1.8], [0, 0, 0], 'light');
+  // Two round side brushes in front and a long brush roller underneath (named 'brush' to spin).
+  for (const s of [-1, 1]) {
+    const brush = new THREE.Group();
+    brush.name = 'brush';
+    brush.position.set(s * 1.5, 0.12, 2.6);
+    g.add(brush);
+    add(brush, cyl(0.7, 0.7, 0.12, 10), lam(0x6a4a2a));
+    for (let i = 0; i < 8; i++) add(brush, box(0.06, 0.18, 0.5), lam(0xd9b25a), [Math.cos(i) * 0.55, -0.05, Math.sin(i) * 0.55], [0, -i, 0]);
+  }
+  const roller = new THREE.Group();
+  roller.name = 'brush';
+  roller.position.set(0, 0.35, -2.4);
+  g.add(roller);
+  add(roller, cyl(0.35, 0.35, 2.4, 10).rotateZ(Math.PI / 2), lam(0xd9b25a));
+  for (const [x, z] of [[-1.3, 1.9], [1.3, 1.9], [-1.3, -1.6], [1.3, -1.6]] as const) wheel(g, 0.55, 0.4, [x, 0.55, z]);
+  // The angry cat crew: one driving, two on the hopper hurling trash (seen from behind).
+  const driver = angryCat(0xff9a3c, 0xc0661a);
+  driver.position.set(0.5, 1.9, 2.0);
+  g.add(driver);
+  for (const [x, fur] of [[-0.7, 0x3a3a3a], [0.7, 0xf2f2f2]] as const) {
+    const cat = angryCat(fur);
+    cat.position.set(x, 3.3, -2.6);
+    cat.rotation.y = Math.PI; // facing back at you
+    cat.scale.setScalar(1.2);
+    g.add(cat);
+  }
+  return g;
+}
+
+/** Low graphics: the sweeper as boxes, with box cats on top. */
+export function simpleSweeper(): THREE.Group {
+  const g = new THREE.Group();
+  add(g, box(2.6, 2.0, 2.0), lam(0xf2f2ea), [0, 2.0, 2.0]);
+  add(g, box(2.7, 2.4, 3.4), lam(0xf2f2ea), [0, 2.0, -1.4]);
+  add(g, box(2.72, 0.4, 3.42), lam(0xf08a24), [0, 1.4, -1.4]);
+  add(g, box(2.5, 1.9, 0.08), lam(0xf08a24), [0, 2.1, -3.14]);
+  for (const s of [-1, 1]) {
+    const b = new THREE.Group();
+    b.name = 'brush';
+    b.position.set(s * 1.5, 0.15, 2.6);
+    add(b, box(1.2, 0.2, 1.2), lam(0xd9b25a));
+    g.add(b);
+  }
+  for (const [x, z] of [[-1.3, 1.9], [1.3, 1.9], [-1.3, -1.6], [1.3, -1.6]] as const) add(g, box(0.4, 1.1, 1.1), lam(0x151515), [x, 0.55, z]);
+  for (const [x, fur] of [[-0.7, 0x3a3a3a], [0.7, 0xff9a3c]] as const) {
+    add(g, box(0.55, 0.6, 0.5), lam(fur), [x, 3.5, -2.6]);
+    for (const s of [-1, 1]) add(g, cone(0.12, 0.3, 4), lam(fur), [x + s * 0.18, 3.95, -2.6]);
+    for (const s of [-1, 1]) add(g, box(0.1, 0.1, 0.04), glow(0x7cff3a), [x + s * 0.13, 3.6, -2.86]);
+  }
   return g;
 }

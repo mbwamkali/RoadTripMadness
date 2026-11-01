@@ -8,15 +8,17 @@ import { makeRng, range, type Rng } from './rng';
  * x is across the road (lanes at about -2.5 .. 2.5), y is height.
  */
 
-export type BossKind = 'brute' | 'warrig' | 'mothership' | 'hermit' | 'pizza';
+export type BossKind = 'brute' | 'warrig' | 'mothership' | 'hermit' | 'pizza' | 'sweeper';
 export type EnemyType = 'zombie' | 'outlaw' | 'catship' | BossKind;
-export const BOSSES: BossKind[] = ['brute', 'warrig', 'mothership', 'hermit', 'pizza'];
+export const BOSSES: BossKind[] = ['brute', 'warrig', 'mothership', 'hermit', 'pizza', 'sweeper'];
 /** The halfway boss is drawn from this pool (the Cat Queen always waits at the end). */
-export const HALF_BOSSES: BossKind[] = ['brute', 'warrig', 'hermit', 'pizza'];
+export const HALF_BOSSES: BossKind[] = ['brute', 'warrig', 'hermit', 'pizza', 'sweeper'];
 /** Bosses that throw things at the car between their big attacks. */
-const THROWING_BOSSES: Partial<Record<BossKind, { every: [number, number]; dmg: number; dur: number }>> = {
+const THROWING_BOSSES: Partial<Record<BossKind, { every: [number, number]; dmg: number; dur: number; spread?: number }>> = {
   hermit: { every: [1.8, 2.6], dmg: 5, dur: 1.1 },
   pizza: { every: [1.3, 1.9], dmg: 4, dur: 0.9 },
+  // The sweeper sprays two trash bags at once: one at the car, one a lane over.
+  sweeper: { every: [1.6, 2.4], dmg: 4, dur: 1.0, spread: 2.4 },
 };
 export const isBoss = (t: EnemyType): t is BossKind => (BOSSES as EnemyType[]).includes(t);
 export type WeaponKind = AmmoKind | 'rocks';
@@ -79,6 +81,8 @@ export type CombatEvent =
   | { kind: 'throw'; missile: number }
   | { kind: 'missile'; missile: number; x: number; hit: boolean }
   | { kind: 'grab'; enemy: number }
+  /** The sweeper is wrecked and its cat crew leaps out. */
+  | { kind: 'bail'; x: number; z: number; cats: number }
   | { kind: 'shakeOff'; enemy: number }
   | { kind: 'horn' }
   | { kind: 'boost' }
@@ -140,6 +144,7 @@ export const ENEMY_STATS: Record<EnemyType, { hp: number; name: string }> = {
   mothership: { hp: 70, name: 'The Cat Queen' },
   hermit: { hp: 40, name: 'The Crazy Hermit' },
   pizza: { hp: 42, name: 'The Angry Pizza Driver' },
+  sweeper: { hp: 50, name: 'The Street Sweeper' },
 };
 
 export const BOSS_INFO: Record<BossKind, { title: string; intro: string; minion: EnemyType | null; slamDamage: number; icon: string }> = {
@@ -177,6 +182,13 @@ export const BOSS_INFO: Record<BossKind, { title: string; intro: string; minion:
     minion: null,
     slamDamage: 14,
     icon: '🍕',
+  },
+  sweeper: {
+    title: 'BOSS: The Street Sweeper',
+    intro: 'A giant street sweeper rumbles onto the road. Angry cats are driving it! It sprays trash across the lanes. Dodge the trash bags and the red lane, and wreck it to make the cats jump out.',
+    minion: null,
+    slamDamage: 14,
+    icon: '🧹',
   },
 };
 
@@ -334,7 +346,7 @@ function spawn(c: CombatState, type: EnemyType, horde = false): Enemy {
     e.x = 0;
     e.y = type === 'mothership' ? 14 : 0;
     e.z = -90;
-    e.holdZ = type === 'brute' ? -20 : type === 'warrig' ? -16 : type === 'hermit' ? -18 : type === 'pizza' ? -10 : -34;
+    e.holdZ = { brute: -20, warrig: -16, hermit: -18, pizza: -10, sweeper: -15, mothership: -34 }[type];
     e.timer = 4;
     if (type === 'hermit') {
       // Leaps out from the roadside and stays off the road, hopping from side to side.
@@ -522,6 +534,11 @@ function kill(c: CombatState, e: Enemy, byPlayer: boolean): void {
   }
   // The pizza driver's pizzas are yours: a meal on the road fixes you up.
   if (e.type === 'pizza') c.heal += 30;
+  if (e.type === 'sweeper') {
+    // The cats bail out and run off, dropping some catnip.
+    c.events.push({ kind: 'bail', x: e.x, z: e.z, cats: 4 });
+    add('catnip', 2);
+  }
 }
 
 /** How long an enemy flashes before it attacks. */
@@ -601,7 +618,7 @@ export function missileAt(m: Missile): { x: number; y: number; z: number } {
  */
 function stepBoss(c: CombatState, e: Enemy, type: BossKind, dt: number, stunned: boolean, hitCar: (d: number, from: EnemyType) => void): void {
   e.z += Math.sign(e.holdZ - e.z) * Math.min(Math.abs(e.holdZ - e.z), 18 * dt);
-  const follow = { brute: 1.2, warrig: 2.2, mothership: 1.6, hermit: 7, pizza: 2.6 }[type];
+  const follow = { brute: 1.2, warrig: 2.2, mothership: 1.6, hermit: 7, pizza: 2.6, sweeper: 1.8 }[type];
   let wantX = type === 'mothership' ? c.carX * 0.5 + Math.sin(c.time * 0.5) * 4 : c.carX;
   if (type === 'hermit') {
     // Hops from one roadside to the other every so often (a jump arc on the way).
@@ -628,9 +645,17 @@ function stepBoss(c: CombatState, e: Enemy, type: BossKind, dt: number, stunned:
     if (e.throwTimer <= WINDUP && e.throwTimer + dt > WINDUP) c.events.push({ kind: 'windup', enemy: e.id });
     if (e.throwTimer <= 0) {
       e.throwTimer = range(c.rng, ...thrower.every);
-      const m: Missile = { id: c.nextId++, from: type, x0: e.x, y0: 2.2, z0: e.z, tx: c.carX, t: 0, dur: thrower.dur, dmg: thrower.dmg };
-      c.missiles.push(m);
-      c.events.push({ kind: 'throw', missile: m.id });
+      const lanes = [c.carX];
+      if (thrower.spread) {
+        // The second bag goes a lane over, toward the middle of the road.
+        const side = c.carX > 0 ? -1 : c.carX < 0 ? 1 : c.rng() < 0.5 ? -1 : 1;
+        lanes.push(Math.max(-LANE_LIMIT, Math.min(LANE_LIMIT, c.carX + side * thrower.spread)));
+      }
+      for (const tx of lanes) {
+        const m: Missile = { id: c.nextId++, from: type, x0: e.x, y0: 2.2, z0: e.z, tx, t: 0, dur: thrower.dur, dmg: thrower.dmg };
+        c.missiles.push(m);
+        c.events.push({ kind: 'throw', missile: m.id });
+      }
     }
   }
   if (Math.abs(e.z - e.holdZ) > 3 || stunned) {

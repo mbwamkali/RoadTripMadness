@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { disposeTree, makeRide } from './common';
 import { modelsWanted } from './models';
 import { sampleCatship, sampleOutlaw, sampleWreck } from './samples';
-import { pizzaGeometryParts, sampleHermit, samplePizzaCar, simpleHermit, simplePizzaCar } from './bossModels';
+import { pizzaGeometryParts, sampleHermit, samplePizzaCar, sampleSweeper, simpleHermit, simplePizzaCar, simpleSweeper } from './bossModels';
 import { kidMode } from '../game/kidMode';
 import type { Upgrades } from '../game/upgrades';
 
@@ -16,8 +16,8 @@ import type { Upgrades } from '../game/upgrades';
 
 export type SceneKind = 'flat' | 'help' | 'dog' | 'loot' | 'trade' | 'beam' | 'roadblock' | 'bridge' | 'fuel' | BossScene;
 /** Boss intros with their own scene (the older bosses show just their icon). */
-export type BossScene = 'hermit' | 'pizza';
-export const BOSS_SCENES: readonly string[] = ['hermit', 'pizza'] satisfies BossScene[];
+export type BossScene = 'hermit' | 'pizza' | 'sweeper';
+export const BOSS_SCENES: readonly string[] = ['hermit', 'pizza', 'sweeper'] satisfies BossScene[];
 
 /** The scene for each road event (src/game/events.ts ids), plus 'bike' for running out of gas. */
 export function sceneKindFor(eventId: string): SceneKind {
@@ -360,6 +360,35 @@ function stage(kind: SceneKind, ride: 'car' | 'motorcycle' | 'truck', up?: Upgra
           const from = pc.position.x + 1;
           g.position.set(from + (car.position.x - from) * p, 2 + Math.sin(p * Math.PI) * 1.2, -0.3 + p * 0.3);
           g.rotation.set(0.5, p * 12, 0);
+        });
+      });
+      break;
+    }
+    case 'sweeper': {
+      // The sweeper rumbles toward you, brushes spinning, cats hurling trash bags.
+      stopX = -4;
+      const sw = modelsWanted() ? sampleSweeper() : simpleSweeper();
+      sw.rotation.y = -Math.PI / 2; // driving toward the car, along -x
+      sw.scale.setScalar(0.75);
+      scene.add(sw);
+      const bags = [0, 1, 2, 3].map(() => {
+        const b = mesh(new THREE.SphereGeometry(0.3, 7, 5).scale(1, 1.2, 1), lam(0x24302a));
+        scene.add(b);
+        return b;
+      });
+      props.push((t) => {
+        sw.position.set(12 - Math.min(1, t / 2.4) * 8, 0, -0.2);
+        sw.traverse((o) => {
+          if (o.name === 'brush') o.rotation.y = t * 14;
+          if (o.name === 'tail') o.rotation.y = Math.sin(t * 8 + o.id) * 0.6;
+        });
+        bags.forEach((b, i) => {
+          const p = (t - 1.4 - i * 0.5) / 0.8;
+          b.visible = p > 0 && p < 1;
+          const from = sw.position.x - 1.5;
+          const to = stopX + (i % 2 ? 1.2 : -1.6);
+          b.position.set(from + (to - from) * p, 3 + Math.sin(p * Math.PI) * 1.4 - p * 2.8, (i % 2 ? 1 : -1) * p * 1.2);
+          b.rotation.set(p * 6, p * 4, 0);
         });
       });
       break;

@@ -25,7 +25,7 @@ import { castShadows, disposeTree, makeLaneTexture, makeRide, makeRoadTexture, t
 import { modelGeometry, modelMaterial, modelMesh, modelsWanted, treeModelsWanted, type ModelName } from './models';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { sampleBrute, sampleCatship, sampleMothership, sampleOutlaw, sampleWarRig } from './samples';
-import { pizzaGeometryParts, sampleHermit, samplePizzaCar, simpleHermit, simplePizzaCar } from './bossModels';
+import { angryCat, pizzaGeometryParts, sampleHermit, samplePizzaCar, sampleSweeper, simpleHermit, simplePizzaCar, simpleSweeper } from './bossModels';
 
 export interface CombatCallbacks {
   onCarHit(dmg: number): void;
@@ -59,6 +59,7 @@ export class CombatScene implements GameScene {
   /** Horde zombies: one shared zombie drawn many times. */
   private horde: THREE.InstancedMesh | null = null;
   private missiles = new Map<number, THREE.Object3D>();
+  private trash = Object.assign(new THREE.MeshLambertMaterial({ color: 0x24302a, flatShading: true }), { userData: { shared: true } });
   private junk = Object.assign(new THREE.MeshLambertMaterial({ color: 0x7a6a55 }), { userData: { shared: true } });
   /** A red glow over the car when it gets hit. */
   private hitGlow = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.8, 4.8), new THREE.MeshBasicMaterial({ color: 0xff2020, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
@@ -277,6 +278,18 @@ export class CombatScene implements GameScene {
           if (ev.hit) this.shake = Math.min(1.2, this.shake + 0.4);
           break;
         }
+        case 'bail': {
+          // The cat crew leaps out of the wrecked sweeper and scatters.
+          for (let i = 0; i < ev.cats; i++) {
+            const cat = angryCat([0xff9a3c, 0x3a3a3a, 0xf2f2f2, 0xb0b0b0][i % 4]);
+            cat.scale.setScalar(1.6);
+            cat.position.set(ev.x + (i - ev.cats / 2) * 0.8, 3, ev.z);
+            this.scene.add(cat);
+            const v = new THREE.Vector3((i - (ev.cats - 1) / 2) * 5, 11 + i, 6);
+            this.fx.push({ obj: cat, life: 1.4, max: 1.4, vel: v });
+          }
+          break;
+        }
         case 'grab':
         case 'shakeOff': {
           const g = this.meshes.get(ev.enemy);
@@ -399,7 +412,10 @@ export class CombatScene implements GameScene {
       live.add(ms.id);
       let mesh = this.missiles.get(ms.id);
       if (!mesh) {
-        if (ms.from === 'pizza') {
+        if (ms.from === 'sweeper') {
+          // A bulging trash bag.
+          mesh = new THREE.Mesh(new THREE.SphereGeometry(0.4, 7, 5).scale(1, 1.2, 1), this.trash);
+        } else if (ms.from === 'pizza') {
           // A spinning pizza, big enough to see coming.
           mesh = new THREE.Group();
           pizzaGeometryParts(mesh, 0.55);
@@ -454,8 +470,9 @@ export class CombatScene implements GameScene {
     for (const f of this.fx) {
       f.life -= dt;
       const t = Math.max(0, f.life / f.max);
-      const mat = (f.obj as THREE.Mesh).material as THREE.MeshBasicMaterial;
-      mat.opacity = t;
+      const mat = (f.obj as THREE.Mesh).material as THREE.MeshBasicMaterial | undefined;
+      if (mat) mat.opacity = t;
+      else f.obj.rotation.y += dt * 8; // a leaping cat spins as it goes
       if (f.vel) {
         if (f.obj instanceof THREE.Mesh && f.obj.geometry.type === 'RingGeometry') {
           f.obj.scale.setScalar(1 + (1 - t) * 18);
@@ -469,6 +486,10 @@ export class CombatScene implements GameScene {
     for (const f of dead) {
       this.scene.remove(f.obj);
       const m = f.obj as THREE.Mesh;
+      if (!m.isMesh) {
+        disposeTree(f.obj);
+        continue;
+      }
       m.geometry.dispose();
       (m.material as THREE.Material).dispose();
     }
@@ -558,6 +579,7 @@ export class CombatScene implements GameScene {
     }
     for (const mesh of this.missiles.values()) disposeTree(mesh);
     this.junk.dispose();
+    this.trash.dispose();
     for (const g of this.meshes.values()) disposeTree(g);
     for (const f of this.fx) disposeTree(f.obj);
     disposeTree(this.scene);
@@ -608,12 +630,14 @@ const SAMPLE_ENEMIES: Partial<Record<EnemyType, { build: () => THREE.Group; hitR
   warrig: { build: sampleWarRig, hitRadius: 3.6, barY: 5 },
   hermit: { build: sampleHermit, hitRadius: 1.2, barY: 2.9 },
   pizza: { build: samplePizzaCar, hitRadius: 2.4, barY: 3.6 },
+  sweeper: { build: sampleSweeper, hitRadius: 3.0, barY: 4.8 },
 };
 
 /** Low graphics versions of the newer bosses (the older ones are built inline below). */
 const SIMPLE_BOSSES: Partial<Record<EnemyType, { build: () => THREE.Group; hitRadius: number; barY: number }>> = {
   hermit: { build: simpleHermit, hitRadius: 1.2, barY: 2.9 },
   pizza: { build: simplePizzaCar, hitRadius: 2.4, barY: 3.4 },
+  sweeper: { build: simpleSweeper, hitRadius: 3.0, barY: 4.8 },
 };
 
 export function buildEnemy(type: EnemyType): THREE.Group {
@@ -774,7 +798,7 @@ export function buildEnemy(type: EnemyType): THREE.Group {
     barY = 1.9;
   }
   const hitbox = new THREE.Mesh(new THREE.SphereGeometry(hitRadius, 8, 6), new THREE.MeshBasicMaterial({ visible: false }));
-  hitbox.position.y = type === 'catship' || type === 'mothership' ? 0.2 : type === 'warrig' ? 1.8 : type === 'pizza' ? 1.4 : 1.3;
+  hitbox.position.y = type === 'catship' || type === 'mothership' ? 0.2 : type === 'warrig' ? 1.8 : type === 'pizza' ? 1.4 : type === 'sweeper' ? 2.0 : 1.3;
   hitbox.name = 'hitbox';
   g.add(hitbox);
   const hp = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 0.2), new THREE.MeshBasicMaterial({ color: 0xff3030, depthTest: false }));
@@ -790,13 +814,13 @@ export function buildEnemy(type: EnemyType): THREE.Group {
   target.visible = false;
   g.add(target);
   if (type === 'outlaw') g.rotation.y = Math.PI;
-  if (type === 'warrig' || type === 'pizza') {
+  if (type === 'warrig' || type === 'pizza' || type === 'sweeper') {
     // Drives away from the car, rear facing us.
     g.rotation.y = Math.PI;
     hp.rotation.y = Math.PI;
   }
   // A bit larger than life so they read well on a phone screen.
-  const scale: Record<EnemyType, number> = { zombie: 1.35, outlaw: 1.35, catship: 1.1, brute: 4.2, warrig: 1.1, mothership: 1, hermit: 1.9, pizza: 1.15 };
+  const scale: Record<EnemyType, number> = { zombie: 1.35, outlaw: 1.35, catship: 1.1, brute: 4.2, warrig: 1.1, mothership: 1, hermit: 1.9, pizza: 1.15, sweeper: 1.3 };
   g.scale.setScalar(scale[type]);
   return g;
 }
@@ -835,6 +859,13 @@ function animateEnemy(g: THREE.Group, e: Enemy, t: number): void {
     const armR = body.getObjectByName('armR');
     if (armL) armL.rotation.x = e.charging ? -2.6 : Math.sin(t * 7) * 0.4;
     if (armR) armR.rotation.x = e.charging || throwing ? -2.6 : Math.sin(t * 7 + 1) * 0.4;
+  } else if (e.type === 'sweeper') {
+    body.rotation.z = Math.sin(t * 2) * 0.02;
+    body.traverse((o) => {
+      if (o.name === 'brush') o.rotation.y += 0.3;
+      if (o.name === 'tail') o.rotation.y = Math.sin(t * 8 + o.id) * 0.6;
+      if (o.name === 'light') o.visible = Math.sin(t * 10) > 0 || e.charging;
+    });
   } else if (e.type === 'pizza') {
     body.rotation.z = Math.sin(t * 2.4) * 0.05;
     body.position.y = Math.abs(Math.sin(t * 9)) * 0.06;

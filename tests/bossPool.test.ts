@@ -93,3 +93,28 @@ describe('the angry pizza driver', () => {
     expect(dmg).toBeLessThan(6);
   });
 });
+
+describe('the street sweeper', () => {
+  it('sprays two trash bags at a time, and its cats bail out when wrecked', () => {
+    const c = createCombat({ seed: 6, progress: 0.5, boss: 'sweeper' });
+    let pairs = 0;
+    run(c, 20, (c) => {
+      const throws = c.events.filter((ev) => ev.kind === 'throw').length;
+      if (throws === 2) pairs++;
+      c.events.length = 0;
+    });
+    expect(pairs).toBeGreaterThanOrEqual(3);
+    // There is always a lane the bags miss.
+    const lanes = new Set(c.missiles.map((m) => Math.round(m.tx)));
+    expect(lanes.size === 0 || lanes.size === 2).toBe(true);
+    const boss = c.enemies.find((e) => e.type === 'sweeper')!;
+    const items = inv();
+    for (let i = 0; i < 300 && boss.hp > 0; i++) {
+      c.fireCooldown = 0;
+      fireAt(c, items, boss.id);
+    }
+    const bail = c.events.find((ev) => ev.kind === 'bail');
+    expect(bail && bail.kind === 'bail' && bail.cats).toBeGreaterThan(0);
+    expect(c.loot.catnip).toBe(2);
+  });
+});
