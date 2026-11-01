@@ -31,6 +31,28 @@ export interface Enemy {
   holdX: number;
   /** Bosses: the lane x their big attack will land on (shown as a warning). */
   targetX: number;
+  /** Zombies: throwers stop up the road and hurl junk; climbers grab onto the car. */
+  role?: 'thrower' | 'climber';
+  /** Part of a horde: one hit (or one bump) each. */
+  horde?: boolean;
+  /** A climber riding on the car. */
+  onCar?: boolean;
+  /** Seconds of steering a climber has been shaken by (enough throws it off). */
+  shaken?: number;
+}
+
+/** Junk thrown at the car: flies from the thrower to where the car was, and hits if the car is still there. */
+export interface Missile {
+  id: number;
+  from: EnemyType;
+  x0: number;
+  y0: number;
+  z0: number;
+  /** The lane it was aimed at. */
+  tx: number;
+  t: number;
+  dur: number;
+  dmg: number;
 }
 
 export type CombatEvent =
@@ -42,6 +64,11 @@ export type CombatEvent =
   | { kind: 'charge'; enemy: number }
   | { kind: 'laser'; enemy: number }
   | { kind: 'slam'; enemy: number; x: number; hit: boolean }
+  | { kind: 'windup'; enemy: number }
+  | { kind: 'throw'; missile: number }
+  | { kind: 'missile'; missile: number; x: number; hit: boolean }
+  | { kind: 'grab'; enemy: number }
+  | { kind: 'shakeOff'; enemy: number }
   | { kind: 'horn' }
   | { kind: 'boost' }
   | { kind: 'empty'; weapon: WeaponKind };
@@ -49,6 +76,7 @@ export type CombatEvent =
 interface Spawn {
   t: number;
   type: EnemyType;
+  horde?: boolean;
 }
 
 export interface CombatState {
@@ -65,7 +93,10 @@ export interface CombatState {
   boostCooldown: number;
   boostTime: number;
   enemies: Enemy[];
+  missiles: Missile[];
   queue: Spawn[];
+  /** A zombie horde fight (waves of one-hit zombies). */
+  horde: boolean;
   nextId: number;
   events: CombatEvent[];
   kills: number;
@@ -146,6 +177,10 @@ export interface CombatOptions {
   theme?: EnemyType;
   /** A boss fight. */
   boss?: BossKind;
+  /** Chance a zombie fight is a horde (difficulty and cities raise it). */
+  hordeChance?: number;
+  /** Most zombies in a horde (fewer on Low graphics and in kid mode). */
+  hordeMax?: number;
   /** Difficulty: enemy health and damage multipliers. */
   hpScale?: number;
   dmgScale?: number;
@@ -168,6 +203,7 @@ export function createCombat(opts: CombatOptions): CombatState {
     boostCooldown: 0,
     boostTime: 0,
     enemies: [],
+    missiles: [],
     nextId: 1,
     events: [],
     kills: 0,
@@ -190,12 +226,16 @@ export function createCombat(opts: CombatOptions): CombatState {
       queue: [{ t: 1, type: opts.boss }],
       title: BOSS_INFO[opts.boss].title,
       boss: opts.boss,
+      horde: false,
     };
+  }
+  // Each fight leans toward one kind of threat so they feel distinct.
+  const theme = opts.theme ?? (opts.ambush ? (rng() < 0.6 ? 'zombie' : 'outlaw') : pickTheme(rng, p));
+  if (theme === 'zombie' && rng() < (opts.hordeChance ?? 0)) {
+    return { ...common, escapeAt: 45, queue: hordeWaves(rng, p, opts.hordeMax ?? 40), title: 'ZOMBIE HORDE!', boss: null, horde: true };
   }
   const count = Math.round(5 + p * 9 + rng() * 3);
   const types: EnemyType[] = [];
-  // Each fight leans toward one kind of threat so they feel distinct.
-  const theme = opts.theme ?? (opts.ambush ? (rng() < 0.6 ? 'zombie' : 'outlaw') : pickTheme(rng, p));
   for (let i = 0; i < count; i++) {
     const r = rng();
     let t: EnemyType = theme;
@@ -205,11 +245,25 @@ export function createCombat(opts: CombatOptions): CombatState {
   }
   const queue = types.map((type, i) => ({ type, t: 0.8 + i * range(rng, 1.2, 2.4) }));
   const titles: Record<'zombie' | 'outlaw' | 'catship', string> = {
-    zombie: 'Zombie horde!',
+    zombie: 'Zombies!',
     outlaw: 'Outlaws on your tail!',
     catship: 'Alien cat invasion!',
   };
-  return { ...common, escapeAt: 45, queue, title: titles[theme as 'zombie' | 'outlaw' | 'catship'] ?? titles.zombie, boss: null };
+  return { ...common, escapeAt: 45, queue, title: titles[theme as 'zombie' | 'outlaw' | 'catship'] ?? titles.zombie, boss: null, horde: false };
+}
+
+/** 20 to 40 zombies (at most `max`) in three or four waves, each wave a tight rush. */
+export function hordeWaves(rng: Rng, p: number, max: number): Spawn[] {
+  const total = Math.min(max, Math.round(20 + p * 12 + rng() * 8));
+  const waves = total > 28 ? 4 : 3;
+  const out: Spawn[] = [];
+  let t = 1;
+  for (let w = 0; w < waves; w++) {
+    const n = Math.round(total / waves) + (w === waves - 1 ? total - Math.round(total / waves) * waves : 0);
+    for (let i = 0; i < n; i++) out.push({ t: t + i * range(rng, 0.12, 0.3), type: 'zombie', horde: true });
+    t += n * 0.22 + range(rng, 4, 6);
+  }
+  return out;
 }
 
 function pickTheme(rng: Rng, p: number): EnemyType {
@@ -221,10 +275,10 @@ function pickTheme(rng: Rng, p: number): EnemyType {
   return 'catship';
 }
 
-function spawn(c: CombatState, type: EnemyType): Enemy {
+function spawn(c: CombatState, type: EnemyType, horde = false): Enemy {
   const r = c.rng;
   const side = r() < 0.5 ? -1 : 1;
-  const hp = ENEMY_STATS[type].hp * c.hpScale;
+  const hp = horde ? 1 : ENEMY_STATS[type].hp * c.hpScale;
   const e: Enemy = {
     id: c.nextId++,
     type,
@@ -250,6 +304,20 @@ function spawn(c: CombatState, type: EnemyType): Enemy {
   } else if (type === 'zombie') {
     e.x = range(r, -7, 7);
     e.z = -70;
+    if (horde) {
+      e.horde = true;
+      e.z = -70 - r() * 12;
+      e.holdX = range(r, -6, 6);
+    } else if (!c.boss) {
+      // Later in the trip more zombies fight back: some throw junk, some climb on.
+      const p = Math.min(1, c.time / 60 + 0.3);
+      const roll = r();
+      if (roll < 0.22 * p + 0.12) {
+        e.role = 'thrower';
+        e.holdZ = range(r, -17, -11);
+        e.timer = range(r, 0.8, 1.6);
+      } else if (roll < 0.5) e.role = 'climber';
+    }
   } else if (type === 'outlaw') {
     e.x = side * 5.5;
     e.z = 35;
@@ -281,7 +349,10 @@ export function stepCombat(c: CombatState, dt: number): number {
 
   c.carX = Math.max(-LANE_LIMIT, Math.min(LANE_LIMIT, c.carX + c.steer * 7 * c.steerScale * dt));
 
-  while (c.queue.length && c.queue[0].t <= c.time) spawn(c, c.queue.shift()!.type);
+  while (c.queue.length && c.queue[0].t <= c.time) {
+    const q = c.queue.shift()!;
+    spawn(c, q.type, q.horde);
+  }
 
   const roadSpeed = ROAD_SPEED * (boosting ? 2.2 : 1);
   let carDamage = 0;
@@ -299,12 +370,26 @@ export function stepCombat(c: CombatState, dt: number): number {
     if (isBoss(e.type)) {
       stepBoss(c, e, e.type, dt, stunned, hitCar);
     } else if (e.type === 'zombie') {
-      e.z += roadSpeed * dt;
-      if (!stunned) e.x += Math.sign(c.carX - e.x) * Math.min(Math.abs(c.carX - e.x), 1.8 * dt);
-      if (e.z > -1.5 && e.z < 1.5 && Math.abs(e.x - c.carX) < 1.5) {
-        // Ploughing into a zombie hurts the car unless you're boosting through.
-        if (!boosting && c.ramDamage > 0) hitCar(c.ramDamage, 'zombie');
-        kill(c, e, false);
+      if (e.onCar) stepClimber(c, e, dt, stunned, boosting, hitCar);
+      else if (e.role === 'thrower') stepThrower(c, e, dt, stunned, boosting, roadSpeed);
+      else {
+        e.z += roadSpeed * dt;
+        // A horde spreads across the road far off and closes in on the car as it nears.
+        const aimX = e.horde ? c.carX + e.holdX * Math.min(1, Math.max(0, -e.z / 35)) : c.carX;
+        if (!stunned) e.x += Math.sign(aimX - e.x) * Math.min(Math.abs(aimX - e.x), (e.horde ? 1.6 : 1.8) * dt);
+        if (e.z > -1.5 && e.z < 1.5 && Math.abs(e.x - c.carX) < 1.5) {
+          if (e.role === 'climber' && !boosting) {
+            // It grabs on instead of going under the wheels.
+            e.onCar = true;
+            e.shaken = 0;
+            e.timer = 1.2;
+            c.events.push({ kind: 'grab', enemy: e.id });
+          } else {
+            // Ploughing into a zombie hurts the car unless you're boosting through; a horde zombie is a small bump.
+            if (!boosting && c.ramDamage > 0) hitCar(e.horde ? c.ramDamage * 0.25 : c.ramDamage, 'zombie');
+            kill(c, e, !!e.horde);
+          }
+        }
       }
     } else if (e.type === 'outlaw') {
       if (boosting) {
@@ -314,8 +399,15 @@ export function stepCombat(c: CombatState, dt: number): number {
         e.x += Math.sign(c.carX + e.holdX - e.x) * Math.min(Math.abs(c.carX + e.holdX - e.x), 4 * dt);
       }
       e.timer -= dt;
+      if (stunned) e.charging = false;
+      else if (!e.charging && e.timer <= WINDUP && e.timer > 0 && Math.abs(e.z - e.holdZ) < 2) {
+        // Raises the gun first (the outlaw flashes), so there's a moment to swerve.
+        e.charging = true;
+        c.events.push({ kind: 'windup', enemy: e.id });
+      }
       if (e.timer <= 0 && !stunned && Math.abs(e.z - e.holdZ) < 2) {
         e.timer = range(c.rng, 1.8, 2.8);
+        e.charging = false;
         const hit = c.rng() < 0.6;
         c.events.push({ kind: 'enemyShot', enemy: e.id, hit });
         if (hit) hitCar(4, 'outlaw');
@@ -341,6 +433,7 @@ export function stepCombat(c: CombatState, dt: number): number {
       }
     }
   }
+  stepMissiles(c, dt, hitCar);
   if (c.gunner) gunnerFire(c, dt);
   if (c.boss && c.bossId != null) {
     c.minionTimer -= dt;
@@ -362,7 +455,7 @@ function kill(c: CombatState, e: Enemy, byPlayer: boolean): void {
   if (!byPlayer) return;
   c.kills++;
   const add = (k: keyof Inventory, n: number) => (c.loot[k] = (c.loot[k] ?? 0) + n);
-  if (e.type === 'zombie') add('scrap', 1);
+  if (e.type === 'zombie' && (!e.horde || c.rng() < 0.35)) add('scrap', 1);
   if (e.type === 'outlaw') {
     add('bullets', 8);
     add('cash', 6);
@@ -379,6 +472,77 @@ function kill(c: CombatState, e: Enemy, byPlayer: boolean): void {
     // The rest of the gang scatters.
     for (const o of c.enemies) if (o !== e && o.hp > 0) o.z = 999;
   }
+}
+
+/** How long an enemy flashes before it attacks. */
+export const WINDUP = 0.6;
+
+/** A thrower stops up the road, winds up and hurls junk at the lane the car is in. */
+function stepThrower(c: CombatState, e: Enemy, dt: number, stunned: boolean, boosting: boolean, roadSpeed: number): void {
+  // Boosting leaves throwers behind.
+  if (boosting || e.z < e.holdZ) e.z = boosting ? e.z + roadSpeed * dt : Math.min(e.holdZ, e.z + roadSpeed * dt);
+  if (stunned || e.z < e.holdZ - 0.5 || e.z > e.holdZ + 0.5) {
+    e.charging = false;
+    return;
+  }
+  e.timer -= dt;
+  if (!e.charging && e.timer <= WINDUP) {
+    e.charging = true;
+    c.events.push({ kind: 'windup', enemy: e.id });
+  }
+  if (e.timer <= 0) {
+    e.timer = range(c.rng, 2, 3);
+    e.charging = false;
+    const m: Missile = { id: c.nextId++, from: 'zombie', x0: e.x, y0: 2, z0: e.z, tx: c.carX, t: 0, dur: 1, dmg: 5 };
+    c.missiles.push(m);
+    c.events.push({ kind: 'throw', missile: m.id });
+  }
+}
+
+/** A climber rides on the car and claws at it until it's shot, shaken off by steering, or blown off by a boost. */
+function stepClimber(c: CombatState, e: Enemy, dt: number, stunned: boolean, boosting: boolean, hitCar: (d: number, from: EnemyType) => void): void {
+  const side = e.x >= c.carX ? 1 : -1;
+  e.x = c.carX + side * 0.7;
+  e.z = -0.6;
+  e.y = 1.1;
+  e.shaken = (e.shaken ?? 0) + Math.abs(c.steer) * dt;
+  if (boosting || e.shaken >= 0.9) {
+    c.events.push({ kind: 'shakeOff', enemy: e.id });
+    kill(c, e, true);
+    return;
+  }
+  e.timer -= dt;
+  if (stunned) {
+    e.charging = false;
+    return;
+  }
+  if (!e.charging && e.timer <= WINDUP && e.timer > 0) {
+    e.charging = true;
+    c.events.push({ kind: 'windup', enemy: e.id });
+  }
+  if (e.timer <= 0) {
+    e.timer = 1.6;
+    e.charging = false;
+    hitCar(3, 'zombie');
+  }
+}
+
+/** Thrown junk lands where it was aimed: steer out of that lane to dodge it. */
+function stepMissiles(c: CombatState, dt: number, hitCar: (d: number, from: EnemyType) => void): void {
+  for (const m of c.missiles) {
+    m.t += dt;
+    if (m.t < m.dur) continue;
+    const hit = Math.abs(c.carX - m.tx) < 1.4;
+    c.events.push({ kind: 'missile', missile: m.id, x: m.tx, hit });
+    if (hit) hitCar(m.dmg, m.from);
+  }
+  c.missiles = c.missiles.filter((m) => m.t < m.dur);
+}
+
+/** Where a missile is now: an arc from the thrower to the aimed lane at the car. */
+export function missileAt(m: Missile): { x: number; y: number; z: number } {
+  const k = Math.min(1, m.t / m.dur);
+  return { x: m.x0 + (m.tx - m.x0) * k, y: m.y0 + (1 - m.y0) * k + Math.sin(k * Math.PI) * 3, z: m.z0 * (1 - k) };
 }
 
 /**

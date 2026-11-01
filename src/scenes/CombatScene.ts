@@ -3,6 +3,7 @@ import {
   combatOutcome,
   isBoss,
   fireAt,
+  missileAt,
   ROAD_SPEED,
   stepCombat,
   type CombatState,
@@ -21,7 +22,8 @@ import { classAt, roadSegments } from '../game/roads';
 import { pick } from '../game/rng';
 import { pathFromRoute } from '../geo/route';
 import { castShadows, disposeTree, makeLaneTexture, makeRide, makeRoadTexture, type GameScene } from './common';
-import { modelMesh, modelsWanted, treeModelsWanted, type ModelName } from './models';
+import { modelGeometry, modelMaterial, modelMesh, modelsWanted, treeModelsWanted, type ModelName } from './models';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { sampleBrute, sampleCatship, sampleMothership, sampleOutlaw, sampleWarRig } from './samples';
 
 export interface CombatCallbacks {
@@ -53,6 +55,13 @@ export class CombatScene implements GameScene {
   private scrolling: { tex: THREE.Texture; dir: number }[] = [];
   private props: THREE.Group = new THREE.Group();
   private meshes = new Map<number, THREE.Group>();
+  /** Horde zombies: one shared zombie drawn many times. */
+  private horde: THREE.InstancedMesh | null = null;
+  private missiles = new Map<number, THREE.Mesh>();
+  private junk = new THREE.MeshLambertMaterial({ color: 0x7a6a55 });
+  /** A red glow over the car when it gets hit. */
+  private hitGlow = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.8, 4.8), new THREE.MeshBasicMaterial({ color: 0xff2020, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
+  private hitFlash = 0;
   private fx: Fx[] = [];
   private raycaster = new THREE.Raycaster();
   private lockedTarget: number | null = null;
@@ -89,6 +98,8 @@ export class CombatScene implements GameScene {
     castShadows(this.car, this.shadows);
     this.scene.add(this.props);
     this.scene.add(this.car);
+    this.hitGlow.visible = false;
+    this.scene.add(this.hitGlow);
 
     this.warning = new THREE.Mesh(
       new THREE.PlaneGeometry(3.6, 26),
@@ -118,12 +129,14 @@ export class CombatScene implements GameScene {
     if (best) return best.id;
     // Forgiving aim for fingers: take the enemy closest to the tap on screen.
     let near: { id: number; d: number } | null = null;
-    for (const [id, g] of this.meshes) {
-      const p = g.position.clone().setY(g.position.y + 1).project(this.camera);
+    const consider = (id: number, at: THREE.Vector3) => {
+      const p = at.setY(at.y + 1).project(this.camera);
       const d = Math.hypot(p.x - ndc.x, (p.y - ndc.y) * 0.8);
       if (d < 0.18 && (!near || d < near.d)) near = { id, d };
-    }
-    return near?.id ?? null;
+    };
+    for (const [id, g] of this.meshes) consider(id, g.position.clone());
+    for (const e of this.combat.enemies) if (e.horde) consider(e.id, new THREE.Vector3(e.x, e.y, e.z));
+    return (near as { id: number } | null)?.id ?? null;
   }
 
   pointerDown(ndc: THREE.Vector2): void {
@@ -176,6 +189,11 @@ export class CombatScene implements GameScene {
     const target = c.enemies.find((e) => e.id === this.lockedTarget);
     if (gun && target) gun.rotation.y = Math.atan2(-(target.x - c.carX), -target.z);
 
+    this.hitFlash = Math.max(0, this.hitFlash - dt);
+    this.hitGlow.visible = this.hitFlash > 0;
+    this.hitGlow.position.set(c.carX, 0.9, 0);
+    (this.hitGlow.material as THREE.MeshBasicMaterial).opacity = (this.hitFlash / 0.3) * 0.55;
+    this.syncMissiles();
     this.shake = Math.max(0, this.shake - dt * 3);
     const sx = (Math.random() - 0.5) * this.shake;
     const sy = (Math.random() - 0.5) * this.shake;
@@ -234,15 +252,34 @@ export class CombatScene implements GameScene {
         }
         case 'kill': {
           const color = ev.type === 'zombie' ? 0x6fae3a : ev.type === 'outlaw' ? 0x7a4a2a : 0xd070ff;
-          this.addBurst(new THREE.Vector3(ev.x, ev.y + 1, ev.z), color, 16);
+          // Hordes die by the dozen: smaller bursts keep the frame rate up.
+          this.addBurst(new THREE.Vector3(ev.x, ev.y + 1, ev.z), color, c.horde ? 6 : 16);
           break;
         }
         case 'carHit':
           this.shake = Math.min(1.2, this.shake + ev.dmg * 0.08);
+          this.hitFlash = 0.3;
           break;
         case 'enemyShot': {
           const g = this.meshes.get(ev.enemy);
-          if (g) this.addLine(g.position.clone().setY(1.5), new THREE.Vector3(c.carX + (ev.hit ? 0 : 3), 1, 0), 0xff5533, 0.1);
+          if (g) {
+            const muzzle = g.position.clone().setY(1.6);
+            this.addLine(muzzle, new THREE.Vector3(c.carX + (ev.hit ? 0 : 3), 1, 0), 0xff5533, 0.22);
+            this.addBurst(muzzle, 0xffd040, 4);
+          }
+          break;
+        }
+        case 'throw':
+          break;
+        case 'missile': {
+          this.addBurst(new THREE.Vector3(ev.x, 0.6, 0), 0x8a7a60, ev.hit ? 10 : 6);
+          if (ev.hit) this.shake = Math.min(1.2, this.shake + 0.4);
+          break;
+        }
+        case 'grab':
+        case 'shakeOff': {
+          const g = this.meshes.get(ev.enemy);
+          if (g) this.addBurst(g.position.clone().setY(1.5), ev.kind === 'grab' ? 0xff4040 : 0x6fae3a, 8);
           break;
         }
         case 'laser': {
@@ -275,7 +312,9 @@ export class CombatScene implements GameScene {
 
   private syncEnemies(): void {
     const alive = new Set<number>();
+    this.syncHorde();
     for (const e of this.combat.enemies) {
+      if (e.horde) continue;
       alive.add(e.id);
       let g = this.meshes.get(e.id);
       if (!g) {
@@ -297,6 +336,20 @@ export class CombatScene implements GameScene {
       g.userData.flash = Math.max(0, flash - 1 / 60);
       const body = g.getObjectByName('body') as THREE.Mesh;
       if (body) body.visible = !(flash > 0 && Math.floor(flash * 60) % 2 === 0);
+      // Every attack is telegraphed: a blinking warning light over the enemy while it winds up.
+      if (!isBoss(e.type)) {
+        let w = g.getObjectByName('windup') as THREE.Mesh | undefined;
+        if (!w && e.charging) {
+          w = new THREE.Mesh(new THREE.SphereGeometry(0.32, 10, 8), new THREE.MeshBasicMaterial({ color: 0xffd040 }));
+          w.name = 'windup';
+          w.position.y = e.type === 'catship' ? -0.9 : 2.8;
+          g.add(w);
+        }
+        if (w) {
+          w.visible = e.charging && Math.floor(this.combat.time * 10) % 2 === 0;
+          w.scale.setScalar(1 + Math.sin(this.combat.time * 20) * 0.2);
+        }
+      }
     }
     for (const [id, g] of this.meshes) {
       if (!alive.has(id)) {
@@ -305,6 +358,59 @@ export class CombatScene implements GameScene {
         this.meshes.delete(id);
         if (this.lockedTarget === id) this.lockedTarget = null;
       }
+    }
+  }
+
+  /** Draws horde zombies as one instanced mesh (the model on Medium and High, simple shapes on Low). */
+  private syncHorde(): void {
+    const list = this.combat.enemies.filter((e) => e.horde);
+    if (!this.horde) {
+      if (!list.length) return;
+      const geo = modelGeometry('zombie') ?? simpleZombieGeometry();
+      const mat = modelGeometry('zombie') ? modelMaterial : new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+      this.horde = new THREE.InstancedMesh(geo, mat, 48);
+      this.horde.frustumCulled = false;
+      this.horde.castShadow = this.shadows;
+      this.scene.add(this.horde);
+    }
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const euler = new THREE.Euler();
+    const pos = new THREE.Vector3();
+    const scale = new THREE.Vector3(1.35, 1.35, 1.35);
+    const t = this.combat.time;
+    const n = Math.min(list.length, this.horde.count === 0 ? 48 : 48);
+    for (let i = 0; i < n; i++) {
+      const e = list[i];
+      const swing = Math.sin(t * 6 + e.id) * (e.stunned > 0 ? 0.05 : 0.5);
+      pos.set(e.x, e.y + Math.abs(swing) * 0.15, e.z);
+      q.setFromEuler(euler.set(0, e.stunned > 0 ? Math.sin(t * 20) * 0.3 : 0, Math.sin(t * 3 + e.id) * 0.12));
+      this.horde.setMatrixAt(i, m.compose(pos, q, scale));
+    }
+    this.horde.count = n;
+    this.horde.instanceMatrix.needsUpdate = true;
+  }
+
+  /** Thrown junk tumbling through the air toward the lane it was aimed at. */
+  private syncMissiles(): void {
+    const live = new Set<number>();
+    for (const ms of this.combat.missiles) {
+      live.add(ms.id);
+      let mesh = this.missiles.get(ms.id);
+      if (!mesh) {
+        mesh = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.6), this.junk);
+        this.missiles.set(ms.id, mesh);
+        this.scene.add(mesh);
+      }
+      const p = missileAt(ms);
+      mesh.position.set(p.x, p.y, p.z);
+      mesh.rotation.set(ms.t * 9, ms.t * 6, 0);
+    }
+    for (const [id, mesh] of this.missiles) {
+      if (live.has(id)) continue;
+      this.scene.remove(mesh);
+      mesh.geometry.dispose();
+      this.missiles.delete(id);
     }
   }
 
@@ -436,6 +542,16 @@ export class CombatScene implements GameScene {
 
   dispose(): void {
     this.atmosphere.dispose();
+    if (this.horde) {
+      if (!this.horde.geometry.userData.shared && this.horde.material !== modelMaterial) {
+        this.horde.geometry.dispose();
+        (this.horde.material as THREE.Material).dispose();
+      }
+      this.horde.dispose();
+      this.scene.remove(this.horde);
+    }
+    for (const mesh of this.missiles.values()) mesh.geometry.dispose();
+    this.junk.dispose();
     for (const g of this.meshes.values()) disposeTree(g);
     for (const f of this.fx) disposeTree(f.obj);
     disposeTree(this.scene);
@@ -741,4 +857,27 @@ function playEventSound(ev: CombatState['events'][number]): void {
     default:
       break;
   }
+}
+
+/** A simple zombie as one geometry with its colours in the vertices, for drawing a horde on Low. */
+function simpleZombieGeometry(): THREE.BufferGeometry {
+  const parts: [number, number, number, number, number, number, number][] = [
+    [0.8, 1.1, 0.5, 0x4a5d7a, 0, 1.3, 0],
+    [0.6, 0.6, 0.6, 0x8fbf5a, 0, 2.15, 0],
+    [0.25, 0.25, 0.7, 0x8fbf5a, -0.5, 1.6, 0.3],
+    [0.25, 0.25, 0.7, 0x8fbf5a, 0.5, 1.6, 0.3],
+    [0.3, 0.8, 0.3, 0x3b3328, -0.2, 0.4, 0],
+    [0.3, 0.8, 0.3, 0x3b3328, 0.2, 0.4, 0],
+  ];
+  const geos = parts.map(([w, h, d, color, x, y, z]) => {
+    const g = new THREE.BoxGeometry(w, h, d).toNonIndexed();
+    g.translate(x, y, z);
+    const c = new THREE.Color(color);
+    const n = g.getAttribute('position').count;
+    g.setAttribute('color', new THREE.Float32BufferAttribute(new Array(n).fill(0).flatMap(() => [c.r, c.g, c.b]), 3));
+    return g;
+  });
+  const merged = mergeGeometries(geos)!;
+  geos.forEach((g) => g.dispose());
+  return merged;
 }

@@ -35,6 +35,7 @@ import {
   type GameState,
 } from './game/state';
 import { STOP_TITLES, type PlaceKind, type Stop } from './game/stops';
+import { classAt, roadSegments } from './game/roads';
 import { BOOST_FUEL, BOSS_INFO, boost, createCombat, easeOff, ENEMY_STATS, horn, WEAPONS, type BossKind, type CombatState, type EnemyType, type WeaponKind } from './game/combat';
 import { DIFFICULTIES, DIFFICULTY_IDS, type Difficulty } from './game/difficulty';
 import { addScore, loadScores, scoreFor, type ScoreEntry } from './game/scores';
@@ -1310,6 +1311,9 @@ function showBossIntro(boss: BossKind): void {
   );
 }
 
+/** Set by play tests to force or block a horde. */
+let testHorde: boolean | undefined;
+
 function startCombat(ambush: boolean, stop?: Stop, theme?: EnemyType, boss?: BossKind): void {
   const s = state!;
   sound.stopMusic();
@@ -1327,6 +1331,9 @@ function startCombat(ambush: boolean, stop?: Stop, theme?: EnemyType, boss?: Bos
     ramDamage: ramDamageFor(s.upgrades) * rideOf(s).ram,
     dodge: rideOf(s).dodge,
     steerScale: rideOf(s).steer,
+    // Zombie hordes: likelier on harder trips and in cities; smaller on Low graphics and in kid mode.
+    hordeChance: testHorde !== undefined ? +testHorde : (({ easy: 0.2, normal: 0.35, hard: 0.5 }[s.difficulty] ?? 0.35) + (classAt(roadSegments(s.route, path!.length), s.distance) === 'metro' ? 0.25 : 0)),
+    hordeMax: quality.level === 'low' || kidMode.on ? 20 : 40,
   });
   combat?.dispose();
   combat = new CombatScene(c, s, {
@@ -1620,6 +1627,12 @@ registerServiceWorker();
     const overlay = h('div', { class: 'modal scene-test' }, card);
     ui().append(overlay);
     return overlay;
+  },
+  /** Starts a fight on the spot; `horde` forces (true) or blocks (false) a zombie horde. */
+  fight(theme?: EnemyType, horde?: boolean) {
+    testHorde = horde;
+    startCombat(false, undefined, theme);
+    testHorde = undefined;
   },
 };
 
