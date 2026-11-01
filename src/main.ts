@@ -528,8 +528,13 @@ function stateNameAt(at: number): string | undefined {
   return state?.route.states?.filter((st) => st.at <= at).pop()?.name;
 }
 
+/** Where to read about a sight; nothing for the made-up demo map. */
+function linkFor(l: Landmark): string | null {
+  return state?.route.source === 'demo' ? null : readMoreUrl(l, stateNameAt(l.at));
+}
+
 function showLandmarkToast(l: Landmark): void {
-  const link = readMoreUrl(l, stateNameAt(l.at));
+  const link = linkFor(l);
   if (l.kind === 'stateline') return showToast(LANDMARK_ICONS[l.kind], 'Now entering', l.name, link);
   const verb = l.kind === 'river' ? 'Crossing' : l.kind === 'citysign' ? '' : 'Passing';
   showToast(LANDMARK_ICONS[l.kind], verb ? `${verb} · ${LANDMARK_TITLES[l.kind]}` : LANDMARK_TITLES[l.kind], l.name, link);
@@ -551,7 +556,7 @@ function showToast(icon: string, small: string, big: string, link?: string | nul
 /** Real sights already passed, newest first, with somewhere to read about each. */
 function sightsPassed(): HTMLElement | null {
   const s = state;
-  if (!s) return null;
+  if (!s || s.route.source === 'demo') return null;
   const seen = s.landmarks.filter((l) => l.real && l.at <= s.distance && ANNOUNCED.has(l.kind) && !/^(Leaving|Welcome to) /.test(l.name)).slice(-6).reverse();
   if (!seen.length) return null;
   return h(
@@ -559,7 +564,7 @@ function sightsPassed(): HTMLElement | null {
     { class: 'sights' },
     h('h3', {}, 'Sights you passed'),
     ...seen.map((l) => {
-      const url = readMoreUrl(l, stateNameAt(l.at));
+      const url = linkFor(l);
       return h('a', { href: url ?? '#', target: '_blank', rel: 'noopener' }, `${LANDMARK_ICONS[l.kind]} ${l.name}`);
     }),
   );

@@ -14,7 +14,7 @@ import { sound } from '../audio/sound';
 import { Atmosphere } from './atmosphere';
 import { quality } from './quality';
 import { detailTexture } from './textures';
-import { hourOf, weatherAt } from '../game/time';
+import { daylight, hourOf, weatherAt } from '../game/time';
 import { BIOMES, biomeAtDistance, biomeSpans, groundColorAt, type BiomeId, type BiomeSpan, type PlantKind } from '../game/biomes';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
@@ -178,7 +178,8 @@ export class DriveScene implements GameScene {
       ...plants.mats,
       rock: new THREE.MeshLambertMaterial({ color: 0x9c8a78 }),
       pole: new THREE.MeshLambertMaterial({ color: 0x5a4632 }),
-      building: new THREE.MeshLambertMaterial({ color: 0xffffff, vertexColors: false }),
+      // Walls with rows of windows; some light up after dark.
+      building: new THREE.MeshLambertMaterial({ color: 0xffffff, map: windowTexture(false), emissive: 0xffd890, emissiveMap: windowTexture(true), emissiveIntensity: 0 }),
       roof: new THREE.MeshLambertMaterial({ color: 0x5b3b33 }),
       canopy: new THREE.MeshLambertMaterial({ color: 0xc8302c }),
       white: new THREE.MeshLambertMaterial({ color: 0xeeeeee }),
@@ -312,6 +313,7 @@ export class DriveScene implements GameScene {
     if (this.skyTimer <= 0) {
       this.skyTimer = 0.25;
       this.applyBiomeColours();
+      (this.mats.building as THREE.MeshLambertMaterial).emissiveIntensity = Math.max(0, 1 - daylight(hourOf(this.state)) * 2.5);
     }
     // The clock moves every frame so dawn and dusk come on smoothly.
     this.atmosphere.set(hourOf(this.state), weatherAt(this.state));
@@ -766,6 +768,9 @@ export class DriveScene implements GameScene {
     for (const m of [gm, this.medianMat, this.shoulderMat]) m.map?.dispose();
     gm.dispose();
     Object.values(this.geos).forEach((x) => x.dispose());
+    const bm = this.mats.building as THREE.MeshLambertMaterial;
+    bm.map?.dispose();
+    bm.emissiveMap?.dispose();
     Object.values(this.mats).forEach((x) => x.dispose());
     for (const m of [this.roadMat, this.highwayMat, this.carriageMat, this.carriage2Mat, this.medianMat, this.shoulderMat]) m.dispose();
     this.roadTex.dispose();
@@ -848,4 +853,29 @@ function mileMarker(mile: number): THREE.Group {
   stick.position.y = 0.6;
   post.add(face, stick);
   return post;
+}
+
+/**
+ * Building walls: a grid of windows. The emissive version marks which
+ * windows are lit at night (the same pattern, so lights sit in the windows).
+ */
+function windowTexture(lit: boolean): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d')!;
+  g.fillStyle = lit ? '#000' : '#fff';
+  g.fillRect(0, 0, 64, 64);
+  const rng = makeRng(7);
+  for (let row = 0; row < 4; row++) {
+    for (let col = 0; col < 3; col++) {
+      const on = rng() < 0.55;
+      if (lit && !on) continue;
+      g.fillStyle = lit ? '#fff' : '#5a6370';
+      g.fillRect(6 + col * 20, 6 + row * 15, 12, 8);
+    }
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.magFilter = THREE.NearestFilter;
+  return t;
 }
