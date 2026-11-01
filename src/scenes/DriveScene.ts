@@ -2,13 +2,14 @@ import type { BossKind } from '../game/combat';
 import * as THREE from 'three';
 import type { Path, Vec2 } from '../geo/geo';
 import { CRUISE_SPEED } from '../geo/route';
-import { advance, upcomingStop, type GameState } from '../game/state';
+import { advance, damage, upcomingStop, type GameState } from '../game/state';
+import { clampLane, defaultLane, laneCenter, oncoming, Traffic, type Vehicle, type VehicleKind } from '../game/traffic';
 import { STOP_TITLES, type Stop } from '../game/stops';
 import { hashString, makeRng, type Rng } from '../game/rng';
 import { ANNOUNCED, roadAt, type Landmark } from '../game/landmarks';
 import { interstateNumber, latLngAt, stateMap } from '../geo/states';
-import { castShadows, disposeTree, makeCar, makeLaneTexture, makeRoadTexture, setBlinkers, textSprite, to3, type GameScene } from './common';
-import { classAt, edgeAt, edgeOf, isDivided, laneOffset, PROFILES, roadSegments, SPEED, type RoadSegment } from '../game/roads';
+import { castShadows, disposeTree, makeCar, makeTrafficVehicle, makeLaneTexture, makeRoadTexture, setBlinkers, textSprite, to3, type GameScene } from './common';
+import { classAt, edgeAt, edgeOf, isDivided, PROFILES, roadSegments, SPEED, urbanZones, type RoadClass, type RoadSegment } from '../game/roads';
 import { buildLandmark, waterTexture } from './landmarkModels';
 import { sound } from '../audio/sound';
 import { Atmosphere } from './atmosphere';
@@ -39,6 +40,8 @@ export interface DriveCallbacks {
   /** Driving into a different kind of country. */
   onBiome?(icon: string, name: string): void;
   onTick(): void;
+  /** Hit another vehicle (damage already taken). */
+  onCrash?(kind: VehicleKind, damage: number): void;
 }
 
 /** Shared plant models; trees are a trunk plus a crown so each part gets its own colour. */
@@ -116,6 +119,14 @@ export class DriveScene implements GameScene {
   private segments: RoadSegment[];
   /** Share of cruise speed for the road type (eases between types). */
   private roadSpeed = 1;
+  /** The player's lane (see game/traffic.ts for the numbering). */
+  private playerLane = 0;
+  private laneClass: RoadClass = 'local';
+  /** Player's speed choice: 0.6 (slow) to 1.3 (fast). */
+  throttle = 1;
+  private traffic: Traffic;
+  private vehicleMeshes = new Map<number, THREE.Group>();
+  private crashCooldown = 0;
   /** Current sideways position of the car (eases between lanes when the road changes). */
   private lane = 2;
   private shoulderMat: THREE.MeshLambertMaterial;
@@ -167,7 +178,13 @@ export class DriveScene implements GameScene {
       polygonOffsetUnits: -2,
     });
     this.segments = roadSegments(state.route, path.length);
+    this.laneClass = classAt(this.segments, state.distance);
+    this.playerLane = defaultLane(this.laneClass);
     this.lane = this.laneAt(state.distance);
+    const zones = urbanZones(state.route, path.length);
+    this.traffic = new Traffic(this.segments, path.length, CRUISE_SPEED, state.seed ^ Math.floor(state.distance), {
+      urbanAt: (d) => (zones.some((z) => d >= z.from && d <= z.to) ? 1 : 0),
+    });
     this.roadSpeed = SPEED[classAt(this.segments, state.distance)].factor;
     this.shoulderMat = new THREE.MeshLambertMaterial({ color: groundColorAt(this.biomes, state.distance, 'shoulder'), polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
     // Photo grain on Medium/High (the colours still come from the climate).
@@ -231,8 +248,45 @@ export class DriveScene implements GameScene {
   }
 
   private laneAt(d: number): number {
-    const cls = classAt(this.segments, d);
-    return laneOffset(cls) * (this.edge(d) / edgeOf(cls));
+    return laneCenter(classAt(this.segments, d), this.playerLane, this.edge(d));
+  }
+
+  /** Sideways position of a traffic vehicle. */
+  private vehicleX(v: Vehicle): number {
+    return laneCenter(classAt(this.segments, v.d), v.lane, this.edge(v.d));
+  }
+
+  /** Change lanes: -1 = left, 1 = right. On two-way roads you can pull into the oncoming lane to pass. */
+  steer(dir: -1 | 1): void {
+    if (this.paused || this.stopping || this.turning || this.pendingTurn) return;
+    const cls = classAt(this.segments, this.state.distance);
+    const next = clampLane(cls, this.playerLane + dir);
+    if (next !== this.playerLane) {
+      this.playerLane = next;
+      sound.click();
+    }
+  }
+
+  /** Speed up (1) or ease off (-1). */
+  pedal(dir: -1 | 1): void {
+    this.throttle = Math.max(0.6, Math.min(1.3, Math.round((this.throttle + dir * 0.15) * 100) / 100));
+  }
+
+  /** In an oncoming lane (for the HUD warning). */
+  get wrongSide(): boolean {
+    return oncoming(this.playerLane);
+  }
+
+  /** Keeps the player's lane valid as the road changes, and holds the default lane if they never left it. */
+  private followRoadChanges(): void {
+    const cls = classAt(this.segments, this.state.distance);
+    if (cls === this.laneClass) return;
+    const wasDefault = this.playerLane === defaultLane(this.laneClass);
+    const fromRight = PROFILES[this.laneClass].lanes - 1 - this.playerLane;
+    this.laneClass = cls;
+    if (wasDefault) this.playerLane = defaultLane(cls);
+    else if (this.playerLane >= 0) this.playerLane = Math.max(0, PROFILES[cls].lanes - 1 - fromRight);
+    this.playerLane = clampLane(cls, this.playerLane);
   }
 
   /** The land changes colour gradually as you drive from one climate into another. */
@@ -330,8 +384,10 @@ export class DriveScene implements GameScene {
       return;
     }
     if (!this.paused && !this.stopping) this.drive(dt);
+    if (!this.paused) this.traffic.step(dt * (this.stopping ? 0.3 : 1), this.state.distance);
     this.streamChunks();
     this.placeCar(false, dt);
+    this.placeTraffic();
   }
 
   private drive(dt: number): void {
@@ -339,14 +395,23 @@ export class DriveScene implements GameScene {
     // Faster on interstates, slower through towns; eases between road types.
     const want = SPEED[classAt(this.segments, s.distance)].factor;
     this.roadSpeed += (want - this.roadSpeed) * Math.min(1, dt * 0.8);
-    let speed = CRUISE_SPEED * this.roadSpeed * this.warp;
+    this.followRoadChanges();
+    this.crashCooldown -= dt;
+    let speed = CRUISE_SPEED * this.roadSpeed * this.throttle * this.warp;
     if (this.promptStop) speed = Math.min(speed, CRUISE_SPEED * 0.7);
+    // Brake behind a slower vehicle in your lane (fast-forward drives through traffic).
+    if (this.warp === 1 && !oncoming(this.playerLane)) {
+      const v = this.traffic.ahead(s.distance, this.playerLane, 16);
+      if (v) speed = Math.min(speed, v.speed * (1 - Math.max(0, 8 - (v.d - s.distance)) * 0.08));
+    }
+    speed = Math.max(0, speed);
     let step = speed * dt;
     if (this.pendingTurn && s.distance + step >= this.pendingTurn.at) {
       step = Math.max(0, this.pendingTurn.at - s.distance);
     }
     const res = advance(s, this.path, step);
     this.spinWheels(step);
+    if (this.warp === 1) this.checkCrash();
     if (res.arrived) {
       this.stopping = true;
       this.cb.onArrive();
@@ -392,6 +457,53 @@ export class DriveScene implements GameScene {
       this.lastBiome = biome;
     }
     this.cb.onTick();
+  }
+
+  /** Hitting another vehicle hurts, knocks it off the road and slows you down. */
+  private checkCrash(): void {
+    if (this.crashCooldown > 0) return;
+    const v = this.traffic.hit(this.state.distance, this.lane, (x) => this.vehicleX(x));
+    if (!v) return;
+    const headOn = oncoming(v.lane);
+    const base = v.kind === 'truck' ? 18 : 10;
+    // The ram plate softens it.
+    const amount = Math.round(base * (headOn ? 1.6 : 1) * Math.max(0.4, 1 - this.state.upgrades.ram * 0.2));
+    damage(this.state, amount);
+    sound.carHit();
+    this.traffic.remove(v);
+    this.roadSpeed *= 0.3;
+    this.crashCooldown = 1.5;
+    // Swerve back to your own side.
+    this.playerLane = clampLane(this.laneClass, Math.max(0, this.playerLane));
+    this.cb.onCrash?.(v.kind, amount);
+  }
+
+  /** Puts a model on every traffic vehicle near the player. */
+  private placeTraffic(): void {
+    const alive = new Set<number>();
+    for (const v of this.traffic.vehicles) {
+      alive.add(v.id);
+      let m = this.vehicleMeshes.get(v.id);
+      if (!m) {
+        const made = makeTrafficVehicle(v.kind, v.color);
+        castShadows(made, this.shadows);
+        this.vehicleMeshes.set(v.id, made);
+        this.scene.add(made);
+        m = made;
+      }
+      const p = this.path.pointAt(v.d);
+      const f = this.path.directionAt(v.d, 6);
+      const x = this.vehicleX(v);
+      m.position.set(p.x + f.y * x, 0, -p.y + f.x * x);
+      const dir = oncoming(v.lane) ? -1 : 1;
+      m.rotation.y = Math.atan2(f.x * dir, -f.y * dir);
+    }
+    for (const [id, m] of this.vehicleMeshes) {
+      if (alive.has(id)) continue;
+      this.scene.remove(m);
+      disposeTree(m);
+      this.vehicleMeshes.delete(id);
+    }
   }
 
   private announceLandmarks(): void {

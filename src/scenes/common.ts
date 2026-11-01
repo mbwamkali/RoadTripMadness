@@ -267,6 +267,63 @@ export function makeCar(color = 0xd9482b, up?: Upgrades): THREE.Group {
   return car;
 }
 
+/** Ordinary traffic: sedans, pickups, vans and big rigs. Faces +z like the player's car. */
+export function makeTrafficVehicle(kind: 'car' | 'pickup' | 'van' | 'truck', color: number): THREE.Group {
+  const g = new THREE.Group();
+  const paint = new THREE.MeshLambertMaterial({ color });
+  const dark = new THREE.MeshLambertMaterial({ color: 0x1d1d22 });
+  const glass = new THREE.MeshLambertMaterial({ color: 0x6f93ad, emissive: 0x0b1620 });
+  const tail = new THREE.MeshBasicMaterial({ color: 0xc81e14 });
+  const head = new THREE.MeshBasicMaterial({ color: 0xfff3c8 });
+  const wheel = new THREE.CylinderGeometry(0.4, 0.4, 0.3, 10).rotateZ(Math.PI / 2);
+  const wheels = (zs: number[], x = 0.95) => {
+    for (const z of zs) for (const sx of [-x, x]) g.add(mesh3(wheel, dark, sx, 0.4, z));
+  };
+  const lights = (front: number, back: number, y = 0.8, x = 0.6) => {
+    for (const sx of [-x, x]) {
+      g.add(mesh3(new THREE.BoxGeometry(0.35, 0.18, 0.05), head, sx, y, front));
+      g.add(mesh3(new THREE.BoxGeometry(0.35, 0.18, 0.05), tail, sx, y, back));
+    }
+  };
+  if (kind === 'car') {
+    g.add(new THREE.Mesh(profile(1.85, [[-2.15, 0.4], [2.15, 0.4], [2.15, 0.85], [0.9, 1.0], [-1.9, 1.0], [-2.15, 0.9]]), paint));
+    g.add(new THREE.Mesh(profile(1.6, [[0.9, 0.98], [-1.5, 0.98], [-1.15, 1.48], [0.25, 1.48]]), glass));
+    wheels([1.35, -1.35]);
+    lights(2.2, -2.2);
+  } else if (kind === 'pickup') {
+    g.add(new THREE.Mesh(profile(1.95, [[-2.5, 0.5], [2.5, 0.5], [2.5, 1.05], [1.3, 1.15], [-2.5, 1.15]]), paint));
+    g.add(new THREE.Mesh(profile(1.8, [[1.2, 1.13], [-0.3, 1.13], [-0.3, 1.8], [0.75, 1.8]]), glass));
+    // Open bed behind the cab.
+    g.add(mesh3(new THREE.BoxGeometry(1.8, 0.3, 2.0), dark, 0, 1.08, -1.4));
+    wheels([1.6, -1.6], 1.0);
+    lights(2.55, -2.55, 0.9);
+  } else if (kind === 'van') {
+    g.add(new THREE.Mesh(profile(2.0, [[-2.6, 0.45], [2.6, 0.45], [2.6, 1.1], [1.8, 2.2], [-2.6, 2.2]]), paint));
+    g.add(new THREE.Mesh(profile(2.02, [[2.45, 1.25], [1.85, 2.05], [1.4, 2.05], [1.4, 1.25]]), glass));
+    wheels([1.7, -1.7], 1.0);
+    lights(2.65, -2.65, 0.85, 0.7);
+  } else {
+    // Semi: a cab up front and a long box trailer.
+    const cab = new THREE.MeshLambertMaterial({ color });
+    g.add(new THREE.Mesh(profile(2.4, [[4.5, 0.7], [7, 0.7], [7, 2.2], [6.6, 3.2], [4.5, 3.2]]), cab));
+    g.add(new THREE.Mesh(profile(2.42, [[6.95, 2.3], [6.6, 3.0], [6.0, 3.0], [6.0, 2.3]]), glass));
+    const trailer = new THREE.MeshLambertMaterial({ color: 0xdedede });
+    g.add(mesh3(new THREE.BoxGeometry(2.5, 3.0, 11), trailer, 0, 2.4, -1.2));
+    g.add(mesh3(new THREE.BoxGeometry(1.2, 0.4, 13), dark, 0, 0.8, -0.2));
+    wheels([6.2, 4.9, -4.5, -5.7], 1.05);
+    lights(7.05, -6.75, 0.9, 0.9);
+  }
+  // Centre the trucks so their middle sits where the traffic logic puts them.
+  if (kind === 'truck') g.children.forEach((c) => (c.position.z -= 0.15));
+  return g;
+}
+
+function mesh3(geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number): THREE.Mesh {
+  const m = new THREE.Mesh(geo, mat);
+  m.position.set(x, y, z);
+  return m;
+}
+
 /** A side profile (points as [z, y], the car facing +z) extruded across a width, centred on x = 0. */
 function profile(width: number, pts: [number, number][]): THREE.BufferGeometry {
   const shape = new THREE.Shape(pts.map(([z, y]) => new THREE.Vector2(z, y)));

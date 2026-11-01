@@ -434,6 +434,15 @@ function startTrip(s: GameState): void {
     onRoadEvent: () => showRoadEvent(rollEvent(s)),
     onBoss: (boss) => showBossIntro(boss),
     onTick: () => hudTick?.(),
+    onCrash: (kind, dmg) => {
+      const what = { car: 'a car', pickup: 'a pickup', van: 'a van', truck: 'a big rig' }[kind];
+      showToast('💥', `You hit ${what}`, `−${dmg} car health`);
+      navigator.vibrate?.(120);
+      if (state?.status === 'lost' && drive) {
+        drive.paused = true;
+        setTimeout(showEnd, 900);
+      }
+    },
   });
   setScene(drive);
   showDriveHud();
@@ -624,6 +633,23 @@ function showDriveHud(): void {
     showToast('📻', 'Car radio', stationName());
   });
   menuBtn.addEventListener('click', () => showPauseMenu());
+  // Driving: change lanes and pick your speed.
+  const pad = (label: string, title: string, fn: () => void) => {
+    const b = h('button', { class: 'btn pad', title }, label);
+    b.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      fn();
+    });
+    return b;
+  };
+  const speedText = h('span', { class: 'speed' }, '');
+  const controls = h(
+    'div',
+    { class: 'drive-pad' },
+    pad('◀', 'Change lane left', () => drive?.steer(-1)),
+    h('div', { class: 'speed-ctl' }, pad('−', 'Slow down', () => drive?.pedal(-1)), speedText, pad('+', 'Speed up', () => drive?.pedal(1))),
+    pad('▶', 'Change lane right', () => drive?.steer(1)),
+  );
   promptEl = h('div', { class: 'prompt' });
   promptFor = null;
   ui().append(
@@ -632,7 +658,7 @@ function showDriveHud(): void {
       { class: 'hud' },
       h('div', { class: 'landmark-toast' }),
       h('div', { class: 'hud-top' }, h('div', { class: 'stats' }, fuel.el, hp.el, inv), h('div', { class: 'side' }, map.canvas, h('div', { class: 'row' }, radioBtn, speedBtn, menuBtn))),
-      h('div', { class: 'hud-bottom' }, promptEl, progress, progressText),
+      h('div', { class: 'hud-bottom' }, promptEl, controls, progress, progressText),
     ),
   );
   let lastInv = '';
@@ -652,6 +678,12 @@ function showDriveHud(): void {
     const road = roadAt(s.route, s.distance);
     progressText.textContent = `${isNight(hour) ? '🌙' : '☀️'} ${clockText(hour)} · ${wx === 'clear' ? '' : `${WEATHER_INFO[wx].icon} ${WEATHER_INFO[wx].name} · `}${road ? `${road} · ` : ''}${drive ? `${drive.speedLimit()} mph · ` : ''}${fmtKm(left)} to ${s.route.endLabel.split(',')[0]}`;
     if (frameCount++ % 10 === 0) map.draw(s.distance, s.passed);
+    if (drive) {
+      const mph = Math.round(drive.speedLimit() * drive.throttle);
+      speedText.textContent = `${mph} mph`;
+      speedText.classList.toggle('fast', drive.throttle > 1);
+      controls.classList.toggle('wrong-side', drive.wrongSide);
+    }
   };
   hudTick();
 }
@@ -1182,3 +1214,15 @@ registerServiceWorker();
     return combat;
   },
 };
+
+// Keyboard driving: arrows or WASD change lanes and speed.
+window.addEventListener('keydown', (e) => {
+  if (!drive || active !== drive || (e.target as HTMLElement)?.tagName === 'INPUT') return;
+  const k = e.key.toLowerCase();
+  if (k === 'arrowleft' || k === 'a') drive.steer(-1);
+  else if (k === 'arrowright' || k === 'd') drive.steer(1);
+  else if (k === 'arrowup' || k === 'w') drive.pedal(1);
+  else if (k === 'arrowdown' || k === 's') drive.pedal(-1);
+  else return;
+  e.preventDefault();
+});
