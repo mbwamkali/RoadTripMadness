@@ -129,11 +129,21 @@ const HOUSE_MODELS: ModelName[] = ['house-1', 'house-2', 'house-3', 'house-4', '
 const BLOCK_MODELS: ModelName[] = ['flat-1', 'flat-2', 'shop', 'hospital'];
 
 /** The on-rails road trip view: the car follows the route and the world streams in around it. */
+/** How much faster time runs on autopilot. */
+export const AUTOPILOT_SPEEDUP = 3;
+
 export class DriveScene implements GameScene {
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(60, 1, 0.5, 2500);
-  /** 1 = cruise, 3 = fast-forward. */
-  warp = 1;
+  /**
+   * Autopilot: time runs three times as fast, but everything still happens:
+   * the car keeps its lane, brakes for traffic, and hits whatever is in the road.
+   */
+  autopilot = false;
+  /** How many times faster than real time the drive runs. */
+  get warp(): number {
+    return this.autopilot ? AUTOPILOT_SPEEDUP : 1;
+  }
   paused = false;
 
   private chunks = new Map<number, THREE.Group>();
@@ -441,11 +451,14 @@ export class DriveScene implements GameScene {
       this.animateTurn(dt);
       return;
     }
-    if (!this.paused && !this.stopping) this.drive(dt);
-    if (!this.paused) {
+    // Autopilot runs the same drive several times a frame, so braking, crashes and road rage all still happen.
+    for (let i = 0; i < this.warp; i++) {
+      if (this.paused || this.turning) break;
+      if (!this.stopping) this.drive(dt);
       this.traffic.step(dt * (this.stopping ? 0.3 : 1), this.state.distance);
       this.obstacles.step(this.state.distance);
       this.trafficAvoidsObstacles();
+      if (this.stopping) break;
     }
     this.streamChunks();
     this.placeCar(false, dt);
@@ -460,10 +473,15 @@ export class DriveScene implements GameScene {
     this.roadSpeed += (want - this.roadSpeed) * Math.min(1, dt * 0.8);
     this.followRoadChanges();
     this.crashCooldown -= dt;
-    let speed = CRUISE_SPEED * rideOf(s).speed * this.roadSpeed * this.throttle * this.warp;
+    if (this.autopilot) {
+      // Autopilot drives at the limit on its own side of the road.
+      this.throttle = Math.min(this.throttle, 1);
+      if (oncoming(this.playerLane)) this.playerLane = clampLane(this.laneClass, 0);
+    }
+    let speed = CRUISE_SPEED * rideOf(s).speed * this.roadSpeed * this.throttle;
     if (this.promptStop) speed = Math.min(speed, CRUISE_SPEED * 0.7);
-    // Brake behind a slower vehicle in your lane (fast-forward drives through traffic).
-    if (this.warp === 1 && !oncoming(this.playerLane)) {
+    // Brake behind a slower vehicle in your lane.
+    if (!oncoming(this.playerLane)) {
       // Speeding leaves less time to react: the car notices slower traffic later.
       const v = this.traffic.ahead(s.distance, this.playerLane, brakeRange(this.throttle));
       if (v) speed = Math.min(speed, v.speed * (1 - Math.max(0, 8 - (v.d - s.distance)) * 0.08));
@@ -476,8 +494,8 @@ export class DriveScene implements GameScene {
     const res = advance(s, this.path, step, this.fuelRate * speedFuelFactor(this.throttle));
     this.spinWheels(step);
     coolRage(s, step);
-    if (this.warp === 1) this.roadRage(dt, speed);
-    if (this.warp === 1) this.checkCrash();
+    this.roadRage(dt, speed);
+    this.checkCrash();
     if (res.arrived) {
       this.stopping = true;
       this.cb.onArrive();

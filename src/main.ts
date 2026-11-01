@@ -781,10 +781,11 @@ function showDriveHud(): void {
   const progress = h('div', { class: 'progress' }, h('div', { class: 'fill' }));
   const progressText = h('div', { class: 'progress-text' });
   const map = new Minimap(p, s.stops, 110);
-  const speedBtn = h('button', { class: 'btn small round', title: 'Fast forward' }, '▶');
+  const speedBtn = h('button', { class: 'btn small round', title: 'Autopilot: drives faster on its own, stays in lane' }, '🤖');
   speedBtn.addEventListener('click', () => {
-    drive!.warp = drive!.warp === 1 ? 3 : 1;
-    speedBtn.textContent = drive!.warp === 1 ? '▶' : '▶▶';
+    drive!.autopilot = !drive!.autopilot;
+    speedBtn.classList.toggle('on', drive!.autopilot);
+    showToast('🤖', 'Autopilot', drive!.autopilot ? 'On: faster, stays in its lane, slows for traffic' : 'Off: you are driving');
   });
   const menuBtn = h('button', { class: 'btn small round', title: 'Menu' }, '☰');
   const stationName = () => ({ off: 'Radio off', twang: 'KTWG Country', synth: 'Neon FM' })[sound.station];

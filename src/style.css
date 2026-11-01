@@ -1534,3 +1534,8 @@ body.kid .howto-icon {
 body.kid .howto-tip b {
   font-size: 20px;
 }
+
+.btn.round.on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent) inset;
+}

@@ -59,6 +59,7 @@ export const SECTIONS: Section[] = [
       { icon: '↕️', title: 'Go faster or slower', text: 'Swipe up or down, or tap plus and minus. Going fast burns more gas.' },
       { icon: '🚙', title: 'Watch the traffic', text: 'Slow cars ahead make you brake. Stay on your side of the road.' },
       { icon: '🔫', title: 'Shoot what is in the way', text: 'Double-tap a car or a thing on the road to shoot it. In kid mode, tap the big gun button.' },
+      { icon: '🤖', title: 'Autopilot', text: 'Tap the robot to drive faster by itself. It stays in its lane, but still hits things in the road.' },
       { icon: '😠', title: 'Road rage', text: 'Shoot normal drivers and they get angry and shoot back.' },
     ],
   },
