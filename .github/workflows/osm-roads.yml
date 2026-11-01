@@ -3,6 +3,13 @@ name: Build road files
 # then scripts/build-osm-roads.py) and stores them on the "osm-roads" release.
 # The Pages deploy copies that release into the site at data/osm/.
 on:
+  # Also rebuild when the road build itself changes.
+  push:
+    branches: [main]
+    paths:
+      - scripts/fetch-osm-roads.sh
+      - scripts/build-osm-roads.py
+      - .github/workflows/osm-roads.yml
   schedule:
     - cron: '17 6 3 * *' # 06:17 UTC on the 3rd of every month
   workflow_dispatch:
