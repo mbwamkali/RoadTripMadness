@@ -1,6 +1,9 @@
 import type { RouteData } from '../geo/route';
 import { hashString, makeRng, pick, type Rng } from './rng';
 import { classAt, isDivided, roadSegments } from './roads';
+import { Path } from '../geo/geo';
+import { interstateNumber, latLngAt, stateMap } from '../geo/states';
+import { roadAt } from './landmarks';
 
 export type StopKind = 'town' | 'gas' | 'truckstop' | 'farm' | 'mall' | 'base';
 export type PlaceKind = 'pumps' | 'garage' | 'grocery' | 'hardware' | 'gunshop' | 'pharmacy' | 'police' | 'junkyard' | 'barn' | 'motel';
@@ -15,6 +18,8 @@ export interface Stop {
   places: PlaceKind[];
   /** A real gas station from the map. */
   real?: boolean;
+  /** Interstate exit number (miles from where the interstate enters the state). */
+  exit?: number;
 }
 
 export const STOP_TITLES: Record<StopKind, string> = {
@@ -130,7 +135,19 @@ export function generateStops(route: RouteData, pathLength: number, seed: number
   for (let i = 1; i < stops.length; i++) {
     if (stops[i].at - stops[i - 1].at < 500) stops[i].at = stops[i - 1].at + 500;
   }
-  return stops.filter((s) => s.at < pathLength - 300);
+  const out = stops.filter((s) => s.at < pathLength - 300);
+  // Interstate exits get real-style exit numbers when the state outlines are loaded.
+  const map = stateMap();
+  if (map && route.points?.length) {
+    const path = new Path(route.points.map(([x, y]) => ({ x, y })));
+    for (const s of out) {
+      const n = interstateNumber(roadAt(route, s.at));
+      if (n === null || !isDivided(classAt(segments, s.at))) continue;
+      const exit = map.exitNumber(latLngAt(route, path, s.at), n);
+      if (exit !== null) s.exit = exit;
+    }
+  }
+  return out;
 }
 
 function pickKind(rng: Rng): StopKind {

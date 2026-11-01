@@ -1,5 +1,6 @@
 import { placeFeatures, placeFuel, type FuelStation, type Landmark, type MapFeature } from '../game/landmarks';
 import { chaikin, dedupe, makeProjection, Path, resample, type LatLng, type Vec2 } from './geo';
+import { stateLines, stateMap, type StateLine } from './states';
 
 /** One maneuver on the real route (from OSRM), placed along the game path. */
 export interface RouteStep {
@@ -33,6 +34,8 @@ export interface RouteData {
   landmarks?: Landmark[];
   /** Real gas stations beside the road (optional; from OpenStreetMap). */
   fuel?: FuelStation[];
+  /** Where the route enters each US state (first entry: the starting state). */
+  states?: StateLine[];
 }
 
 /** Cruise speed of the car in game units per second. */
@@ -114,7 +117,16 @@ export function buildRouteData(raw: RawRoute): RouteData {
     const fuel = placeFuel(data, path, raw.features);
     if (fuel.length) data.fuel = fuel;
   }
+  addStateLines(data);
   return data;
+}
+
+/** Works out the state lines once the state outlines are loaded (kept with the route, so saves have them). */
+export function addStateLines(route: RouteData): void {
+  const map = stateMap();
+  if (route.states || !map || route.source === 'demo') return;
+  const lines = stateLines(route, pathFromRoute(route), map);
+  if (lines.length) route.states = lines;
 }
 
 export function pathFromRoute(route: RouteData): Path {

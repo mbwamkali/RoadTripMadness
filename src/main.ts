@@ -4,7 +4,8 @@ import type { Path } from './geo/geo';
 import { currentPosition, type Place } from './geo/geocode';
 import { LANDMARK_ICONS, LANDMARK_TITLES, roadAt, type Landmark } from './game/landmarks';
 import { demoRawRoute } from './geo/demoRoute';
-import { buildRouteData, pathFromRoute, realKmAt, type RawRoute, type RouteData } from './geo/route';
+import { addStateLines, buildRouteData, pathFromRoute, realKmAt, type RawRoute, type RouteData } from './geo/route';
+import { loadStateMap } from './geo/states';
 import { isOffline, planTrip, searchAnywhere } from './offline/planner';
 import { tripCache } from './offline/tripCache';
 import { registerServiceWorker } from './offline/registerSw';
@@ -65,6 +66,8 @@ function applyQuality(): void {
   }
 }
 applyQuality();
+// State outlines for state-line signs and exit numbers (small, cached offline).
+void loadStateMap();
 
 let active: GameScene | null = null;
 let state: GameState | null = null;
@@ -282,6 +285,7 @@ function showSetup(): void {
 
 function previewRoute(route: RouteData, note?: string, back: () => void = showSetup): void {
   clearUi();
+  addStateLines(route);
   const s = newGame(route);
   let difficulty = loadDifficulty();
   const diffBtns = DIFFICULTY_IDS.map((d) =>
@@ -324,6 +328,7 @@ function previewRoute(route: RouteData, note?: string, back: () => void = showSe
         (route.landmarks?.length ?? 0) > 0 &&
           h('li', {}, `${route.landmarks!.length} real sights to pass, like ${[...new Set(route.landmarks!.map((l) => l.name))].slice(0, 3).join(', ')}`),
         (route.fuel?.length ?? 0) > 0 && h('li', {}, `Fuel stops are real gas stations from the map (${route.fuel!.length} along the way)`),
+        (route.states?.length ?? 0) > 1 && h('li', {}, `Crosses ${route.states!.length} states: ${route.states!.map((st) => st.code).join(' → ')}`),
         h('li', {}, 'Green dots have gas pumps. Your tank lasts about a third of the trip.'),
         h('li', {}, 'Something big is waiting halfway, and another at the end of the road.'),
       ),
@@ -400,7 +405,7 @@ function updatePrompt(stop: Stop | null, dist: number): void {
     h(
       'div',
       { class: 'prompt-text' },
-      h('strong', {}, `${STOP_TITLES[stop.kind]} · ${stop.name}`),
+      h('strong', {}, `${stop.exit ? `Exit ${stop.exit} · ` : ''}${STOP_TITLES[stop.kind]} · ${stop.name}`),
       h('span', {}, ` on the ${stop.side} `),
       h('span', { class: 'dist' }, `in ${distText}`),
       h('div', { class: 'muted' }, stop.places.map((p) => PLACE_TITLES[p]).join(' · ')),
@@ -410,7 +415,7 @@ function updatePrompt(stop: Stop | null, dist: number): void {
       { class: 'row' },
       !right && h('button', { class: 'btn turn', onclick: () => chooseTurn(stop) }, '◀ Turn left'),
       h('button', { class: 'btn ghost', onclick: () => drive?.skipStop(stop) }, 'Keep driving'),
-      right && h('button', { class: 'btn turn', onclick: () => chooseTurn(stop) }, 'Turn right ▶'),
+      right && h('button', { class: 'btn turn', onclick: () => chooseTurn(stop) }, stop.exit ? 'Take the exit ▶' : 'Turn right ▶'),
     ),
   );
 }
@@ -451,6 +456,7 @@ function renderSignalling(stop: Stop): void {
 
 let toastTimer = 0;
 function showLandmarkToast(l: Landmark): void {
+  if (l.kind === 'stateline') return showToast(LANDMARK_ICONS[l.kind], 'Now entering', l.name);
   const verb = l.kind === 'river' ? 'Crossing' : l.kind === 'citysign' ? '' : 'Passing';
   showToast(LANDMARK_ICONS[l.kind], verb ? `${verb} · ${LANDMARK_TITLES[l.kind]}` : LANDMARK_TITLES[l.kind], l.name);
 }

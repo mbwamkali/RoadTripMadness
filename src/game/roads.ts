@@ -66,13 +66,19 @@ export function classifyRoad(name: string, motorway = false): RoadClass {
 
 /**
  * Stretches of the path near a city, where interstates have four lanes each
- * way: the start and end of the trip, and every city (50,000+ people) passed.
- * About 12 km of real road either side, kept within what's visible in the game.
+ * way: about 25 km of real road at the start and end of the trip, and 12 km
+ * either side of every city (50,000+ people) passed.
  */
 export function urbanZones(route: RouteData, pathLength: number): { from: number; to: number }[] {
-  const r = Math.max(300, Math.min(900, 12_000 / (route.scale || 15)));
-  const centres = [0, pathLength, ...(route.landmarks ?? []).filter((l) => l.kind === 'citysign' && l.big).map((l) => l.at)];
-  const zones = centres.map((c) => ({ from: Math.max(0, c - r), to: Math.min(pathLength, c + r) })).sort((a, b) => a.from - b.from);
+  const r = (km: number) => Math.max(300, Math.min(km * 75, (km * 1000) / (route.scale || 15)));
+  // Trips usually start and end in a big city, so the wide road reaches further there.
+  const zones = [
+    { from: 0, to: Math.min(pathLength, r(25)) },
+    { from: Math.max(0, pathLength - r(25)), to: pathLength },
+    ...(route.landmarks ?? [])
+      .filter((l) => l.kind === 'citysign' && l.big)
+      .map((l) => ({ from: Math.max(0, l.at - r(12)), to: Math.min(pathLength, l.at + r(12)) })),
+  ].sort((a, b) => a.from - b.from);
   const out: { from: number; to: number }[] = [];
   for (const z of zones) {
     const prev = out[out.length - 1];

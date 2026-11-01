@@ -423,6 +423,17 @@ function buildCitySign(l: Landmark): THREE.Object3D {
   return g;
 }
 
+/** Blue "Welcome to" sign at a state line. */
+function buildStateSign(l: Landmark): THREE.Object3D {
+  const g = new THREE.Group();
+  const post = mat(0x8a8f96);
+  g.add(mesh(new THREE.BoxGeometry(0.25, 4.4, 0.25), post, -3, 2.2, 0));
+  g.add(mesh(new THREE.BoxGeometry(0.25, 4.4, 0.25), post, 3, 2.2, 0));
+  const tex = signTexture(['WELCOME TO', ...wrap(l.name.toUpperCase(), 16)], '#1d4fa8', '#ffffff');
+  g.add(mesh(new THREE.PlaneGeometry(7.2, 3.8), basic(0xffffff, { map: tex, side: THREE.DoubleSide }), 0, 5.2, 0.15));
+  return g;
+}
+
 /** Finds a route number in a road name: "I 40", "US 66", "SR 99". */
 export function routeShield(name: string): { kind: 'I' | 'US' | 'state'; num: string } | null {
   const m = name.match(/\b(I|US|SR|[A-Z]{2})[- ]?(\d{1,3}[A-Z]?)\b/);
@@ -559,6 +570,7 @@ export function buildLandmark(l: Landmark, path: Path, edgeAt: (d: number) => nu
     billboard: () => buildBillboard(l, rng),
     giant: () => buildGiant(l),
     citysign: () => buildCitySign(l),
+    stateline: () => buildStateSign(l),
     roadsign: () => buildRoadSign(l),
   };
   const model = (builders[l.kind] ?? buildMonument)();
@@ -567,10 +579,10 @@ export function buildLandmark(l: Landmark, path: Path, edgeAt: (d: number) => nu
   model.position.copy(to3(p)).addScaledVector(right, l.side * (l.offset + wide));
   // Face the road; signs and billboards also angle toward oncoming traffic.
   const toRoad = right.clone().multiplyScalar(-l.side);
-  const face = l.kind === 'billboard' || l.kind === 'citysign' || l.kind === 'roadsign' ? toRoad.multiplyScalar(0.35).addScaledVector(fwd, -1).normalize() : toRoad;
+  const face = l.kind === 'billboard' || l.kind === 'citysign' || l.kind === 'stateline' || l.kind === 'roadsign' ? toRoad.multiplyScalar(0.35).addScaledVector(fwd, -1).normalize() : toRoad;
   model.rotation.y = Math.atan2(face.x, face.z);
   out.add(model);
-  if (l.kind !== 'citysign' && l.kind !== 'roadsign' && l.kind !== 'billboard' && l.kind !== 'mountains' && l.kind !== 'watertower' && l.kind !== 'windmill') {
+  if (l.kind !== 'citysign' && l.kind !== 'stateline' && l.kind !== 'roadsign' && l.kind !== 'billboard' && l.kind !== 'mountains' && l.kind !== 'watertower' && l.kind !== 'windmill') {
     out.add(poiSign(l, path, edgeAt(Math.max(0, l.at - 70))));
   }
   return out;

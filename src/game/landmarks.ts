@@ -17,6 +17,7 @@ export type LandmarkKind =
   | 'attraction'
   | 'viewpoint'
   | 'citysign'
+  | 'stateline'
   | 'roadsign'
   | 'watertower'
   | 'windmill'
@@ -53,6 +54,7 @@ export const LANDMARK_TITLES: Record<LandmarkKind, string> = {
   attraction: 'Attraction',
   viewpoint: 'Scenic view',
   citysign: 'Town',
+  stateline: 'State line',
   roadsign: 'Road sign',
   watertower: 'Water tower',
   windmill: 'Windmill',
@@ -71,6 +73,7 @@ export const LANDMARK_ICONS: Record<LandmarkKind, string> = {
   attraction: '⭐',
   viewpoint: '📷',
   citysign: '🏙️',
+  stateline: '🗺️',
   roadsign: '🛣️',
   watertower: '💧',
   windmill: '🌬️',
@@ -80,7 +83,7 @@ export const LANDMARK_ICONS: Record<LandmarkKind, string> = {
 };
 
 /** Kinds that are big enough to announce in the HUD as you pass. */
-export const ANNOUNCED: ReadonlySet<LandmarkKind> = new Set(['river', 'peak', 'monument', 'tower', 'lighthouse', 'castle', 'attraction', 'viewpoint', 'citysign', 'giant']);
+export const ANNOUNCED: ReadonlySet<LandmarkKind> = new Set(['river', 'peak', 'monument', 'tower', 'lighthouse', 'castle', 'attraction', 'viewpoint', 'citysign', 'stateline', 'giant']);
 
 // ------------------------------------------------------------ real map features
 
@@ -314,9 +317,17 @@ export function fillLandmarks(route: RouteData, pathLength: number, stops: Stop[
     }
   }
 
+  // "Welcome to Arizona" right at each state line.
+  for (const st of (route.states ?? []).slice(1)) {
+    if (st.at < 80 || st.at > pathLength - 200) continue;
+    const sign: Landmark = { at: st.at, side: 1, offset: 9, kind: 'stateline', name: st.name, real: true };
+    while (all.some((l) => l.kind === 'citysign' && Math.abs(l.at - sign.at) < 50)) sign.at += 50;
+    all.push(sign);
+  }
+
   // Road signs go where they won't hide behind a town sign.
   for (const sign of roadSigns(route, pathLength)) {
-    while (all.some((l) => (l.kind === 'citysign' || l.kind === 'billboard') && Math.abs(l.at - sign.at) < 60)) sign.at -= 60;
+    while (all.some((l) => (l.kind === 'citysign' || l.kind === 'stateline' || l.kind === 'billboard') && Math.abs(l.at - sign.at) < 60)) sign.at -= 60;
     all.push(sign);
   }
 
