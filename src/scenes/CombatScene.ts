@@ -13,6 +13,7 @@ import { damage, type GameState } from '../game/state';
 import { sound } from '../audio/sound';
 import { Atmosphere } from './atmosphere';
 import { quality } from './quality';
+import { detailTexture } from './textures';
 import { hourOf, weatherAt } from '../game/time';
 import { biomeSpans, groundColorAt } from '../game/biomes';
 import { castShadows, disposeTree, makeCar, makeRoadTexture, type GameScene } from './common';
@@ -40,6 +41,7 @@ export class CombatScene implements GameScene {
   private car: THREE.Group;
   private atmosphere: Atmosphere;
   private shadows = quality.profile.shadows;
+  private groundMap: THREE.Texture | null = null;
   private roadTex = makeRoadTexture();
   private road: THREE.Mesh;
   private props: THREE.Group = new THREE.Group();
@@ -64,7 +66,8 @@ export class CombatScene implements GameScene {
     this.atmosphere.set(hourOf(state), weatherAt(state));
     this.atmosphere.attachHeadlights(this.car);
 
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshLambertMaterial({ color: groundColorAt(biomeSpans(state.route), state.distance) }));
+    this.groundMap = detailTexture('ground', 400 / 30, 400 / 30);
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshLambertMaterial({ color: groundColorAt(biomeSpans(state.route), state.distance), map: this.groundMap }));
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
     this.scene.add(ground);
@@ -168,6 +171,7 @@ export class CombatScene implements GameScene {
 
     const speed = ROAD_SPEED * (c.boostTime > 0 ? 2.2 : 1);
     this.roadTex.offset.y += (speed * dt) / 16;
+    if (this.groundMap) this.groundMap.offset.y = (this.groundMap.offset.y + (speed * dt) / 30) % 1;
     for (const p of this.props.children) {
       p.position.z += speed * dt;
       if (p.position.z > 25) p.position.z -= 180;

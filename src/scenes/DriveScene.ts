@@ -5,13 +5,15 @@ import { CRUISE_SPEED } from '../geo/route';
 import { advance, upcomingStop, type GameState } from '../game/state';
 import { STOP_TITLES, type Stop } from '../game/stops';
 import { hashString, makeRng, type Rng } from '../game/rng';
-import { ANNOUNCED, type Landmark } from '../game/landmarks';
+import { ANNOUNCED, roadAt, type Landmark } from '../game/landmarks';
+import { interstateNumber, latLngAt, stateMap } from '../geo/states';
 import { castShadows, disposeTree, makeCar, makeLaneTexture, makeRoadTexture, setBlinkers, textSprite, to3, type GameScene } from './common';
 import { classAt, edgeAt, edgeOf, isDivided, laneOffset, PROFILES, roadSegments, SPEED, type RoadSegment } from '../game/roads';
 import { buildLandmark, waterTexture } from './landmarkModels';
 import { sound } from '../audio/sound';
 import { Atmosphere } from './atmosphere';
 import { quality } from './quality';
+import { detailTexture } from './textures';
 import { hourOf, weatherAt } from '../game/time';
 import { BIOMES, biomeAtDistance, biomeSpans, groundColorAt, type BiomeId, type BiomeSpan, type PlantKind } from '../game/biomes';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
@@ -19,6 +21,9 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 const CHUNK = 400;
 const BEHIND = 250;
 const AHEAD = 1500;
+const GROUND_SIZE = 4000;
+/** Ground texture repeats every this many units. */
+const GROUND_TILE = 60;
 const ROAD_HALF = 4.5;
 const PROMPT_RANGE = 320;
 
@@ -165,6 +170,9 @@ export class DriveScene implements GameScene {
     this.lane = this.laneAt(state.distance);
     this.roadSpeed = SPEED[classAt(this.segments, state.distance)].factor;
     this.shoulderMat = new THREE.MeshLambertMaterial({ color: groundColorAt(this.biomes, state.distance, 'shoulder'), polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
+    // Photo grain on Medium/High (the colours still come from the climate).
+    this.shoulderMat.map = detailTexture('gravel', 1, 1 / 6);
+    this.medianMat.map = detailTexture('ground', 0.12, 1 / 60);
     const plants = plantModels();
     this.mats = {
       ...plants.mats,
@@ -174,6 +182,9 @@ export class DriveScene implements GameScene {
       roof: new THREE.MeshLambertMaterial({ color: 0x5b3b33 }),
       canopy: new THREE.MeshLambertMaterial({ color: 0xc8302c }),
       white: new THREE.MeshLambertMaterial({ color: 0xeeeeee }),
+      delineator: new THREE.MeshLambertMaterial({ color: 0xe8e8e8 }),
+      // Unlit, so the reflectors catch the headlights' eye at night.
+      reflector: new THREE.MeshBasicMaterial({ color: 0xffb030 }),
     };
     this.geos = {
       ...plants.geos,
@@ -181,11 +192,19 @@ export class DriveScene implements GameScene {
       pole: new THREE.CylinderGeometry(0.15, 0.18, 8, 5).translate(0, 4, 0),
       building: new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0),
       roof: new THREE.ConeGeometry(0.75, 0.5, 4).rotateY(Math.PI / 4).translate(0, 1.25, 0),
+      delineator: new THREE.BoxGeometry(0.12, 1.1, 0.12).translate(0, 0.55, 0),
+      reflector: new THREE.BoxGeometry(0.15, 0.2, 0.15).translate(0, 0.95, 0),
     };
 
     this.ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(4000, 4000),
-      new THREE.MeshLambertMaterial({ color: groundColorAt(this.biomes, state.distance), polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 4 }),
+      new THREE.PlaneGeometry(GROUND_SIZE, GROUND_SIZE),
+      new THREE.MeshLambertMaterial({
+        color: groundColorAt(this.biomes, state.distance),
+        map: detailTexture('ground', GROUND_SIZE / GROUND_TILE, GROUND_SIZE / GROUND_TILE),
+        polygonOffset: true,
+        polygonOffsetFactor: 2,
+        polygonOffsetUnits: 4,
+      }),
     );
     this.ground.rotation.x = -Math.PI / 2;
     this.ground.receiveShadow = true;
@@ -447,6 +466,9 @@ export class DriveScene implements GameScene {
     this.car.position.copy(p);
     this.car.lookAt(p.clone().add(fwd));
     this.ground.position.set(p.x, 0, p.z);
+    // The ground follows the car; shift its texture back so the grain stays put in the world.
+    const gmap = (this.ground.material as THREE.MeshLambertMaterial).map;
+    if (gmap) gmap.offset.set((p.x / GROUND_TILE) % 1, (-p.z / GROUND_TILE) % 1);
     if (snap) {
       this.camPos.copy(p).addScaledVector(fwd, -14).setY(7);
       this.camLook.copy(p).addScaledVector(fwd, 20);
@@ -542,6 +564,14 @@ export class DriveScene implements GameScene {
       );
       const wide = this.widen(d);
       if (Math.round(d) % 48 < 8 && !clear(d, 1)) placeAt(inst.pole, p, right, 7.5 + wide, 0, 1);
+      // Reflector posts along the shoulders of bigger roads.
+      if (Math.round(d) % 40 < 8 && classAt(this.segments, d) !== 'local' && urban < 0.3) {
+        for (const side of [-1, 1]) {
+          const off = side * (this.edge(d) + 1.4);
+          placeAt(inst.delineator, p, right, off, 0, 1);
+          placeAt(inst.reflector, p, right, off, 0, 1);
+        }
+      }
       for (const side of [-1, 1]) {
         if (stopsHere.some((s) => Math.abs(s.at - d) < 30 && (s.side === 'right' ? 1 : -1) === side)) continue;
         if (clear(d, side)) continue;
@@ -585,6 +615,7 @@ export class DriveScene implements GameScene {
     for (const stop of this.state.stops) {
       if (stop.at >= from && stop.at < from + CHUNK) g.add(this.buildStop(stop, rng));
     }
+    this.addMileMarkers(g, from, to);
     for (const l of this.state.landmarks) {
       if (l.at >= from && l.at < from + CHUNK) g.add(buildLandmark(l, this.path, (d) => this.edge(d)));
     }
@@ -618,6 +649,30 @@ export class DriveScene implements GameScene {
       } else {
         g.add(this.ribbon(a, b, (d) => [-edge(d), edge(d)], 0.1, this.roadMat, 16));
       }
+    }
+  }
+
+  /** Green mile markers on interstates, numbered like the exits (miles into the state). */
+  private addMileMarkers(g: THREE.Group, from: number, to: number): void {
+    const map = stateMap();
+    const route = this.state.route;
+    if (!map || route.source === 'demo') return;
+    // Whole real miles apart, but never closer than 150 units in the game.
+    const miles = Math.max(1, Math.ceil((150 * route.scale) / 1609));
+    const step = (miles * 1609) / route.scale;
+    for (let d = Math.ceil(from / step) * step; d < to; d += step) {
+      if (!isDivided(classAt(this.segments, d))) continue;
+      const n = interstateNumber(roadAt(route, d));
+      const mile = n === null ? null : map.exitNumber(latLngAt(route, this.path, d), n);
+      if (mile === null) continue;
+      const sign = mileMarker(mile);
+      const p = this.path.pointAt(d);
+      const f = this.path.directionAt(d);
+      const off = this.edge(d) + 2;
+      sign.position.copy(to3({ x: p.x + f.y * off, y: p.y - f.x * off }, 0));
+      // Face the oncoming car.
+      sign.rotation.y = Math.atan2(-f.x, f.y);
+      g.add(sign);
     }
   }
 
@@ -707,6 +762,9 @@ export class DriveScene implements GameScene {
     this.chunks.clear();
     disposeTree(this.car);
     this.ground.geometry.dispose();
+    const gm = this.ground.material as THREE.MeshLambertMaterial;
+    for (const m of [gm, this.medianMat, this.shoulderMat]) m.map?.dispose();
+    gm.dispose();
     Object.values(this.geos).forEach((x) => x.dispose());
     Object.values(this.mats).forEach((x) => x.dispose());
     for (const m of [this.roadMat, this.highwayMat, this.carriageMat, this.carriage2Mat, this.medianMat, this.shoulderMat]) m.dispose();
@@ -757,4 +815,37 @@ function disposeChunk(g: THREE.Group): void {
       }
     }
   });
+}
+
+const STICK_MAT = new THREE.MeshLambertMaterial({ color: 0x8a8f96 });
+
+/** A small green mile-marker post: "MILE" over the number. */
+function mileMarker(mile: number): THREE.Group {
+  const c = document.createElement('canvas');
+  c.width = 64;
+  c.height = 128;
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#1f6b3a';
+  g.fillRect(0, 0, 64, 128);
+  g.strokeStyle = '#fff';
+  g.lineWidth = 4;
+  g.strokeRect(4, 4, 56, 120);
+  g.fillStyle = '#fff';
+  g.textAlign = 'center';
+  g.font = 'bold 20px system-ui, sans-serif';
+  g.fillText('MILE', 32, 36);
+  g.font = 'bold 34px system-ui, sans-serif';
+  g.fillText(String(mile), 32, 92);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.userData.chunkOwned = true;
+  const mat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide });
+  mat.userData.chunkOwned = true;
+  const post = new THREE.Group();
+  const face = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 1.2), mat);
+  face.position.y = 1.6;
+  const stick = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.2, 0.08), STICK_MAT);
+  stick.position.y = 0.6;
+  post.add(face, stick);
+  return post;
 }

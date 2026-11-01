@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { textureImage } from './textures';
 import type { Vec2 } from '../geo/geo';
 import type { Upgrades } from '../game/upgrades';
 
@@ -18,25 +19,48 @@ export function makeRoadTexture(): THREE.CanvasTexture {
   c.width = 128;
   c.height = 256;
   const g = c.getContext('2d')!;
-  g.fillStyle = '#3b3b40';
-  g.fillRect(0, 0, 128, 256);
-  // Grain so the asphalt reads as moving.
-  for (let i = 0; i < 900; i++) {
-    const v = 50 + Math.random() * 30;
-    g.fillStyle = `rgb(${v},${v},${v + 4})`;
-    g.fillRect(Math.random() * 128, Math.random() * 256, 2, 2);
-  }
-  g.fillStyle = '#e8e2cf';
-  g.fillRect(6, 0, 4, 256);
-  g.fillRect(118, 0, 4, 256);
-  g.fillStyle = '#f2c230';
-  g.fillRect(61, 0, 6, 150);
   const t = new THREE.CanvasTexture(c);
+  const draw = (img: HTMLImageElement | null) => {
+    paintAsphalt(g, 128, 256, '#3b3b40', 900, img);
+    g.fillStyle = '#e8e2cf';
+    g.fillRect(6, 0, 4, 256);
+    g.fillRect(118, 0, 4, 256);
+    g.fillStyle = '#f2c230';
+    g.fillRect(61, 0, 6, 150);
+  };
+  draw(null);
+  withAsphalt(t, draw);
   t.wrapS = THREE.RepeatWrapping;
   t.wrapT = THREE.RepeatWrapping;
   t.anisotropy = 4;
   t.colorSpace = THREE.SRGBColorSpace;
   return t;
+}
+
+/** Asphalt under the markings: the photo when it's loaded (Medium/High), otherwise grey with grain. */
+function paintAsphalt(g: CanvasRenderingContext2D, w: number, h: number, base: string, grains: number, img: HTMLImageElement | null): void {
+  g.fillStyle = base;
+  g.fillRect(0, 0, w, h);
+  if (img) {
+    // 64 px tiles: about 3.5 game units, close to the photo's real 3 m.
+    for (let x = 0; x < w; x += 64) for (let y = 0; y < h; y += 64) g.drawImage(img, x, y, 64, 64);
+    return;
+  }
+  // Grain so the asphalt reads as moving.
+  for (let i = 0; i < grains; i++) {
+    const v = 50 + Math.random() * 30;
+    g.fillStyle = `rgb(${v},${v},${v + 4})`;
+    g.fillRect(Math.random() * w, Math.random() * h, 2, 2);
+  }
+}
+
+/** Redraws a canvas texture with the asphalt photo once it has loaded. */
+function withAsphalt(t: THREE.CanvasTexture, draw: (img: HTMLImageElement | null) => void): void {
+  void textureImage('asphalt').then((img) => {
+    if (!img) return;
+    draw(img);
+    t.needsUpdate = true;
+  });
 }
 
 /**
@@ -50,30 +74,28 @@ export function makeLaneTexture(kind: 'highway' | 'carriageway' | 'carriageway2'
   c.width = 256;
   c.height = 256;
   const g = c.getContext('2d')!;
-  g.fillStyle = kind === 'highway' ? '#3e3e43' : '#46464b';
-  g.fillRect(0, 0, 256, 256);
-  for (let i = 0; i < 1600; i++) {
-    const v = 52 + Math.random() * 30;
-    g.fillStyle = `rgb(${v},${v},${v + 4})`;
-    g.fillRect(Math.random() * 256, Math.random() * 256, 2, 2);
-  }
-  const lane = 256 / 4;
-  g.fillStyle = '#e8e2cf';
-  g.fillRect(250 - 2, 0, 4, 256); // right edge
-  if (kind === 'highway') {
-    g.fillRect(4, 0, 4, 256); // left edge
-    g.fillStyle = '#f2c230';
-    g.fillRect(128 - 7, 0, 4, 256);
-    g.fillRect(128 + 3, 0, 4, 256);
-    g.fillStyle = '#e8e2cf';
-    for (const x of [lane, lane * 3]) g.fillRect(x - 2, 0, 4, 110);
-  } else {
-    g.fillStyle = '#f2c230';
-    g.fillRect(6, 0, 4, 256); // median edge
-    g.fillStyle = '#e8e2cf';
-    for (const x of kind === 'carriageway2' ? [128] : [lane, lane * 2, lane * 3]) g.fillRect(x - 2, 0, 4, 110);
-  }
   const t = new THREE.CanvasTexture(c);
+  const lane = 256 / 4;
+  const draw = (img: HTMLImageElement | null) => {
+    paintAsphalt(g, 256, 256, kind === 'highway' ? '#3e3e43' : '#46464b', 1600, img);
+    g.fillStyle = '#e8e2cf';
+    g.fillRect(250 - 2, 0, 4, 256); // right edge
+    if (kind === 'highway') {
+      g.fillRect(4, 0, 4, 256); // left edge
+      g.fillStyle = '#f2c230';
+      g.fillRect(128 - 7, 0, 4, 256);
+      g.fillRect(128 + 3, 0, 4, 256);
+      g.fillStyle = '#e8e2cf';
+      for (const x of [lane, lane * 3]) g.fillRect(x - 2, 0, 4, 110);
+    } else {
+      g.fillStyle = '#f2c230';
+      g.fillRect(6, 0, 4, 256); // median edge
+      g.fillStyle = '#e8e2cf';
+      for (const x of kind === 'carriageway2' ? [128] : [lane, lane * 2, lane * 3]) g.fillRect(x - 2, 0, 4, 110);
+    }
+  };
+  draw(null);
+  withAsphalt(t, draw);
   t.wrapS = THREE.RepeatWrapping;
   t.wrapT = THREE.RepeatWrapping;
   t.anisotropy = 8;
@@ -123,15 +145,51 @@ export function makeCar(color = 0xd9482b, up?: Upgrades): THREE.Group {
   const glass = new THREE.MeshLambertMaterial({ color: 0x8fc6e8, emissive: 0x112233 });
   const metal = new THREE.MeshLambertMaterial({ color: 0x9a9a9a });
 
-  const body = new THREE.Mesh(new THREE.BoxGeometry(2, 0.7, 4.2), paint);
-  body.position.y = 0.75;
+  // Side-profile shapes pulled across the car's width: a hood that slopes down
+  // to the nose, a raked windshield and a fastback rear window.
+  const body = new THREE.Mesh(
+    profile(2, [
+      [-2.1, 0.42],
+      [2.1, 0.42],
+      [2.1, 0.92],
+      [1.9, 1.0],
+      [0.8, 1.1],
+      [-1.8, 1.1],
+      [-2.1, 1.0],
+    ]),
+    paint,
+  );
   car.add(body);
-  const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.6, 2), glass);
-  cabin.position.set(0, 1.35, -0.3);
+  const cabin = new THREE.Mesh(
+    profile(1.72, [
+      [0.8, 1.08],
+      [-1.6, 1.08],
+      [-1.3, 1.66],
+      [0.1, 1.66],
+    ]),
+    glass,
+  );
   car.add(cabin);
-  const roof = new THREE.Mesh(new THREE.BoxGeometry(1.75, 0.12, 1.8), paint);
-  roof.position.set(0, 1.7, -0.3);
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(1.76, 0.1, 1.42), paint);
+  roof.position.set(0, 1.7, -0.6);
   car.add(roof);
+  // Door pillars between the windows.
+  for (const z of [-0.45]) {
+    const pillar = new THREE.Mesh(new THREE.BoxGeometry(1.76, 0.56, 0.12), paint);
+    pillar.position.set(0, 1.38, z);
+    car.add(pillar);
+  }
+  // Dark wheel arches and side mirrors.
+  for (const x of [-1.01, 1.01]) {
+    for (const z of [1.3, -1.3]) {
+      const arch = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.32, 1.1), dark);
+      arch.position.set(x, 0.7, z);
+      car.add(arch);
+    }
+    const mirror = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.14, 0.12), paint);
+    mirror.position.set(x * 1.06, 1.18, 0.62);
+    car.add(mirror);
+  }
   // Spiked bumper and a roof gun: this car is ready for trouble.
   const bumper = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.3, 0.3), metal);
   bumper.position.set(0, 0.55, 2.2);
@@ -146,15 +204,23 @@ export function makeCar(color = 0xd9482b, up?: Upgrades): THREE.Group {
   gun.position.set(0, 1.9, 0);
   gun.name = 'gun';
   car.add(gun);
-  const wheelGeo = new THREE.CylinderGeometry(0.42, 0.42, 0.35, 10);
-  wheelGeo.rotateZ(Math.PI / 2);
+  const tireGeo = new THREE.CylinderGeometry(0.42, 0.42, 0.35, 14).rotateZ(Math.PI / 2);
+  const rimGeo = new THREE.CylinderGeometry(0.24, 0.24, 0.37, 10).rotateZ(Math.PI / 2);
+  const spokeGeo = new THREE.BoxGeometry(0.38, 0.05, 0.4);
   for (const [x, z] of [
     [-1, 1.3],
     [1, 1.3],
     [-1, -1.3],
     [1, -1.3],
   ]) {
-    const w = new THREE.Mesh(wheelGeo, dark);
+    // Tire, rim and spokes in one group so the spokes show the wheel turning.
+    const w = new THREE.Group();
+    w.add(new THREE.Mesh(tireGeo, dark), new THREE.Mesh(rimGeo, metal));
+    for (let i = 0; i < 2; i++) {
+      const spoke = new THREE.Mesh(spokeGeo, dark);
+      spoke.rotation.x = (i * Math.PI) / 2;
+      w.add(spoke);
+    }
     w.position.set(x, 0.42, z);
     w.name = 'wheel';
     car.add(w);
@@ -162,20 +228,20 @@ export function makeCar(color = 0xd9482b, up?: Upgrades): THREE.Group {
   const lights = new THREE.MeshBasicMaterial({ color: 0xfff3b0 });
   for (const x of [-0.65, 0.65]) {
     const l = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.2, 0.05), lights);
-    l.position.set(x, 0.85, 2.11);
+    l.position.set(x, 0.8, 2.17);
     car.add(l);
   }
-  const tail = new THREE.MeshBasicMaterial({ color: 0x9a1a10 });
+  const tail = new THREE.MeshBasicMaterial({ color: 0xd8261a });
   for (const x of [-0.6, 0.6]) {
     const l = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.18, 0.05), tail);
-    l.position.set(x, 0.85, -2.11);
+    l.position.set(x, 0.85, -2.17);
     car.add(l);
   }
   // Turn signals. The car faces +z, so its right-hand side is -x.
   for (const side of ['L', 'R'] as const) {
     const x = side === 'L' ? 0.9 : -0.9;
     const mat = new THREE.MeshBasicMaterial({ color: BLINK_OFF });
-    for (const z of [2.12, -2.12]) {
+    for (const z of [2.18, -2.18]) {
       const b = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.22, 0.08), mat);
       b.position.set(x, 0.9, z);
       b.name = `blink${side}`;
@@ -199,6 +265,16 @@ export function makeCar(color = 0xd9482b, up?: Upgrades): THREE.Group {
   shadow.position.y = 0.03;
   car.add(shadow);
   return car;
+}
+
+/** A side profile (points as [z, y], the car facing +z) extruded across a width, centred on x = 0. */
+function profile(width: number, pts: [number, number][]): THREE.BufferGeometry {
+  const shape = new THREE.Shape(pts.map(([z, y]) => new THREE.Vector2(z, y)));
+  const geo = new THREE.ExtrudeGeometry(shape, { depth: width, bevelEnabled: true, bevelSize: 0.05, bevelThickness: 0.05, bevelSegments: 1 });
+  // Shape x becomes the car's length (z); the extrusion becomes its width (x).
+  geo.rotateY(-Math.PI / 2);
+  geo.translate(width / 2, 0, 0);
+  return geo;
 }
 
 /** A sprite with text drawn on it, for road signs. */
