@@ -1345,3 +1345,8 @@ ol.scores li.new {
   font-size: 24px;
   color: #6cb6ff;
 }
+
+/* A narrated card: tap it to hear it again. */
+.card.narrated {
+  cursor: pointer;
+}

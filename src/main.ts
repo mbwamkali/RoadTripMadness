@@ -41,6 +41,7 @@ import { addScore, loadScores, scoreFor, type ScoreEntry } from './game/scores';
 import { CREW, rollEvent, type RoadEvent } from './game/events';
 import { mpg, swipeAction } from './game/driving';
 import { installButton } from './ui/install';
+import { narrateUi, narrator } from './audio/narrator';
 import { DoubleTap, isSwipe, type Press } from './game/gestures';
 import { RAGE_HOSTILE, RAGE_MAX, rageOf } from './game/rage';
 import { clockText, hourOf, isNight, nightDanger, weatherAt, WEATHER_INFO, type Weather } from './game/time';
@@ -560,6 +561,7 @@ function updatePrompt(stop: Stop | null, dist: number): void {
     return;
   }
   promptFor = stop.id;
+  narrator.say(`${stop.exit ? `Exit ${stop.exit}. ` : ''}${STOP_TITLES[stop.kind]}, ${stop.name}, on the ${stop.side}.`);
   const right = stop.side === 'right';
   promptEl.classList.add('show');
   promptEl.replaceChildren(
@@ -638,6 +640,7 @@ function showToast(icon: string, small: string, big: string, link?: string | nul
   const el = document.querySelector('.landmark-toast') as HTMLElement | null;
   if (!el) return;
   el.replaceChildren(h('span', { class: 'icon' }, icon), h('div', {}, h('small', {}, small), h('strong', {}, big), link && h('span', { class: 'more' }, 'Tap to read about it ↗')));
+  narrator.say(`${small}. ${big}.`);
   el.onclick = link
     ? () => {
         // Reading about it pauses the trip, so nothing happens on the road while you're away.
@@ -850,6 +853,24 @@ function shootAt(t: ShotTarget | null): void {
   else if (r && !r.vehicle && r.destroyed && r.scrap) showToast('💥', `${OBSTACLE_LABEL[r.kind as ObstacleKind]} cleared`, `+${r.scrap} scrap`);
 }
 
+/** The Narration on/off switch (the device's own voice reads events, signs and tips). */
+function narrationButton(): HTMLElement | null {
+  if (!narrator.available) return null;
+  const label = () => `🗣️ Narration: ${narrator.on ? 'on' : 'off'}`;
+  return h(
+    'button',
+    {
+      class: 'btn',
+      onclick: (e: Event) => {
+        narrator.set(!narrator.on);
+        (e.currentTarget as HTMLElement).textContent = label();
+        narrator.say('Narration is on. Tap any card to hear it again.');
+      },
+    },
+    label(),
+  );
+}
+
 /** Opens the pause menu if the car is out on the road and not already paused. */
 function pauseDriving(): void {
   if (drive && active === drive && drive.onRoad && state?.status === 'driving') showPauseMenu();
@@ -879,7 +900,7 @@ function showPauseMenu(): void {
     { class: 'modal' },
     h(
       'div',
-      { class: 'card' },
+      { class: 'card', 'data-quiet': true },
       h('h2', {}, 'Paused'),
       h('p', {}, `Encounters survived: ${state!.encounters} · Kills: ${state!.kills}`),
       sightsPassed(),
@@ -895,6 +916,7 @@ function showPauseMenu(): void {
         },
         `Sound effects: ${sound.settings.sfx ? 'on' : 'off'}`,
       ),
+      narrationButton(),
       h(
         'button',
         {
@@ -954,6 +976,7 @@ function showRoadEvent(ev: RoadEvent): void {
             else if (out.ok) sound.coin();
             else sound.bad();
             hudTick?.();
+            narrator.say(out.message);
             body.replaceChildren(
               h('p', { class: `outcome ${out.ok ? 'good' : 'bad'}` }, out.message),
               h('button', { class: 'btn primary', onclick: () => finish(out.fight) }, out.fight ? 'Fight!' : 'Continue'),
@@ -1181,7 +1204,7 @@ function showUpgrades(s: GameState, say: (r: ActionResult) => void): void {
   const overlay = h(
     'div',
     { class: 'modal' },
-    h('div', { class: 'card wide' }, h('h2', {}, 'Garage upgrades'), wallet, list, h('button', { class: 'btn primary', onclick: () => overlay.remove() }, 'Done')),
+    h('div', { class: 'card wide', 'data-quiet': true }, h('h2', {}, 'Garage upgrades'), wallet, list, h('button', { class: 'btn primary', onclick: () => overlay.remove() }, 'Done')),
   );
   render();
   ui().append(overlay);
@@ -1248,6 +1271,7 @@ function showCombatHud(c: CombatState): void {
   clearUi();
   fightCombatState = c;
   fightSteer = 0;
+  narrator.say(c.title);
   const s = state!;
   const hp = bar('hp', '🔧');
   const esc = bar(c.boss ? 'bosshp' : 'escape', c.boss ? '💀' : '🏁');
@@ -1499,6 +1523,7 @@ window.addEventListener('click', (e) => {
 
 resize();
 requestAnimationFrame(frame);
+narrateUi(ui());
 showTitle();
 registerServiceWorker();
 
