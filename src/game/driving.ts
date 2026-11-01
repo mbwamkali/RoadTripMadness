@@ -11,10 +11,23 @@ import { fuelEfficiency } from './upgrades';
 /** Miles per gallon of the stock car at cruise on Normal. Fictional, but in the right range. */
 export const BASE_MPG = 24;
 
-/** How much more (or less) fuel you burn at a throttle setting (1 = cruise). */
+/**
+ * How much more (or less) fuel you burn at a throttle setting (1 = cruise,
+ * 0.6 to 1.3 in game). Air drag climbs fast: flat out burns 60% more per
+ * mile, while easing off saves a little, down to 20% less at the slowest.
+ */
 export function speedFuelFactor(throttle: number): number {
-  void throttle;
-  return 1;
+  return throttle >= 1 ? 1 + (throttle - 1) * 2 : 1 - (1 - throttle) * 0.5;
+}
+
+/** How far ahead (units) the car notices a slower vehicle and brakes. Shrinks when you speed. */
+export function brakeRange(throttle: number): number {
+  return 16 / Math.max(1, throttle) ** 2;
+}
+
+/** Crashing at speed hurts more. */
+export function crashScale(throttle: number): number {
+  return Math.max(1, throttle) ** 2;
 }
 
 /** Fuel economy right now, from the ride, engine upgrades, difficulty and speed. */

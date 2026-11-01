@@ -2,7 +2,8 @@ import type { BossKind } from '../game/combat';
 import * as THREE from 'three';
 import type { Path, Vec2 } from '../geo/geo';
 import { CRUISE_SPEED, postedLimit } from '../geo/route';
-import { advance, damage, upcomingStop, type GameState } from '../game/state';
+import { advance, damage, fuelPerUnit, upcomingStop, type GameState } from '../game/state';
+import { brakeRange, crashScale, speedFuelFactor } from '../game/driving';
 import { clampLane, defaultLane, laneCenter, oncoming, Traffic, type Vehicle, type VehicleKind } from '../game/traffic';
 import { Obstacles, ramObstacle, shootObstacle, SHOOT_RANGE, type Obstacle, type ObstacleKind } from '../game/obstacles';
 import { DIFFICULTIES } from '../game/difficulty';
@@ -145,6 +146,7 @@ export class DriveScene implements GameScene {
   private laneClass: RoadClass = 'local';
   /** Player's speed choice: 0.6 (slow) to 1.3 (fast). */
   throttle = 1;
+  private readonly fuelRate: number;
   private traffic: Traffic;
   private vehicleMeshes = new Map<number, THREE.Group>();
   private crashCooldown = 0;
@@ -179,6 +181,7 @@ export class DriveScene implements GameScene {
     private cb: DriveCallbacks,
   ) {
     this.car = makeRide(state.ride ?? 'car', state.upgrades);
+    this.fuelRate = fuelPerUnit(path.length);
     this.biomes = biomeSpans(state.route, path);
     const q = quality.profile;
     this.ahead = AHEAD * q.drawScale;
@@ -438,7 +441,8 @@ export class DriveScene implements GameScene {
     if (this.promptStop) speed = Math.min(speed, CRUISE_SPEED * 0.7);
     // Brake behind a slower vehicle in your lane (fast-forward drives through traffic).
     if (this.warp === 1 && !oncoming(this.playerLane)) {
-      const v = this.traffic.ahead(s.distance, this.playerLane, 16);
+      // Speeding leaves less time to react: the car notices slower traffic later.
+      const v = this.traffic.ahead(s.distance, this.playerLane, brakeRange(this.throttle));
       if (v) speed = Math.min(speed, v.speed * (1 - Math.max(0, 8 - (v.d - s.distance)) * 0.08));
     }
     speed = Math.max(0, speed);
@@ -446,7 +450,7 @@ export class DriveScene implements GameScene {
     if (this.pendingTurn && s.distance + step >= this.pendingTurn.at) {
       step = Math.max(0, this.pendingTurn.at - s.distance);
     }
-    const res = advance(s, this.path, step);
+    const res = advance(s, this.path, step, this.fuelRate * speedFuelFactor(this.throttle));
     this.spinWheels(step);
     if (this.warp === 1) this.checkCrash();
     if (res.arrived) {
@@ -516,7 +520,7 @@ export class DriveScene implements GameScene {
     const headOn = oncoming(v.lane);
     const base = v.kind === 'truck' ? 18 : 10;
     // The ram plate softens it.
-    const amount = Math.round(base * (headOn ? 1.6 : 1) * Math.max(0.4, 1 - this.state.upgrades.ram * 0.2) * rideOf(this.state).ram);
+    const amount = Math.round(base * (headOn ? 1.6 : 1) * Math.max(0.4, 1 - this.state.upgrades.ram * 0.2) * rideOf(this.state).ram * crashScale(this.throttle));
     damage(this.state, amount);
     sound.carHit();
     this.traffic.remove(v);

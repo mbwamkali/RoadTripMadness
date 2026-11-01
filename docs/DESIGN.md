@@ -130,3 +130,4 @@ STATES="VA WV" sh scripts/fetch-osm-roads.sh data-src/osm-test   # a quick test 
 ## Round two (build plan, 2026-11-01)
 
 - **Dashboard and swipes (phase 1).** A dashboard above the driving buttons shows your speed in big numbers, the clock and live fuel economy (mpg, from the ride, engine upgrades and difficulty). Swipe on the road to drive: sideways changes lanes, up speeds up, down slows down. The lane and speed buttons stay as a backup, and the middle one now shows the posted limit. A one-time hint explains the swipes.
+- **Speed costs fuel (phase 2).** Fuel use per mile follows the throttle: flat out (130%) burns 60% more, and easing off to 60% saves 20%. The mpg readout shows it live. Speeding also adds risk: the car notices slower traffic later (brake range shrinks with the square of the throttle), so you can rear-end someone, and crash damage grows the same way. A tip explains it the first time you speed.

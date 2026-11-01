@@ -83,6 +83,8 @@ let path: Path | null = null;
 let drive: DriveScene | null = null;
 let combat: CombatScene | null = null;
 let hudTick: (() => void) | null = null;
+/** The speeding tip shows once per session. */
+let warnedSpeeding = false;
 let lastSave = 0;
 
 // --------------------------------------------------------------- render loop
@@ -763,6 +765,10 @@ function showDriveHud(): void {
       speedText.textContent = `Limit ${limit}`;
       dashSpeed.textContent = String(mph);
       dash.classList.toggle('fast', drive.throttle > 1);
+      if (drive.throttle > 1 && !warnedSpeeding) {
+        warnedSpeeding = true;
+        showToast('⛽', 'Speeding burns gas', 'Faster empties the tank sooner and gives you less time to react');
+      }
       dashMpg.textContent = String(Math.round(mpg(s, drive.throttle)));
       controls.classList.toggle('wrong-side', drive.wrongSide);
       const t = drive.target;
