@@ -1,0 +1,45 @@
+name: Build road files
+# Builds the game's road files from OpenStreetMap (scripts/fetch-osm-roads.sh,
+# then scripts/build-osm-roads.py) and stores them on the "osm-roads" release.
+# The Pages deploy copies that release into the site at data/osm/.
+on:
+  schedule:
+    - cron: '17 6 3 * *' # 06:17 UTC on the 3rd of every month
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: write
+concurrency:
+  group: osm-roads
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: sudo apt-get update -q && sudo apt-get install -y -q osmium-tool
+      - run: pip install osmium
+      - name: Download and filter OpenStreetMap (lower 48 states and DC)
+        run: sh scripts/fetch-osm-roads.sh "$RUNNER_TEMP/osm"
+      - name: Build road files
+        run: |
+          python3 scripts/build-osm-roads.py "$RUNNER_TEMP/osm/us-roads.osm.pbf" osm-roads \
+            --source "OpenStreetMap state extracts from osm.download.movisda.io, $(date -u +%Y-%m-%d)"
+          tar -czf osm-roads.tar.gz -C osm-roads .
+          ls -l osm-roads.tar.gz
+      - name: Store on the osm-roads release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view osm-roads >/dev/null 2>&1 || gh release create osm-roads --latest=false \
+            --title "Road files (OpenStreetMap, ODbL)" \
+            --notes "Built by .github/workflows/osm-roads.yml. Data © OpenStreetMap contributors, under the ODbL: https://www.openstreetmap.org/copyright"
+          gh release upload osm-roads osm-roads.tar.gz --clobber
+      - name: Redeploy the site with the new files
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run pages.yml --ref main

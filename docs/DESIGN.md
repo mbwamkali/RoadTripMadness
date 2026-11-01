@@ -78,6 +78,22 @@ node scripts/build-atlas.mjs data-src/ne public/data/atlas-us.json
 node scripts/bake-routes.mjs                          # needs router.project-osrm.org
 ```
 
+### Road files from OpenStreetMap (own routing, in progress)
+
+To stop depending on the public OSRM server, the game is getting its own road network: highways down to US and state routes, built from OpenStreetMap into static files and routed on the phone. Phase 1 builds the files; the router comes next. See the "Own routing plan" doc in the project.
+
+- `.github/workflows/osm-roads.yml` runs monthly (or by hand from the Actions tab). It runs `scripts/fetch-osm-roads.sh` (state-by-state OpenStreetMap extracts, filtered with osmium) and `scripts/build-osm-roads.py`, and stores the result on the `osm-roads` release as `osm-roads.tar.gz`.
+- The Pages deploy unpacks that release into `data/osm/` on the site: `index.json`, `backbone.json` (interstates and major highways), `tiles/<x>_<y>.json` (US and state routes per 2° square), `towns.json` and `LICENSE-ODbL.txt`. They are copied in after the build so the service worker doesn't precache them all.
+- These files are OpenStreetMap data and stay under the ODbL; the game's code is not affected.
+
+Build them locally (needs osmium-tool and `pip install osmium`; about 14 GB of downloads):
+
+```
+sh scripts/fetch-osm-roads.sh data-src/osm
+python3 scripts/build-osm-roads.py data-src/osm/us-roads.osm.pbf public/data/osm
+STATES="VA WV" sh scripts/fetch-osm-roads.sh data-src/osm-test   # a quick test with two states
+```
+
 ## Added since the first playable
 
 - **Landmarks and turn signals.** Real rivers, peaks, monuments and attractions from OpenStreetMap (Overpass) are placed along the route, with procedural roadside sights filling the gaps. Choosing a turn starts the blinker on that side.

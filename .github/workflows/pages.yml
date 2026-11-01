@@ -20,6 +20,20 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      # Road files built by osm-roads.yml from OpenStreetMap. They are copied in
+      # after the build so the service worker doesn't precache all of them.
+      # Skipped (with a note) until the first road build has run.
+      - name: Add road files
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release download osm-roads -p osm-roads.tar.gz -D "$RUNNER_TEMP"; then
+            mkdir -p dist/data/osm
+            tar -xzf "$RUNNER_TEMP/osm-roads.tar.gz" -C dist/data/osm
+            du -sh dist/data/osm
+          else
+            echo "No osm-roads release yet; deploying without road files."
+          fi
       # Publish the built game to the gh-pages branch, which GitHub Pages serves.
       - run: |
           cd dist
