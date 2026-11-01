@@ -6,6 +6,8 @@ import { hourOf, nightLoot } from './time';
 import { fuelEfficiency, MAX_LEVEL, maxHealthFor, noUpgrades, tankFor, upgradeCost, UPGRADES, type UpgradeKind, type Upgrades } from './upgrades';
 import { generateStops, type PlaceKind, type Stop } from './stops';
 import { hashString, makeRng, range, rangeInt, type Rng } from './rng';
+import { DIFFICULTIES, type Difficulty } from './difficulty';
+import type { BossKind } from './combat';
 
 export type AmmoKind = 'bullets' | 'shells' | 'catnip';
 
@@ -40,6 +42,10 @@ export interface GameState {
   searches: Record<string, number>;
   nextEncounterAt: number;
   encounters: number;
+  difficulty: Difficulty;
+  /** 0: halfway boss to come, 1: final boss to come, 2: both done. */
+  bossStage: number;
+  bossesBeaten: number;
   kills: number;
   status: 'driving' | 'won' | 'lost';
   lostReason?: string;
@@ -61,7 +67,7 @@ export function fuelPerUnit(pathLength: number): number {
   return TANK / (pathLength / 3.2);
 }
 
-export function newGame(route: RouteData, seed = Date.now() & 0xffffffff): GameState {
+export function newGame(route: RouteData, seed = Date.now() & 0xffffffff, difficulty: Difficulty = 'normal'): GameState {
   const path = pathFromRoute(route);
   const rng = makeRng(seed);
   const stops = generateStops(route, path.length, seed);
@@ -78,19 +84,33 @@ export function newGame(route: RouteData, seed = Date.now() & 0xffffffff): GameS
     nextEventAt: path.length * range(rng, 0.05, 0.09),
     eventsSeen: 0,
     hoursSpent: 0,
-    inv: { fuel: 70, cash: 60, scrap: 10, bullets: 60, shells: 6, catnip: 1 },
+    inv: { ...DIFFICULTIES[difficulty].start },
     passed: [],
     searches: {},
-    nextEncounterAt: encounterGap(rng, path.length) * 0.7,
+    nextEncounterAt: encounterGap(rng, path.length, difficulty) * 0.7,
     encounters: 0,
+    difficulty,
+    bossStage: 0,
+    bossesBeaten: 0,
     kills: 0,
     status: 'driving',
     log: [`Set out from ${route.startLabel} for ${route.endLabel}.`],
   };
 }
 
-export function encounterGap(rng: Rng, pathLength: number): number {
-  return range(rng, 0.07, 0.13) * pathLength;
+export function encounterGap(rng: Rng, pathLength: number, difficulty: Difficulty = 'normal'): number {
+  return range(rng, 0.07, 0.13) * pathLength * DIFFICULTIES[difficulty].gap;
+}
+
+/** Where the boss fights happen: halfway, and just outside the destination. */
+export function bossPoints(pathLength: number): [number, number] {
+  return [pathLength * 0.5, pathLength - Math.min(pathLength * 0.04, 400)];
+}
+
+/** Which boss waits at each point. The finale is always the Cat Queen. */
+export function bossFor(s: GameState, stage: number): BossKind {
+  if (stage >= 1) return 'mothership';
+  return makeRng(s.seed ^ 0xb055)() < 0.5 ? 'brute' : 'warrig';
 }
 
 /** Advances the car. Returns what happened so the caller can react. */
@@ -99,11 +119,14 @@ export function advance(
   path: Path,
   dist: number,
   fuelRate = fuelPerUnit(path.length),
-): { arrived: boolean; outOfFuel: boolean; encounter: boolean; event?: boolean } {
+): { arrived: boolean; outOfFuel: boolean; encounter: boolean; event?: boolean; boss?: BossKind } {
   if (s.status !== 'driving') return { arrived: false, outOfFuel: false, encounter: false };
-  const step = Math.min(dist, path.length - s.distance);
+  const bosses = bossPoints(path.length);
+  // Never skip past a boss, even on fast-forward.
+  const toBoss = s.bossStage < 2 ? Math.max(0, bosses[s.bossStage] - s.distance) + 0.001 : Infinity;
+  const step = Math.min(dist, path.length - s.distance, toBoss);
   s.distance += step;
-  s.inv.fuel = Math.max(0, s.inv.fuel - step * fuelRate * fuelEfficiency(s.upgrades));
+  s.inv.fuel = Math.max(0, s.inv.fuel - step * fuelRate * fuelEfficiency(s.upgrades) * DIFFICULTIES[s.difficulty].fuel);
   const arrived = s.distance >= path.length - 0.01;
   if (arrived) {
     s.status = 'won';
@@ -115,12 +138,26 @@ export function advance(
     s.lostReason = 'You ran out of fuel in the middle of nowhere.';
     return { arrived: false, outOfFuel: true, encounter: false };
   }
+  if (s.bossStage < 2 && s.distance >= bosses[s.bossStage]) {
+    const boss = bossFor(s, s.bossStage);
+    s.bossStage++;
+    // Give the player some room after a boss.
+    s.nextEncounterAt = Math.max(s.nextEncounterAt, s.distance + 0.05 * path.length);
+    s.nextEventAt = Math.max(s.nextEventAt, s.distance + 0.03 * path.length);
+    return { arrived: false, outOfFuel: false, encounter: false, boss };
+  }
   let encounter = false;
+  // No ordinary fight right before a boss.
+  const nearBoss = s.bossStage < 2 && bosses[s.bossStage] - s.distance < 0.04 * path.length;
   if (s.distance >= s.nextEncounterAt) {
-    encounter = true;
-    s.encounters++;
-    const rng = makeRng(s.seed + s.encounters * 977);
-    s.nextEncounterAt = s.distance + encounterGap(rng, path.length);
+    const rng = makeRng(s.seed + (s.encounters + 1) * 977);
+    if (nearBoss) {
+      s.nextEncounterAt = bosses[s.bossStage] + encounterGap(rng, path.length, s.difficulty) * 0.5;
+    } else {
+      encounter = true;
+      s.encounters++;
+      s.nextEncounterAt = s.distance + encounterGap(rng, path.length, s.difficulty);
+    }
   }
   let event = false;
   if (!encounter && s.distance >= s.nextEventAt) {
@@ -284,6 +321,12 @@ export function loadGame(): GameState | null {
     s.eventsSeen ??= 0;
     s.hoursSpent ??= 0;
     s.nextEventAt ??= s.distance + 500;
+    s.difficulty ??= 'normal';
+    s.bossesBeaten ??= 0;
+    if (s.bossStage == null) {
+      const [half] = bossPoints(pathFromRoute(s.route).length);
+      s.bossStage = s.distance > half ? 1 : 0;
+    }
     // Saves from before landmarks existed.
     s.landmarks ??= fillLandmarks(s.route, pathFromRoute(s.route).length, s.stops, s.route.landmarks ?? [], s.seed);
     return s;

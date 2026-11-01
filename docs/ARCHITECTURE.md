@@ -12,17 +12,29 @@ src/
     osrm.ts            Route request and parsing (OSRM)
     route.ts           Turns a real route into game geometry (scale, smooth, place steps)
     demoRoute.ts       Offline made-up route
+    overpass.ts        Real landmarks near the route (Overpass API)
   game/                Rules, no rendering. Covered by tests.
     state.ts           Game state, fuel, travel, shops, scavenging, saving
     stops.ts           Where the turn-offs are and what's at them
-    combat.ts          Enemies, weapons, horn, boost, outcomes
+    combat.ts          Enemies, bosses, weapons, horn, boost, outcomes
+    landmarks.ts       Placing real and made-up sights along the road
+    upgrades.ts        Car upgrade levels and their effects
+    events.ts          Road events and crew members
+    time.ts            Clock, day/night and weather
+    difficulty.ts      Difficulty settings
+    scores.ts          Score and the local high-score table
     rng.ts             Seeded random numbers, so runs are reproducible
   scenes/
     DriveScene.ts      On-rails driving view; streams road and scenery in chunks
     CombatScene.ts     Action view; enemy models, tap-to-target, effects
     common.ts          Car model, road texture, signs, helpers
+    landmarkModels.ts  3D models for landmarks
+    atmosphere.ts      Sky, fog, sun, headlights, stars, weather particles
+  audio/
+    sound.ts           Synthesized sound effects and radio
   ui/
     dom.ts, minimap.ts Small DOM helpers and the route minimap
+    townMap.ts         Top-down map of a stop
 tests/                 Vitest unit tests for geo and game rules
 ```
 

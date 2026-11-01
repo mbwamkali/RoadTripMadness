@@ -54,11 +54,20 @@ With no ammo left for a weapon, the player throws rocks. They are weak, but neve
 
 Before a public release, routing and search should move to our own OSRM/Nominatim instances or a commercial provider, because the free public servers are for light use only.
 
+## Added since the first playable
+
+- **Landmarks and turn signals.** Real rivers, peaks, monuments and attractions from OpenStreetMap (Overpass) are placed along the route, with procedural roadside sights filling the gaps. Choosing a turn starts the blinker on that side.
+- **Sound.** Synthesized engine, weapons, enemies and a two-station radio (Web Audio, no files).
+- **Car upgrades.** Armour, fuel tank, engine, roof turret and ram plate, three levels each, bought with scrap and cash at garages.
+- **Road events and crew.** Oregon Trail-style choices (flat tires, hitchhikers, traders, roadblocks, tractor beams). A gunner, a road dog and a mechanic can join and each helps in their own way.
+- **Day, night and weather.** A clock that moves as you drive and search; nights are more dangerous but searches pay more. Rain, dust, fog and snow by region.
+- **Town map.** Stops show a small top-down map; tap a building and you walk over to it.
+- **Boss fights.** Halfway through the trip either Big Rotten Earl (giant zombie) or Mad Maxine's war rig blocks the road; the Cat Queen's mothership waits just outside the destination. There is no escaping a boss. Its big attack lights a lane red first, so steering out of it dodges the hit, and it calls in minions of its kind.
+- **Difficulty and high scores.** Sunday drive, Road trip and Madness change starting supplies, enemy health and damage, fuel use and how often fights happen. A score (distance, kills, bosses, a finish bonus) is scaled by difficulty and the top ten are kept on the device.
+
 ## Ideas for next steps
 
-- Pull real buildings and road names along the route from OpenStreetMap (Overpass) instead of procedural scenery.
-- A proper "town map" explore screen: a small top-down map of the stop where you pick which building to walk into.
-- Car upgrades (armour plates, bigger tank, turret types) bought with scrap.
-- More enemy types, boss fights at the destination, and weather/day-night.
-- Sound and music, haptics on hits.
+- Real building footprints and road names at stops.
+- More enemy types and bosses that change with the region.
+- Online leaderboards.
 - Package for app stores with Capacitor, and add offline caching of a planned route.

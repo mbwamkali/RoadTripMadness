@@ -867,3 +867,145 @@ body.hurt::after {
 .sheet .place p {
   margin: 0 0 8px;
 }
+
+/* ------------------------------------------------------------------ bosses */
+.bosshp .fill {
+  background: linear-gradient(90deg, #b01fd0, #ff3d6e);
+}
+
+.combat .banner.boss {
+  color: #ff6a8a;
+  text-shadow: 0 0 12px rgba(255, 40, 90, 0.7);
+}
+
+.boss-intro .card {
+  border-color: #ff3d6e;
+  text-align: center;
+}
+
+.boss-intro .boss-icon {
+  font-size: 64px;
+  line-height: 1;
+  animation: boss-pulse 1s ease-in-out infinite;
+}
+
+@keyframes boss-pulse {
+  50% {
+    transform: scale(1.12);
+  }
+}
+
+/* ------------------------------------------------------------------ difficulty & scores */
+.difficulty {
+  display: grid;
+  gap: 8px;
+  margin: 4px 0 6px;
+}
+
+.btn.diff {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: left;
+  padding: 10px 14px;
+}
+
+.btn.diff span {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.btn.diff.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent) inset;
+}
+
+.score {
+  background: var(--panel);
+  border-radius: 14px;
+  padding: 14px 16px;
+  margin: 6px 0;
+}
+
+.score .total {
+  font-size: 40px;
+  font-weight: 800;
+  color: var(--accent-2);
+  display: flex;
+  flex-direction: column;
+}
+
+.score .total small {
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+
+.score .breakdown,
+ol.scores {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  font-size: 14px;
+}
+
+.score .breakdown li {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+}
+
+.score .breakdown b {
+  color: var(--ink);
+}
+
+ol.scores {
+  counter-reset: rank;
+  margin-bottom: 8px;
+}
+
+ol.scores li {
+  counter-increment: rank;
+  display: grid;
+  grid-template-columns: 26px 70px 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 8px;
+  align-items: baseline;
+  background: var(--panel);
+  border-radius: 10px;
+  padding: 8px 12px;
+}
+
+ol.scores li::before {
+  content: counter(rank) '.';
+  color: var(--muted);
+  grid-row: span 2;
+}
+
+ol.scores li b {
+  color: var(--accent-2);
+  grid-row: span 2;
+}
+
+ol.scores li .who {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+ol.scores li .diff {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+ol.scores li.new {
+  box-shadow: 0 0 0 2px var(--accent-2) inset;
+}
+
+.screen.end {
+  background: linear-gradient(180deg, rgba(27, 20, 16, 0.75), rgba(27, 20, 16, 0.92));
+}

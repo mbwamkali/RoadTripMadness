@@ -42,6 +42,7 @@ describe('trip', () => {
     const s = newGame(route, 1);
     s.inv.fuel = 1e9;
     s.nextEncounterAt = Infinity;
+    s.bossStage = 2;
     expect(advance(s, path, path.length + 10).arrived).toBe(true);
     expect(s.status).toBe('won');
   });

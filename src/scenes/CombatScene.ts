@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import {
   combatOutcome,
+  isBoss,
   fireAt,
   ROAD_SPEED,
   stepCombat,
@@ -46,6 +47,8 @@ export class CombatScene implements GameScene {
   private holding = false;
   private done = false;
   private shake = 0;
+  /** Red strip on the road where a boss attack will land. */
+  private warning: THREE.Mesh;
 
   constructor(
     readonly combat: CombatState,
@@ -53,7 +56,8 @@ export class CombatScene implements GameScene {
     private cb: CombatCallbacks,
   ) {
     this.car = makeCar(undefined, state.upgrades);
-    this.atmosphere = new Atmosphere(this.scene, combat.title.includes('cat') ? 0x5a3f8a : 0xe8a868, 60, 170);
+    this.atmosphere = new Atmosphere(this.scene, combat.title.includes('cat') || combat.boss === 'mothership' ? 0x5a3f8a : 0xe8a868, 60, 170);
+    this.atmosphere.minFogFar = combat.boss ? 90 : 55;
     this.atmosphere.set(hourOf(state), weatherAt(state));
     this.atmosphere.attachHeadlights(this.car);
 
@@ -82,6 +86,15 @@ export class CombatScene implements GameScene {
     }
     this.scene.add(this.props);
     this.scene.add(this.car);
+
+    this.warning = new THREE.Mesh(
+      new THREE.PlaneGeometry(3.6, 26),
+      new THREE.MeshBasicMaterial({ color: 0xff2020, transparent: true, opacity: 0.4, depthWrite: false }),
+    );
+    this.warning.rotation.x = -Math.PI / 2;
+    this.warning.position.set(0, 0.06, -6);
+    this.warning.visible = false;
+    this.scene.add(this.warning);
   }
 
   resize(w: number, h: number): void {
@@ -162,8 +175,16 @@ export class CombatScene implements GameScene {
     this.shake = Math.max(0, this.shake - dt * 3);
     const sx = (Math.random() - 0.5) * this.shake;
     const sy = (Math.random() - 0.5) * this.shake;
-    this.camera.position.set(c.carX * 0.6 + sx, 9.5 + sy, 14);
-    this.camera.lookAt(c.carX * 0.4, 0, -22);
+    const big = c.boss === 'mothership';
+    this.camera.position.set(c.carX * 0.6 + sx, (big ? 8 : 9.5) + sy, 14);
+    this.camera.lookAt(c.carX * 0.4, big ? 3 : 0, -22);
+    const boss = c.enemies.find((e) => e.id === c.bossId);
+    this.warning.visible = !!boss?.charging;
+    if (boss?.charging) {
+      this.warning.position.x = boss.targetX;
+      // Pulse faster as the hit gets closer.
+      (this.warning.material as THREE.MeshBasicMaterial).opacity = 0.25 + 0.3 * (0.5 + 0.5 * Math.sin(c.time * (8 + (1.5 - boss.timer) * 14)));
+    }
     this.updateFx(dt);
     this.atmosphere.update(dt, this.camera);
     this.cb.onTick();
@@ -183,7 +204,7 @@ export class CombatScene implements GameScene {
     if (this.groanTimer > 0) return;
     this.groanTimer = 1.2 + Math.random() * 2;
     const near = this.combat.enemies.filter((e) => Math.abs(e.z) < 50);
-    const z = near.find((e) => e.type === 'zombie');
+    const z = near.find((e) => e.type === 'zombie' || e.type === 'brute');
     const cat = near.find((e) => e.type === 'catship');
     if (cat && Math.random() < 0.5) sound.meow();
     else if (z) sound.groan();
@@ -223,6 +244,16 @@ export class CombatScene implements GameScene {
         case 'laser': {
           const g = this.meshes.get(ev.enemy);
           if (g) this.addLine(g.position.clone(), new THREE.Vector3(c.carX, 1, 0), 0xff40ff, 0.35);
+          break;
+        }
+        case 'slam': {
+          const g = this.meshes.get(ev.enemy);
+          const at = new THREE.Vector3(ev.x, 0.5, 0);
+          const color = this.combat.boss === 'mothership' ? 0xff40ff : this.combat.boss === 'warrig' ? 0xffa030 : 0x8fbf5a;
+          if (g && this.combat.boss !== 'brute') this.addLine(g.position.clone().setY(g.position.y + 1), at, color, 0.4);
+          this.addBurst(at, color, 24);
+          this.addRing(color, ev.x);
+          this.shake = Math.min(1.5, this.shake + 0.6);
           break;
         }
         case 'horn':
@@ -291,13 +322,13 @@ export class CombatScene implements GameScene {
     }
   }
 
-  private addRing(color: number): void {
+  private addRing(color: number, x = this.combat.carX): void {
     const ring = new THREE.Mesh(
       new THREE.RingGeometry(1, 1.6, 32),
       new THREE.MeshBasicMaterial({ color, transparent: true, side: THREE.DoubleSide }),
     );
     ring.rotation.x = -Math.PI / 2;
-    ring.position.set(this.combat.carX, 0.5, 0);
+    ring.position.set(x, 0.5, 0);
     this.scene.add(ring);
     this.fx.push({ obj: ring, life: 0.6, max: 0.6, vel: new THREE.Vector3(0, 0, 0) });
   }
@@ -352,7 +383,74 @@ function buildEnemy(type: EnemyType): THREE.Group {
   };
   let hitRadius = 1.4;
   let barY = 2.6;
-  if (type === 'zombie') {
+  if (type === 'warrig') {
+    box(3.4, 2.4, 5, 0x5b4a3a, 0, 1.7, -2.2); // trailer
+    box(3.2, 2.2, 2.6, 0x7a2a1a, 0, 1.6, 1.8); // cab
+    box(2.6, 0.9, 0.2, 0x9ff0ff, 0, 2.2, 3.12); // windscreen
+    box(3.6, 0.8, 0.5, 0x888888, 0, 0.7, 3.3); // plough
+    for (let i = -3; i <= 3; i++) box(0.25, 0.25, 0.9, 0xcccccc, i * 0.5, 0.7, 3.8); // spikes
+    for (const x of [-1.3, 1.3]) box(0.3, 1.8, 0.3, 0x333333, x, 3.2, 0.6); // smokestacks
+    for (const [x, z] of [[-1.6, 2], [1.6, 2], [-1.6, -1], [1.6, -1], [-1.6, -3.5], [1.6, -3.5]]) {
+      const w = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 0.5, 12), new THREE.MeshLambertMaterial({ color: 0x151515 }));
+      w.rotation.z = Math.PI / 2;
+      w.position.set(x, 0.7, z);
+      body.add(w);
+    }
+    box(0.9, 0.7, 0.9, 0x444444, 0, 3.3, -2.5, 'turret');
+    box(0.25, 0.25, 1.8, 0x222222, 0, 3.4, -1.4);
+    box(1.2, 1, 0.1, 0xeeeeee, 0, 1.6, 3.6); // skull plate
+    box(0.25, 0.25, 0.05, 0x111111, -0.25, 1.75, 3.66);
+    box(0.25, 0.25, 0.05, 0x111111, 0.25, 1.75, 3.66);
+    hitRadius = 3.6;
+    barY = 5;
+  } else if (type === 'mothership') {
+    const hull = new THREE.Mesh(new THREE.CylinderGeometry(7, 9, 1.6, 24), new THREE.MeshLambertMaterial({ color: 0x8a8fb0 }));
+    body.add(hull);
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(8.6, 0.35, 6, 32), new THREE.MeshLambertMaterial({ color: 0x5a3f8a }));
+    rim.rotation.x = Math.PI / 2;
+    body.add(rim);
+    const dome = new THREE.Mesh(
+      new THREE.SphereGeometry(3.4, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2),
+      new THREE.MeshLambertMaterial({ color: 0x9ff0ff, transparent: true, opacity: 0.6 }),
+    );
+    dome.position.y = 0.8;
+    body.add(dome);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(1.7, 14, 10), new THREE.MeshLambertMaterial({ color: 0xf2f2f2 }));
+    head.position.y = 2;
+    body.add(head);
+    for (const x of [-1, 1]) {
+      const ear = new THREE.Mesh(new THREE.ConeGeometry(0.55, 1.2, 4), new THREE.MeshLambertMaterial({ color: 0xf2f2f2 }));
+      ear.position.set(x, 3.5, 0);
+      body.add(ear);
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 6), new THREE.MeshBasicMaterial({ color: 0x40a0ff }));
+      eye.position.set(x * 0.6, 2.2, 1.5);
+      body.add(eye);
+    }
+    // Her crown.
+    for (let i = 0; i < 5; i++) {
+      const spike = new THREE.Mesh(new THREE.ConeGeometry(0.25, 0.8, 4), new THREE.MeshLambertMaterial({ color: 0xffd23f }));
+      const a = (i / 5) * Math.PI * 2;
+      spike.position.set(Math.cos(a) * 0.8, 3.9, Math.sin(a) * 0.8);
+      body.add(spike);
+    }
+    for (let i = 0; i < 14; i++) {
+      const light = new THREE.Mesh(new THREE.SphereGeometry(0.35, 6, 4), new THREE.MeshBasicMaterial({ color: 0xffe040 }));
+      const a = (i / 14) * Math.PI * 2;
+      light.position.set(Math.cos(a) * 8.2, -0.5, Math.sin(a) * 8.2);
+      light.name = 'light';
+      body.add(light);
+    }
+    const beam = new THREE.Mesh(
+      new THREE.ConeGeometry(3, 14, 16, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0xff40ff, transparent: true, opacity: 0.3, side: THREE.DoubleSide }),
+    );
+    beam.position.y = -7.5;
+    beam.name = 'charge';
+    beam.visible = false;
+    body.add(beam);
+    hitRadius = 8;
+    barY = 5.5;
+  } else if (type === 'zombie' || type === 'brute') {
     box(0.8, 1.1, 0.5, 0x4a5d7a, 0, 1.3); // torn shirt
     box(0.6, 0.6, 0.6, 0x8fbf5a, 0, 2.15); // head
     box(0.25, 0.25, 0.7, 0x8fbf5a, -0.5, 1.6, 0.3, 'armL');
@@ -361,6 +459,13 @@ function buildEnemy(type: EnemyType): THREE.Group {
     box(0.3, 0.8, 0.3, 0x3b3328, 0.2, 0.4, 0, 'legR');
     box(0.12, 0.12, 0.05, 0xff2020, -0.14, 2.2, 0.3);
     box(0.12, 0.12, 0.05, 0xff2020, 0.14, 2.2, 0.3);
+    if (type === 'brute') {
+      // Overalls and a road-sign club.
+      box(0.85, 0.6, 0.55, 0x2f5f9a, 0, 0.95);
+      box(0.08, 1.4, 0.08, 0x777777, 0.62, 1.4, 0.75);
+      box(0.5, 0.5, 0.05, 0xd13b2c, 0.62, 2.2, 0.75);
+      hitRadius = 1.3;
+    }
   } else if (type === 'outlaw') {
     box(0.4, 0.7, 2.2, 0x222222, 0, 0.6); // bike
     box(0.2, 0.9, 0.9, 0x111111, 0, 0.45, 0.9);
@@ -412,7 +517,7 @@ function buildEnemy(type: EnemyType): THREE.Group {
     barY = 1.9;
   }
   const hitbox = new THREE.Mesh(new THREE.SphereGeometry(hitRadius, 8, 6), new THREE.MeshBasicMaterial({ visible: false }));
-  hitbox.position.y = type === 'catship' ? 0.2 : 1.3;
+  hitbox.position.y = type === 'catship' || type === 'mothership' ? 0.2 : type === 'warrig' ? 1.8 : 1.3;
   hitbox.name = 'hitbox';
   g.add(hitbox);
   const hp = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 0.2), new THREE.MeshBasicMaterial({ color: 0xff3030, depthTest: false }));
@@ -428,23 +533,38 @@ function buildEnemy(type: EnemyType): THREE.Group {
   target.visible = false;
   g.add(target);
   if (type === 'outlaw') g.rotation.y = Math.PI;
+  if (type === 'warrig') {
+    // Drives away from the car, rear facing us.
+    g.rotation.y = Math.PI;
+    hp.rotation.y = Math.PI;
+  }
   // A bit larger than life so they read well on a phone screen.
-  g.scale.setScalar(type === 'catship' ? 1.1 : 1.35);
+  const scale: Record<EnemyType, number> = { zombie: 1.35, outlaw: 1.35, catship: 1.1, brute: 4.2, warrig: 1.1, mothership: 1 };
+  g.scale.setScalar(scale[type]);
   return g;
 }
 
 function animateEnemy(g: THREE.Group, e: Enemy, t: number): void {
   const body = g.getObjectByName('body')!;
-  if (e.type === 'zombie') {
-    const swing = Math.sin(t * 6 + e.id) * 0.5 * (e.stunned > 0 ? 0.1 : 1);
+  if (e.type === 'zombie' || e.type === 'brute') {
+    const swing = Math.sin(t * (e.type === 'brute' ? 2.5 : 6) + e.id) * 0.5 * (e.stunned > 0 ? 0.1 : 1);
     body.getObjectByName('legL')!.rotation.x = swing;
     body.getObjectByName('legR')!.rotation.x = -swing;
     body.rotation.z = Math.sin(t * 3 + e.id) * 0.12;
     body.rotation.y = e.stunned > 0 ? Math.sin(t * 20) * 0.3 : 0;
+    if (e.type === 'brute') {
+      // Raises both arms to wind up a stomp.
+      body.getObjectByName('armL')!.rotation.x = e.charging ? -1.4 : 0;
+      body.getObjectByName('armR')!.rotation.x = e.charging ? -1.4 : 0;
+    }
   } else if (e.type === 'outlaw') {
     body.rotation.z = Math.sin(t * 2 + e.id) * 0.08;
+  } else if (e.type === 'warrig') {
+    body.rotation.z = Math.sin(t * 3) * 0.02;
+    const turret = body.getObjectByName('turret');
+    if (turret) turret.rotation.y = e.charging ? Math.sin(t * 20) * 0.2 : 0;
   } else {
-    body.rotation.y += 0.03;
+    body.rotation.y += e.type === 'mothership' ? 0.008 : 0.03;
     const charge = body.getObjectByName('charge')!;
     charge.visible = e.charging;
     body.traverse((o) => {
@@ -459,7 +579,7 @@ function playEventSound(ev: CombatState['events'][number]): void {
       sound.shot(ev.weapon);
       break;
     case 'kill':
-      sound.kill(ev.type);
+      sound.kill(isBoss(ev.type) ? 'boss' : ev.type);
       break;
     case 'carHit':
       sound.carHit();
@@ -472,6 +592,9 @@ function playEventSound(ev: CombatState['events'][number]): void {
       break;
     case 'laser':
       sound.laser();
+      break;
+    case 'slam':
+      sound.slam(ev.hit);
       break;
     case 'horn':
       sound.horn();

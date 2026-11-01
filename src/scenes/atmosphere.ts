@@ -15,6 +15,8 @@ export class Atmosphere {
   private stars: THREE.Points;
   private weather: Weather = 'clear';
   private light = 1;
+  /** Fog never closes in further than this (combat needs to see the enemies). */
+  minFogFar = 0;
   /** Fog distances for clear daytime; weather and night pull them in. */
   constructor(
     private scene: THREE.Scene,
@@ -56,7 +58,8 @@ export class Atmosphere {
     const fogScale: Record<Weather, number> = { clear: 1, rain: 0.55, dust: 0.25, fog: 0.18, snow: 0.4 };
     const nightScale = 0.55 + d * 0.45;
     fog.near = this.fogNear * fogScale[weather] * nightScale * 0.6;
-    fog.far = this.fogFar * fogScale[weather] * nightScale;
+    fog.far = Math.max(this.minFogFar, this.fogFar * fogScale[weather] * nightScale);
+    fog.near = Math.min(fog.near, fog.far * 0.5);
     this.hemi.intensity = 0.25 + d * 1.35 - (weather === 'clear' ? 0 : 0.2);
     this.hemi.color.setHex(d < 0.3 ? 0x8090c0 : 0xfff6e0);
     this.sun.intensity = 0.1 + d * 1.7 * (weather === 'clear' ? 1 : 0.5);

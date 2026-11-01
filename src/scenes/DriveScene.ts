@@ -1,3 +1,4 @@
+import type { BossKind } from '../game/combat';
 import * as THREE from 'three';
 import type { Path, Vec2 } from '../geo/geo';
 import { CRUISE_SPEED } from '../geo/route';
@@ -25,6 +26,7 @@ export interface DriveCallbacks {
   onEnterStop(stop: Stop): void;
   onLandmark(l: Landmark): void;
   onRoadEvent(): void;
+  onBoss(boss: BossKind): void;
   onTick(): void;
 }
 
@@ -214,6 +216,12 @@ export class DriveScene implements GameScene {
     if (res.outOfFuel) {
       this.stopping = true;
       this.cb.onOutOfFuel();
+      return;
+    }
+    if (res.boss) {
+      this.pendingTurn = null;
+      this.stopping = true;
+      this.cb.onBoss(res.boss);
       return;
     }
     if (this.pendingTurn && s.distance >= this.pendingTurn.at - 0.01) {
