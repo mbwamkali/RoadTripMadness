@@ -1,5 +1,5 @@
 import { placeFeatures, placeFuel, type FuelStation, type Landmark, type MapFeature } from '../game/landmarks';
-import { chaikin, dedupe, makeProjection, Path, resample, type LatLng, type Vec2 } from './geo';
+import { chaikin, dedupe, limitCurvature, makeProjection, Path, removeSpurs, resample, type LatLng, type Vec2 } from './geo';
 import { stateLines, stateMap, type StateLine } from './states';
 import { placeStructures, type Structure } from '../game/structures';
 
@@ -48,6 +48,8 @@ export interface RouteData {
 
 /** Cruise speed of the car in game units per second. */
 export const CRUISE_SPEED = 38;
+/** Tightest bend the road takes, in game units: wider than the widest road plus its shoulders. */
+export const MIN_TURN_RADIUS = 26;
 
 /** How long the driving part of a trip should take, in seconds, for a real distance. */
 export function targetDriveSeconds(realMeters: number): number {
@@ -97,7 +99,9 @@ export function buildRouteData(raw: RawRoute): RouteData {
 
   // Coarse resample first so smoothing works on a sane number of points,
   // then round corners and resample again at the spacing the renderer uses.
-  const smooth = resample(chaikin(resample(scaled, 10), 3), 4);
+  // Hairpins and tight corners (a city block is only a few game units long)
+  // get cut or widened so the road mesh never folds over itself.
+  const smooth = limitCurvature(resample(chaikin(removeSpurs(resample(scaled, 10), 150, 12), 3), 4), MIN_TURN_RADIUS, 4);
   const path = new Path(smooth);
 
   const steps: RouteStep[] = raw.steps.map((s) => {

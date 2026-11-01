@@ -103,6 +103,68 @@ export function chaikin(points: Vec2[], iterations = 2): Vec2[] {
   return pts;
 }
 
+/**
+ * Cuts out short out-and-back spurs and little loops: places where the route
+ * comes back to (nearly) where it was a moment ago. At game scale a U-turn
+ * at a light or a cloverleaf ramp shrinks to a hairpin narrower than the road.
+ * Works on an evenly spaced polyline; `maxLoop` is the longest detour cut.
+ */
+export function removeSpurs(points: Vec2[], maxLoop: number, closeEnough: number): Vec2[] {
+  if (points.length < 4) return points.slice();
+  const cum = cumulativeDistances(points);
+  const out: Vec2[] = [];
+  let i = 0;
+  while (i < points.length) {
+    out.push(points[i]);
+    // The furthest point within reach that comes back close to this one.
+    let back = -1;
+    for (let j = i + 2; j < points.length && cum[j] - cum[i] <= maxLoop; j++) {
+      const away = Math.hypot(points[j].x - points[i].x, points[j].y - points[i].y);
+      if (away < closeEnough && cum[j] - cum[i] > away * 3) back = j;
+    }
+    i = back > 0 ? back + 1 : i + 1;
+  }
+  return out;
+}
+
+/**
+ * Rounds off any bend tighter than `minRadius` by easing the points there
+ * toward their neighbours, so the road mesh (which is wider than a tight real
+ * corner at game scale) never folds over itself. Keeps the spacing even.
+ */
+export function limitCurvature(points: Vec2[], minRadius: number, spacing: number, maxRounds = 400): Vec2[] {
+  let pts = points.slice();
+  for (let round = 0; round < maxRounds; round++) {
+    let tight = 0;
+    const next = pts.slice();
+    for (let i = 1; i < pts.length - 1; i++) {
+      const a = pts[i - 1];
+      const b = pts[i];
+      const c = pts[i + 1];
+      const ux = b.x - a.x, uy = b.y - a.y;
+      const vx = c.x - b.x, vy = c.y - b.y;
+      const lu = Math.hypot(ux, uy) || 1;
+      const lv = Math.hypot(vx, vy) || 1;
+      const turn = Math.acos(Math.max(-1, Math.min(1, (ux * vx + uy * vy) / (lu * lv))));
+      if (turn < 1e-6 || ((lu + lv) / 2) / turn >= minRadius) continue;
+      tight++;
+      // Pull the corner point and its neighbours in a little.
+      for (let k = Math.max(1, i - 1); k <= Math.min(pts.length - 2, i + 1); k++) {
+        const w = k === i ? 0.5 : 0.25;
+        next[k] = {
+          x: next[k].x + w * ((pts[k - 1].x + pts[k + 1].x) / 2 - pts[k].x),
+          y: next[k].y + w * ((pts[k - 1].y + pts[k + 1].y) / 2 - pts[k].y),
+        };
+      }
+    }
+    pts = next;
+    if (!tight) break;
+    // Smoothing bunches points up at the corners; even them out now and then.
+    if (round % 8 === 7) pts = resample(pts, spacing);
+  }
+  return resample(pts, spacing);
+}
+
 /** A sampled path with O(log n) lookups of position and heading by distance. */
 export class Path {
   readonly points: Vec2[];

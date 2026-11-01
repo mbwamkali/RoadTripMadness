@@ -15,8 +15,8 @@ import { STOP_TITLES, type Stop } from '../game/stops';
 import { hashString, makeRng, pick, type Rng } from '../game/rng';
 import { ANNOUNCED, roadAt, type Landmark } from '../game/landmarks';
 import { interstateNumber, latLngAt, stateMap } from '../geo/states';
-import { castShadows, disposeTree, makeObstacle, makeRide, makeTrafficVehicle, makeLaneTexture, makeRoadTexture, setBlinkers, textSprite, to3, type GameScene } from './common';
-import { classAt, edgeAt, edgeOf, isDivided, PROFILES, roadSegments, SPEED, urbanZones, type RoadClass, type RoadSegment } from '../game/roads';
+import { castShadows, disposeTree, makeAsphaltTexture, makeObstacle, makeRide, makeStripeTexture, makeTrafficVehicle, makeRoadTexture, setBlinkers, textSprite, to3, type GameScene } from './common';
+import { classAt, crossSectionAt, isDivided, PROFILES, roadSegments, SPEED, urbanZones, type CrossSection, type RoadClass, type RoadSegment } from '../game/roads';
 import { buildLandmark, waterTexture } from './landmarkModels';
 import { sound } from '../audio/sound';
 import { Atmosphere } from './atmosphere';
@@ -151,11 +151,12 @@ export class DriveScene implements GameScene {
   private ground: THREE.Mesh;
   private roadTex = makeRoadTexture();
   private roadMat: THREE.MeshLambertMaterial;
-  private highwayMat: THREE.MeshLambertMaterial;
   private medianMat: THREE.MeshLambertMaterial;
-  private carriageMat: THREE.MeshLambertMaterial;
-  private carriage2Mat: THREE.MeshLambertMaterial;
-  private laneTex = [makeLaneTexture('highway'), makeLaneTexture('carriageway'), makeLaneTexture('carriageway2')];
+  /** The main road: plain asphalt with its lines drawn as separate stripes, so they line up through every change of road type. */
+  private asphaltTex = makeAsphaltTexture();
+  private stripeTex = [makeStripeTexture(false), makeStripeTexture(true)];
+  private asphaltMat: THREE.MeshLambertMaterial;
+  private stripeMats: Record<'white' | 'whiteDash' | 'yellow' | 'yellowDash', THREE.MeshLambertMaterial>;
   private segments: RoadSegment[];
   /** Share of cruise speed for the road type (eases between types). */
   private roadSpeed = 1;
@@ -219,9 +220,10 @@ export class DriveScene implements GameScene {
 
     // Layered flat surfaces: polygon offsets keep road > water > shoulder > ground without z-fighting.
     this.roadMat = new THREE.MeshLambertMaterial({ map: this.roadTex, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
-    this.highwayMat = new THREE.MeshLambertMaterial({ map: this.laneTex[0], polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
-    this.carriageMat = new THREE.MeshLambertMaterial({ map: this.laneTex[1], polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
-    this.carriage2Mat = new THREE.MeshLambertMaterial({ map: this.laneTex[2], polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
+    this.asphaltMat = new THREE.MeshLambertMaterial({ map: this.asphaltTex, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
+    const stripe = (color: number, dashed: boolean) =>
+      new THREE.MeshLambertMaterial({ color, map: this.stripeTex[dashed ? 1 : 0], alphaTest: 0.5, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -12 });
+    this.stripeMats = { white: stripe(0xe8e2cf, false), whiteDash: stripe(0xe8e2cf, true), yellow: stripe(0xf2c230, false), yellowDash: stripe(0xf2c230, true) };
     this.medianMat = new THREE.MeshLambertMaterial({
       color: new THREE.Color(groundColorAt(this.biomes, state.distance)).multiplyScalar(0.85),
       polygonOffset: true,
@@ -293,7 +295,12 @@ export class DriveScene implements GameScene {
 
   /** Half-width of the pavement at a distance. */
   edge(d: number): number {
-    return edgeAt(this.segments, d);
+    return this.section(d).edge;
+  }
+
+  /** The road's shape across at a distance (lanes, their width and the median). */
+  section(d: number): CrossSection {
+    return crossSectionAt(this.segments, d);
   }
 
   /** How much wider than a plain two-lane road it is here (scenery moves out by this much). */
@@ -308,12 +315,12 @@ export class DriveScene implements GameScene {
   }
 
   private laneAt(d: number): number {
-    return laneCenter(classAt(this.segments, d), this.playerLane, this.edge(d));
+    return laneCenter(this.section(d), this.playerLane);
   }
 
   /** Sideways position of a traffic vehicle. */
   private vehicleX(v: Vehicle): number {
-    return laneCenter(classAt(this.segments, v.d), v.lane, this.edge(v.d));
+    return laneCenter(this.section(v.d), v.lane);
   }
 
   /** Change lanes: -1 = left, 1 = right. On two-way roads you can pull into the oncoming lane to pass. */
@@ -342,10 +349,11 @@ export class DriveScene implements GameScene {
     const cls = classAt(this.segments, this.state.distance);
     if (cls === this.laneClass) return;
     const wasDefault = this.playerLane === defaultLane(this.laneClass);
-    const fromRight = PROFILES[this.laneClass].lanes - 1 - this.playerLane;
     this.laneClass = cls;
     if (wasDefault) this.playerLane = defaultLane(cls);
-    else if (this.playerLane >= 0) this.playerLane = Math.max(0, PROFILES[cls].lanes - 1 - fromRight);
+    // Lanes open up and merge away on the outside, so keep your lane counted from the
+    // centre; a merged-away lane has already slid you in beside the next one.
+    else if (this.playerLane >= 0) this.playerLane = Math.min(this.playerLane, PROFILES[cls].lanes - 1);
     this.playerLane = clampLane(cls, this.playerLane);
   }
 
@@ -598,7 +606,7 @@ export class DriveScene implements GameScene {
   }
 
   private obstacleX(o: Obstacle): number {
-    return laneCenter(classAt(this.segments, o.d), o.lane, this.edge(o.d));
+    return laneCenter(this.section(o.d), o.lane);
   }
 
   /** What a shot would hit: the nearest obstacle ahead in your lane. */
@@ -910,31 +918,37 @@ export class DriveScene implements GameScene {
     }
   }
 
-  private ribbon(from: number, to: number, half: number | ((d: number) => [number, number]), y: number, mat: THREE.Material, vScale: number, flip = false): THREE.Mesh {
-    const span = typeof half === 'number' ? (): [number, number] => [-half, half] : half;
+  /**
+   * A flat strip along the path between two sideways offsets. It always ends
+   * exactly at `to`, so strips that meet (chunks, road types) leave no gap.
+   * `uScale` maps sideways world units to texture u (0 = stretch 0..1 across).
+   */
+  private strip(from: number, to: number, span: (d: number) => [number, number], y: number, vScale: number, uScale = 0, flip = false): THREE.BufferGeometry {
     const pos: number[] = [];
     const uv: number[] = [];
     const idx: number[] = [];
-    const step = 4;
-    let i = 0;
-    for (let d = from; d <= to + 0.001; d += step, i++) {
+    const ds: number[] = [];
+    for (let d = from; d < to - 0.5; d += 4) ds.push(d);
+    ds.push(to);
+    ds.forEach((d, i) => {
       const p = this.path.pointAt(d);
       const f = this.path.directionAt(d);
       const r = { x: f.y, y: -f.x };
       const [a, b] = span(d);
       pos.push(p.x + r.x * a, y, -(p.y + r.y * a), p.x + r.x * b, y, -(p.y + r.y * b));
-      uv.push(flip ? 1 : 0, d / vScale, flip ? 0 : 1, d / vScale);
+      const [ua, ub] = uScale ? [a / uScale, b / uScale] : flip ? [1, 0] : [0, 1];
+      uv.push(ua, d / vScale, ub, d / vScale);
       if (i > 0) {
-        const a = (i - 1) * 2;
-        idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+        const k = (i - 1) * 2;
+        idx.push(k, k + 1, k + 2, k + 1, k + 3, k + 2);
       }
-    }
+    });
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
     geo.setIndex(idx);
     geo.computeVertexNormals();
-    return new THREE.Mesh(geo, mat);
+    return geo;
   }
 
   private buildChunk(k: number): THREE.Group {
@@ -1053,32 +1067,75 @@ export class DriveScene implements GameScene {
     return this.geos[`m:${name}`] ? `m:${name}` : null;
   }
 
-  /** Pavement for one chunk: two-lane roads, four-lane highways, or divided interstates. */
+  /**
+   * Pavement for one chunk: asphalt, the grass median, and the painted lines.
+   * Everything follows the road's cross-section, so where the road type
+   * changes a lane opens up or merges away and the median grows or closes,
+   * instead of the whole road squeezing.
+   */
   private buildRoad(g: THREE.Group, from: number, to: number): void {
-    const edge = (d: number) => this.edge(d);
+    const parts = new Map<THREE.Material, THREE.BufferGeometry[]>();
+    const add = (mat: THREE.Material, geo: THREE.BufferGeometry) => {
+      const list = parts.get(mat) ?? [];
+      list.push(geo);
+      parts.set(mat, list);
+    };
+    // Sample the cross-section once per spot; strips look it up many times.
+    const cache = new Map<number, CrossSection>();
+    const xs = (d: number) => {
+      let v = cache.get(d);
+      if (!v) cache.set(d, (v = this.section(d)));
+      return v;
+    };
+    const both = (fn: (d: number) => [number, number]) => [fn, (d: number): [number, number] => {
+      const [a, b] = fn(d);
+      return [-b, -a];
+    }] as const;
+    const line = (mat: THREE.Material, a: number, b: number, at: (d: number) => number, w = 0.2) => {
+      for (const fn of both((d) => [at(d) - w / 2, at(d) + w / 2])) add(mat, this.strip(a, b, fn, 0.1, 12, 0));
+    };
     // Gravel shoulders just outside the pavement on both sides.
-    g.add(this.ribbon(from, to, (d) => [-edge(d) - 3, -edge(d) + 0.5], 0.04, this.shoulderMat, 1));
-    g.add(this.ribbon(from, to, (d) => [edge(d) - 0.5, edge(d) + 3], 0.04, this.shoulderMat, 1));
-    for (const seg of this.segments) {
-      const a = Math.max(from, seg.from);
-      const b = Math.min(to, seg.to);
-      if (b <= a) continue;
-      const full = edgeOf(seg.cls);
-      if (isDivided(seg.cls)) {
-        const m = PROFILES[seg.cls].median;
-        const mat = seg.cls === 'metro' ? this.carriageMat : this.carriage2Mat;
-        // Lanes squeeze proportionally where the road tapers.
-        const inner = (d: number) => m * (edge(d) / full);
-        g.add(this.ribbon(a, b, (d) => [inner(d), edge(d)], 0.1, mat, 16));
-        g.add(this.ribbon(a, b, (d) => [-edge(d), -inner(d)], 0.1, mat, 16, true));
-        // Grass median edges.
-        g.add(this.ribbon(a, b, (d) => [-inner(d), inner(d)], 0.04, this.medianMat, 1));
-      } else if (seg.cls === 'highway') {
-        g.add(this.ribbon(a, b, (d) => [-edge(d), edge(d)], 0.1, this.highwayMat, 16));
-      } else {
-        g.add(this.ribbon(a, b, (d) => [-edge(d), edge(d)], 0.1, this.roadMat, 16));
+    for (const fn of both((d) => [xs(d).edge - 0.5, xs(d).edge + 3])) add(this.shoulderMat, this.strip(from, to, fn, 0.04, 1));
+    // Asphalt, one side of the centre line (or median) each.
+    for (const fn of both((d) => [xs(d).median, xs(d).edge])) add(this.asphaltMat, this.strip(from, to, fn, 0.1, 7, 7));
+    // Grass median, where there is one.
+    for (const [a, b] of this.spans(from, to, (d) => xs(d).median > 0.02)) {
+      add(this.medianMat, this.strip(a, b, (d) => [-xs(d).median, xs(d).median], 0.04, 1));
+    }
+    // Yellow on the left: a double line on bigger two-way roads, the median edge on divided ones,
+    // and a dashed centre line on two-lane roads.
+    const solidYellow = (d: number) => xs(d).median > 0.02 || classAt(this.segments, d) !== 'local';
+    for (const [a, b] of this.spans(from, to, solidYellow)) line(this.stripeMats.yellow, a, b, (d) => xs(d).median + 0.22, 0.16);
+    for (const [a, b] of this.spans(from, to, (d) => !solidYellow(d))) add(this.stripeMats.yellowDash, this.strip(a, b, () => [-0.1, 0.1], 0.1, 12));
+    // White edge lines, angling in where a lane merges away.
+    line(this.stripeMats.white, from, to, (d) => xs(d).edge - 0.35);
+    // Dashed lines between lanes, each ending where its lane runs out.
+    for (let k = 1; k < 4; k++) {
+      for (const [a, b] of this.spans(from, to, (d) => xs(d).lanes > k + 0.15)) {
+        line(this.stripeMats.whiteDash, a, b, (d) => xs(d).median + k * xs(d).laneWidth);
       }
     }
+    for (const [mat, geos] of parts) {
+      const geo = geos.length > 1 ? mergeGeometries(geos) : geos[0];
+      if (geos.length > 1) geos.forEach((x) => x.dispose());
+      g.add(new THREE.Mesh(geo, mat));
+    }
+  }
+
+  /** The stretches of [from, to] where a test holds, to the nearest 2 units. */
+  private spans(from: number, to: number, test: (d: number) => boolean): [number, number][] {
+    const out: [number, number][] = [];
+    let start: number | null = null;
+    for (let d = from; ; d = Math.min(to, d + 2)) {
+      const ok = test(d);
+      if (ok && start === null) start = d;
+      if ((!ok || d >= to) && start !== null) {
+        if (d > start) out.push([start, d]);
+        start = null;
+      }
+      if (d >= to) break;
+    }
+    return out;
   }
 
   /** Green mile markers on interstates, numbered like the exits (miles into the state). */
@@ -1208,9 +1265,10 @@ export class DriveScene implements GameScene {
     bm.map?.dispose();
     bm.emissiveMap?.dispose();
     Object.values(this.mats).forEach((x) => !x.userData.shared && x.dispose());
-    for (const m of [this.roadMat, this.highwayMat, this.carriageMat, this.carriage2Mat, this.medianMat, this.shoulderMat]) m.dispose();
+    for (const m of [this.roadMat, this.asphaltMat, ...Object.values(this.stripeMats), this.medianMat, this.shoulderMat]) m.dispose();
     this.roadTex.dispose();
-    this.laneTex.forEach((t) => t.dispose());
+    this.asphaltTex.dispose();
+    this.stripeTex.forEach((t) => t.dispose());
   }
 }
 

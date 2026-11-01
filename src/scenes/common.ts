@@ -65,6 +65,38 @@ function withAsphalt(t: THREE.CanvasTexture, draw: (img: HTMLImageElement | null
   });
 }
 
+/** Plain asphalt with no markings (the main road draws its lines as separate stripes). */
+export function makeAsphaltTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 128;
+  c.height = 128;
+  const g = c.getContext('2d')!;
+  const t = new THREE.CanvasTexture(c);
+  const draw = (img: HTMLImageElement | null) => paintAsphalt(g, 128, 128, '#424247', 700, img);
+  draw(null);
+  withAsphalt(t, draw);
+  t.wrapS = THREE.RepeatWrapping;
+  t.wrapT = THREE.RepeatWrapping;
+  t.anisotropy = 8;
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+/** A painted road stripe, solid or dashed (white; the material tints it). Dashes are 40% of the repeat. */
+export function makeStripeTexture(dashed: boolean): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 4;
+  c.height = 64;
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#ffffff';
+  g.fillRect(0, 0, 4, dashed ? 26 : 64);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = THREE.RepeatWrapping;
+  t.wrapT = THREE.RepeatWrapping;
+  t.anisotropy = 4;
+  return t;
+}
+
 /**
  * Asphalt with lane markings for wider roads.
  * 'highway': four lanes, double yellow in the middle, dashed white between lanes.

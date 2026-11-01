@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { clampLane, defaultLane, laneCenter, Traffic, oncoming, sideIndex } from '../src/game/traffic';
-import { edgeOf, type RoadSegment } from '../src/game/roads';
+import { crossSectionOf, edgeOf, type RoadSegment } from '../src/game/roads';
 
 const road = (cls: RoadSegment['cls'], length = 20000): RoadSegment[] => [{ from: 0, to: length, cls }];
 
@@ -15,12 +15,13 @@ describe('lanes', () => {
   it('puts lane centres on the right side of the road and inside the pavement', () => {
     for (const cls of ['interstate', 'metro', 'highway', 'local'] as const) {
       const edge = edgeOf(cls);
-      const x0 = laneCenter(cls, 0, edge);
-      const xr = laneCenter(cls, defaultLane(cls), edge);
+      const xs = crossSectionOf(cls);
+      const x0 = laneCenter(xs, 0);
+      const xr = laneCenter(xs, defaultLane(cls));
       expect(x0).toBeGreaterThan(0);
       expect(xr).toBeGreaterThanOrEqual(x0);
       expect(xr).toBeLessThan(edge);
-      expect(laneCenter(cls, -1, edge)).toBeCloseTo(-x0);
+      expect(laneCenter(xs, -1)).toBeCloseTo(-x0);
     }
   });
 

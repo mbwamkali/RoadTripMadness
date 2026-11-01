@@ -1,4 +1,4 @@
-import { classAt, isDivided, PROFILES, SPEED, type RoadClass, type RoadSegment } from './roads';
+import { classAt, isDivided, laneX, PROFILES, SPEED, type CrossSection, type RoadClass, type RoadSegment } from './roads';
 import { makeRng, pick, range, type Rng } from './rng';
 
 /**
@@ -52,16 +52,11 @@ export function lanesAt(segments: RoadSegment[], d: number): number {
 }
 
 /**
- * Sideways offset of a lane's centre (+ = right of the centre line), for a
- * road whose pavement edge is `edge` (lanes squeeze in proportion where the
- * road tapers between types).
+ * Sideways offset of a lane's centre (+ = right of the centre line) on a
+ * road with the given cross-section (see roads.ts crossSectionAt).
  */
-export function laneCenter(cls: RoadClass, lane: number, edge: number): number {
-  const p = PROFILES[cls];
-  const full = p.median + p.lanes * p.laneWidth;
-  const i = Math.min(sideIndex(lane), p.lanes - 1);
-  const x = (p.median + (i + 0.5) * p.laneWidth) * (edge / full);
-  return oncoming(lane) ? -x : x;
+export function laneCenter(xs: CrossSection, lane: number): number {
+  return laneX(xs, sideIndex(lane), oncoming(lane));
 }
 
 /** The lane the car settles into by itself: the right lane, or second from the right on a wide city interstate. */

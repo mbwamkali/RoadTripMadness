@@ -155,6 +155,54 @@ export function roadSegments(route: RouteData, pathLength: number, minLength = 2
 
 /** Looks up the road class at a distance (segments are sorted). */
 export function classAt(segments: RoadSegment[], d: number): RoadClass {
+  return segments[segmentIndex(segments, d)]?.cls ?? 'local';
+}
+
+/** How far a lane takes to open up or merge away, or a median to grow or close. */
+export const TAPER = 160;
+
+/** The shape of the road across at one spot. `lanes` is fractional while a lane opens up or merges away. */
+export interface CrossSection {
+  /** Half-width of the grass median (0 = undivided). */
+  median: number;
+  /** Lanes each way. */
+  lanes: number;
+  laneWidth: number;
+  /** Distance from the centre line to the outer edge of the pavement. */
+  edge: number;
+}
+
+export const crossSectionOf = (cls: RoadClass): CrossSection => ({ ...PROFILES[cls], edge: edgeOf(cls) });
+
+function blend(a: CrossSection, b: CrossSection, t: number): CrossSection {
+  const k = t * t * (3 - 2 * t);
+  const median = a.median + (b.median - a.median) * k;
+  const lanes = a.lanes + (b.lanes - a.lanes) * k;
+  const laneWidth = a.laneWidth + (b.laneWidth - a.laneWidth) * k;
+  return { median, lanes, laneWidth, edge: median + lanes * laneWidth };
+}
+
+/**
+ * The road's cross-section at a distance. Like a real highway, lane widths
+ * stay put and the extra lanes open up on the outside or merge away. A road
+ * that gets wider does it just after the change in road type, and one that
+ * gets narrower is done by the change, so cars that lose their lane have
+ * already slid over when the lanes are renumbered.
+ */
+export function crossSectionAt(segments: RoadSegment[], d: number, taper = TAPER): CrossSection {
+  const i = segmentIndex(segments, d);
+  const s = segments[i];
+  if (!s) return crossSectionOf('local');
+  let out = crossSectionOf(s.cls);
+  const prev = segments[i - 1];
+  const next = segments[i + 1];
+  if (prev && edgeOf(prev.cls) < edgeOf(s.cls) && d - s.from < taper) out = blend(crossSectionOf(prev.cls), out, Math.max(0, d - s.from) / taper);
+  if (next && edgeOf(next.cls) < edgeOf(s.cls) && s.to - d < taper) out = blend(crossSectionOf(next.cls), out, Math.max(0, s.to - d) / taper);
+  return out;
+}
+
+/** Index of the segment holding a distance (segments are sorted). */
+function segmentIndex(segments: RoadSegment[], d: number): number {
   let lo = 0;
   let hi = segments.length - 1;
   while (lo < hi) {
@@ -162,20 +210,20 @@ export function classAt(segments: RoadSegment[], d: number): RoadClass {
     if (segments[mid].from <= d) lo = mid;
     else hi = mid - 1;
   }
-  return segments[lo]?.cls ?? 'local';
+  return lo;
 }
 
-/** Pavement edge with a smooth taper where the road widens or narrows. */
-export function edgeAt(segments: RoadSegment[], d: number, taper = 60): number {
-  const i = segments.findIndex((s) => d >= s.from && d < s.to);
-  const s = segments[i < 0 ? segments.length - 1 : i];
-  if (!s) return edgeOf('local');
-  let e = edgeOf(s.cls);
-  const prev = segments[i - 1];
-  const next = segments[i + 1];
-  if (prev && d - s.from < taper) e = lerp(edgeOf(prev.cls), e, 0.5 + (d - s.from) / taper / 2);
-  if (next && s.to - d < taper) e = lerp(edgeOf(next.cls), e, 0.5 + (s.to - d) / taper / 2);
-  return e;
+/** Pavement edge, tapering where the road widens or narrows. */
+export function edgeAt(segments: RoadSegment[], d: number): number {
+  return crossSectionAt(segments, d).edge;
 }
 
-const lerp = (a: number, b: number, t: number) => a + (b - a) * Math.max(0, Math.min(1, t));
+/**
+ * Sideways offset of a lane's centre (+ = right of the centre line). Lanes
+ * keep their width; a lane that is merging away pushes its cars in toward
+ * the next lane over as the pavement narrows.
+ */
+export function laneX(xs: CrossSection, sideIndex: number, oncoming: boolean): number {
+  const x = Math.max(xs.median + xs.laneWidth / 2, Math.min(xs.median + (sideIndex + 0.5) * xs.laneWidth, xs.edge - xs.laneWidth / 2));
+  return oncoming ? -x : x;
+}
