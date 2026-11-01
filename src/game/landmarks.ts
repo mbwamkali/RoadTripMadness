@@ -39,6 +39,8 @@ export interface Landmark {
   angle?: number;
   /** Road signs: which way the route goes there. */
   arrow?: 'left' | 'right' | 'straight';
+  /** Town signs: a city, where interstates widen. */
+  big?: boolean;
 }
 
 export const LANDMARK_TITLES: Record<LandmarkKind, string> = {
@@ -88,6 +90,8 @@ export interface MapFeature {
   name: string;
   /** Fuel: a truck stop (big rigs welcome). */
   truck?: boolean;
+  /** Towns: a city (50,000 people or more). */
+  big?: boolean;
   /** A point feature, or the centre of an area. */
   point?: LatLng;
   /** A line feature (rivers). */
@@ -204,7 +208,7 @@ export function placeFeatures(route: RouteData, path: Path, features: MapFeature
       out.push({ at, side: lateral < 0 ? -1 : 1, offset: Math.max(350, Math.min(900, far)), kind: 'peak', name: f.name, real: true });
     } else if (f.kind === 'citysign') {
       if (far > 250) continue;
-      out.push({ at, side: 1, offset: 9, kind: 'citysign', name: f.name, real: true });
+      out.push({ at, side: 1, offset: 9, kind: 'citysign', name: f.name, real: true, ...(f.big ? { big: true } : {}) });
     } else {
       if (far > 400) continue;
       out.push({ at, side: lateral < 0 ? -1 : 1, offset: Math.max(28, Math.min(110, far)), kind: f.kind, name: f.name, real: true });

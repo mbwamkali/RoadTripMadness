@@ -257,7 +257,7 @@ export class Atlas {
    */
   featuresAlong(coords: LatLng[]): MapFeature[] {
     const out: MapFeature[] = [];
-    for (const c of nearRoute(coords, this.cities, 4_000)) out.push({ kind: 'citysign', name: c.item.name, point: c.item });
+    for (const c of nearRoute(coords, this.cities, 4_000)) out.push({ kind: 'citysign', name: c.item.name, point: c.item, ...(c.item.pop >= 50_000 ? { big: true } : {}) });
     const parks = this.pois.filter((p) => p.kind === 'park');
     const peaks = this.pois.filter((p) => p.kind === 'peak');
     const rivers = this.pois.filter((p) => p.kind === 'river');

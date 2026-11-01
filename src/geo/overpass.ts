@@ -147,6 +147,12 @@ function kindFor(tags: Record<string, string>): MapFeature['kind'] | null {
   return null;
 }
 
+/** Cities (or towns of 50,000 or more) get wider interstates around them. */
+function isBigPlace(tags: Record<string, string>): boolean {
+  const pop = parseInt((tags.population ?? '').replace(/[, ]/g, ''), 10);
+  return tags.place === 'city' || pop >= 50_000;
+}
+
 export function parseOverpass(json: { elements?: OsmElement[] }): MapFeature[] {
   const out: MapFeature[] = [];
   for (const e of json.elements ?? []) {
@@ -171,7 +177,8 @@ export function parseOverpass(json: { elements?: OsmElement[] }): MapFeature[] {
     if (kind === 'fuel') {
       const truck = tags.hgv === 'yes' || TRUCK_BRANDS.test(`${name} ${tags.brand ?? ''}`);
       out.push({ kind, name, point, ...(truck ? { truck: true } : {}) });
-    } else out.push({ kind, name, point });
+    } else if (kind === 'citysign' && isBigPlace(tags)) out.push({ kind, name, point, big: true });
+    else out.push({ kind, name, point });
   }
   return out;
 }

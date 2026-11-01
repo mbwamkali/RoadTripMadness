@@ -43,13 +43,14 @@ export function makeRoadTexture(): THREE.CanvasTexture {
  * Asphalt with lane markings for wider roads.
  * 'highway': four lanes, double yellow in the middle, dashed white between lanes.
  * 'carriageway': one side of a divided road, four lanes, yellow on the median side (left).
+ * 'carriageway2': the same with two lanes (country interstates).
  */
-export function makeLaneTexture(kind: 'highway' | 'carriageway'): THREE.CanvasTexture {
+export function makeLaneTexture(kind: 'highway' | 'carriageway' | 'carriageway2'): THREE.CanvasTexture {
   const c = document.createElement('canvas');
   c.width = 256;
   c.height = 256;
   const g = c.getContext('2d')!;
-  g.fillStyle = kind === 'carriageway' ? '#46464b' : '#3e3e43';
+  g.fillStyle = kind === 'highway' ? '#3e3e43' : '#46464b';
   g.fillRect(0, 0, 256, 256);
   for (let i = 0; i < 1600; i++) {
     const v = 52 + Math.random() * 30;
@@ -70,7 +71,7 @@ export function makeLaneTexture(kind: 'highway' | 'carriageway'): THREE.CanvasTe
     g.fillStyle = '#f2c230';
     g.fillRect(6, 0, 4, 256); // median edge
     g.fillStyle = '#e8e2cf';
-    for (const x of [lane, lane * 2, lane * 3]) g.fillRect(x - 2, 0, 4, 110);
+    for (const x of kind === 'carriageway2' ? [128] : [lane, lane * 2, lane * 3]) g.fillRect(x - 2, 0, 4, 110);
   }
   const t = new THREE.CanvasTexture(c);
   t.wrapS = THREE.RepeatWrapping;

@@ -73,7 +73,7 @@ describe('road types', () => {
     const segs = roadSegments(route66, path.length);
     const share = (c: string) => segs.filter((s) => s.cls === c).reduce((a, s) => a + s.to - s.from, 0) / path.length;
     console.log(segs.length, 'segments', ['interstate', 'highway', 'local'].map((c) => `${c} ${(share(c) * 100).toFixed(0)}%`).join(', '));
-    expect(share('interstate')).toBeGreaterThan(0.5);
+    expect(share('interstate') + share('metro')).toBeGreaterThan(0.5);
     expect(segs[0].from).toBe(0);
     expect(segs[segs.length - 1].to).toBe(path.length);
     for (let i = 1; i < segs.length; i++) {
@@ -91,7 +91,28 @@ describe('road types', () => {
   it('puts interstate exits on the right', async () => {
     const { roadSegments, classAt } = await import('../src/game/roads');
     const segs = roadSegments(route66, path.length);
-    for (const s of generateStops(route66, path.length, 3)) if (classAt(segs, s.at) === 'interstate') expect(s.side).toBe('right');
+    for (const s of generateStops(route66, path.length, 3)) if (classAt(segs, s.at) === 'interstate' || classAt(segs, s.at) === 'metro') expect(s.side).toBe('right');
+  });
+
+  it('widens interstates to four lanes each way near cities and two in the country', async () => {
+    const { roadSegments, urbanZones, edgeOf, PROFILES } = await import('../src/game/roads');
+    expect(PROFILES.interstate.lanes).toBe(2);
+    expect(PROFILES.metro.lanes).toBe(4);
+    expect(edgeOf('metro')).toBeGreaterThan(edgeOf('interstate'));
+    const zones = urbanZones(route66, path.length);
+    const cities = (route66.landmarks ?? []).filter((l) => l.kind === 'citysign' && l.big).map((l) => l.name);
+    console.log('cities', cities.join(', '));
+    // Oklahoma City, Amarillo and Albuquerque are on the way.
+    expect(cities.length).toBeGreaterThan(3);
+    expect(zones[0].from).toBe(0);
+    expect(zones[zones.length - 1].to).toBe(path.length);
+    const segs = roadSegments(route66, path.length);
+    const len = (c: string) => segs.filter((s) => s.cls === c).reduce((a, s) => a + s.to - s.from, 0);
+    console.log('metro', (len('metro') / path.length * 100).toFixed(0), '% interstate', (len('interstate') / path.length * 100).toFixed(0), '%');
+    expect(len('metro')).toBeGreaterThan(0);
+    expect(len('interstate')).toBeGreaterThan(len('metro'));
+    // Every city interstate stretch overlaps a city zone.
+    for (const s of segs.filter((x) => x.cls === 'metro')) expect(zones.some((z) => z.from < s.to && z.to > s.from)).toBe(true);
   });
 });
 

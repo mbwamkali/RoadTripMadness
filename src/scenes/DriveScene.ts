@@ -7,7 +7,7 @@ import { STOP_TITLES, type Stop } from '../game/stops';
 import { hashString, makeRng, type Rng } from '../game/rng';
 import { ANNOUNCED, type Landmark } from '../game/landmarks';
 import { castShadows, disposeTree, makeCar, makeLaneTexture, makeRoadTexture, setBlinkers, textSprite, to3, type GameScene } from './common';
-import { classAt, edgeAt, edgeOf, laneOffset, PROFILES, roadSegments, type RoadSegment } from '../game/roads';
+import { classAt, edgeAt, edgeOf, isDivided, laneOffset, PROFILES, roadSegments, SPEED, type RoadSegment } from '../game/roads';
 import { buildLandmark, waterTexture } from './landmarkModels';
 import { sound } from '../audio/sound';
 import { Atmosphere } from './atmosphere';
@@ -106,8 +106,11 @@ export class DriveScene implements GameScene {
   private highwayMat: THREE.MeshLambertMaterial;
   private medianMat: THREE.MeshLambertMaterial;
   private carriageMat: THREE.MeshLambertMaterial;
-  private laneTex = [makeLaneTexture('highway'), makeLaneTexture('carriageway')];
+  private carriage2Mat: THREE.MeshLambertMaterial;
+  private laneTex = [makeLaneTexture('highway'), makeLaneTexture('carriageway'), makeLaneTexture('carriageway2')];
   private segments: RoadSegment[];
+  /** Share of cruise speed for the road type (eases between types). */
+  private roadSpeed = 1;
   /** Current sideways position of the car (eases between lanes when the road changes). */
   private lane = 2;
   private shoulderMat: THREE.MeshLambertMaterial;
@@ -151,6 +154,7 @@ export class DriveScene implements GameScene {
     this.roadMat = new THREE.MeshLambertMaterial({ map: this.roadTex, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
     this.highwayMat = new THREE.MeshLambertMaterial({ map: this.laneTex[0], polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
     this.carriageMat = new THREE.MeshLambertMaterial({ map: this.laneTex[1], polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
+    this.carriage2Mat = new THREE.MeshLambertMaterial({ map: this.laneTex[2], polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
     this.medianMat = new THREE.MeshLambertMaterial({
       color: new THREE.Color(groundColorAt(this.biomes, state.distance)).multiplyScalar(0.85),
       polygonOffset: true,
@@ -159,6 +163,7 @@ export class DriveScene implements GameScene {
     });
     this.segments = roadSegments(state.route, path.length);
     this.lane = this.laneAt(state.distance);
+    this.roadSpeed = SPEED[classAt(this.segments, state.distance)].factor;
     this.shoulderMat = new THREE.MeshLambertMaterial({ color: groundColorAt(this.biomes, state.distance, 'shoulder'), polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
     const plants = plantModels();
     this.mats = {
@@ -198,6 +203,11 @@ export class DriveScene implements GameScene {
   /** How much wider than a plain two-lane road it is here (scenery moves out by this much). */
   widen(d: number): number {
     return this.edge(d) - ROAD_HALF;
+  }
+
+  /** The usual speed limit where the car is, in mph. */
+  speedLimit(d = this.state.distance): number {
+    return SPEED[classAt(this.segments, d)].mph;
   }
 
   private laneAt(d: number): number {
@@ -305,7 +315,10 @@ export class DriveScene implements GameScene {
 
   private drive(dt: number): void {
     const s = this.state;
-    let speed = CRUISE_SPEED * this.warp;
+    // Faster on interstates, slower through towns; eases between road types.
+    const want = SPEED[classAt(this.segments, s.distance)].factor;
+    this.roadSpeed += (want - this.roadSpeed) * Math.min(1, dt * 0.8);
+    let speed = CRUISE_SPEED * this.roadSpeed * this.warp;
     if (this.promptStop) speed = Math.min(speed, CRUISE_SPEED * 0.7);
     let step = speed * dt;
     if (this.pendingTurn && s.distance + step >= this.pendingTurn.at) {
@@ -591,12 +604,13 @@ export class DriveScene implements GameScene {
       const b = Math.min(to, seg.to);
       if (b <= a) continue;
       const full = edgeOf(seg.cls);
-      if (seg.cls === 'interstate') {
-        const m = PROFILES.interstate.median;
+      if (isDivided(seg.cls)) {
+        const m = PROFILES[seg.cls].median;
+        const mat = seg.cls === 'metro' ? this.carriageMat : this.carriage2Mat;
         // Lanes squeeze proportionally where the road tapers.
         const inner = (d: number) => m * (edge(d) / full);
-        g.add(this.ribbon(a, b, (d) => [inner(d), edge(d)], 0.1, this.carriageMat, 16));
-        g.add(this.ribbon(a, b, (d) => [-edge(d), -inner(d)], 0.1, this.carriageMat, 16, true));
+        g.add(this.ribbon(a, b, (d) => [inner(d), edge(d)], 0.1, mat, 16));
+        g.add(this.ribbon(a, b, (d) => [-edge(d), -inner(d)], 0.1, mat, 16, true));
         // Grass median edges.
         g.add(this.ribbon(a, b, (d) => [-inner(d), inner(d)], 0.04, this.medianMat, 1));
       } else if (seg.cls === 'highway') {
@@ -686,7 +700,7 @@ export class DriveScene implements GameScene {
     this.ground.geometry.dispose();
     Object.values(this.geos).forEach((x) => x.dispose());
     Object.values(this.mats).forEach((x) => x.dispose());
-    for (const m of [this.roadMat, this.highwayMat, this.carriageMat, this.medianMat, this.shoulderMat]) m.dispose();
+    for (const m of [this.roadMat, this.highwayMat, this.carriageMat, this.carriage2Mat, this.medianMat, this.shoulderMat]) m.dispose();
     this.roadTex.dispose();
     this.laneTex.forEach((t) => t.dispose());
   }

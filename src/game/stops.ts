@@ -1,6 +1,6 @@
 import type { RouteData } from '../geo/route';
 import { hashString, makeRng, pick, type Rng } from './rng';
-import { classAt, roadSegments } from './roads';
+import { classAt, isDivided, roadSegments } from './roads';
 
 export type StopKind = 'town' | 'gas' | 'truckstop' | 'farm' | 'mall' | 'base';
 export type PlaceKind = 'pumps' | 'garage' | 'grocery' | 'hardware' | 'gunshop' | 'pharmacy' | 'police' | 'junkyard' | 'barn' | 'motel';
@@ -89,7 +89,7 @@ export function generateStops(route: RouteData, pathLength: number, seed: number
     const at = station ? station.at : town ? town.at + 60 : turn ? turn.at : ideal + (rng() - 0.5) * spacing * 0.3;
     const dir = station?.side ?? town?.side ?? turn?.modifier;
     // Interstate exits are on the right.
-    const onInterstate = classAt(segments, at) === 'interstate';
+    const onInterstate = isDivided(classAt(segments, at));
     const side: Stop['side'] = onInterstate ? 'right' : dir?.includes('left') ? 'left' : dir?.includes('right') ? 'right' : rng() < 0.5 ? 'left' : 'right';
     let kind: StopKind = fuel ? pick(rng, ['gas', 'truckstop', 'town'] as const) : pickKind(rng);
     if (station) kind = station.truck ? 'truckstop' : 'gas';

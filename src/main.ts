@@ -546,7 +546,7 @@ function showDriveHud(): void {
     const hour = hourOf(s);
     const wx = weatherAt(s);
     const road = roadAt(s.route, s.distance);
-    progressText.textContent = `${isNight(hour) ? '🌙' : '☀️'} ${clockText(hour)} · ${wx === 'clear' ? '' : `${WEATHER_INFO[wx].icon} ${WEATHER_INFO[wx].name} · `}${road ? `${road} · ` : ''}${fmtKm(left)} to ${s.route.endLabel.split(',')[0]}`;
+    progressText.textContent = `${isNight(hour) ? '🌙' : '☀️'} ${clockText(hour)} · ${wx === 'clear' ? '' : `${WEATHER_INFO[wx].icon} ${WEATHER_INFO[wx].name} · `}${road ? `${road} · ` : ''}${drive ? `${drive.speedLimit()} mph · ` : ''}${fmtKm(left)} to ${s.route.endLabel.split(',')[0]}`;
     if (frameCount++ % 10 === 0) map.draw(s.distance, s.passed);
   };
   hudTick();
