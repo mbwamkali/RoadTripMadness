@@ -5,6 +5,8 @@
  * the one before, so the voice never falls behind the game.
  */
 
+import { kidMode } from '../game/kidMode';
+
 const KEY = 'rtm-narrate';
 
 /** Emoji and pictographs read badly ("fuel pump"); speech gets plain words only. */
@@ -49,8 +51,9 @@ export const narrator = {
   get available(): boolean {
     return !!synth();
   },
+  /** On when switched on, and always in kid mode. */
   get on(): boolean {
-    return enabled && !!synth();
+    return (enabled || kidMode.on) && !!synth();
   },
   set(on: boolean, remember = true): void {
     enabled = on;
@@ -67,7 +70,7 @@ export const narrator = {
   say(text: string): void {
     const s = synth();
     const line = speakable(text);
-    if (!enabled || !s || !line) return;
+    if (!(enabled || kidMode.on) || !s || !line) return;
     s.cancel();
     const u = new SpeechSynthesisUtterance(line);
     voice = voice ?? pickVoice();

@@ -42,6 +42,7 @@ import { CREW, rollEvent, type RoadEvent } from './game/events';
 import { mpg, swipeAction } from './game/driving';
 import { installButton } from './ui/install';
 import { narrateUi, narrator } from './audio/narrator';
+import { choiceIcon, kidChoices, kidMode, oneLine } from './game/kidMode';
 import { eventScenes, playEventScene, sceneKindFor, type SceneKind } from './scenes/eventScene';
 import { DoubleTap, isSwipe, type Press } from './game/gestures';
 import { RAGE_HOSTILE, RAGE_MAX, rageOf } from './game/rage';
@@ -154,6 +155,7 @@ function showTitle(): void {
       savedTrips > 0 && h('button', { class: 'btn', onclick: () => showSavedTrips(pick, showTitle) }, `Saved trips (${savedTrips})`),
       h('button', { class: 'btn', onclick: () => previewRoute(buildRouteData(demoRawRoute(Date.now() % 1000)), undefined, showTitle) }, 'Quick demo trip (made-up map)'),
       h('button', { class: 'btn ghost', onclick: showScores }, '🏆 High scores'),
+      kidModeButton(),
       installButton(),
       isOffline() && h('div', { class: 'offline-badge' }, 'Offline: classic, saved and atlas trips still work'),
       h(
@@ -165,6 +167,21 @@ function showTitle(): void {
       ),
     ),
   );
+}
+
+/** The Kid mode switch on the title screen. */
+function kidModeButton(): HTMLElement {
+  const label = () => `🧒 Kid mode: ${kidMode.on ? 'on' : 'off'}`;
+  const b = h('button', { class: `btn kid-toggle ${kidMode.on ? 'on' : ''}` }, label());
+  b.addEventListener('click', () => {
+    kidMode.set(!kidMode.on);
+    b.textContent = label();
+    b.classList.toggle('on', kidMode.on);
+    document.body.classList.toggle('kid', kidMode.on);
+    if (kidMode.on) narrator.say('Kid mode is on. I will read everything out loud.');
+    else narrator.stop();
+  });
+  return b;
 }
 
 function scoreTable(list: ScoreEntry[], highlight = -1): HTMLElement {
@@ -322,7 +339,7 @@ function previewRoute(route: RouteData, note?: string, back: () => void = showSe
   clearUi();
   addStateLines(route);
   const s = newGame(route);
-  let difficulty = loadDifficulty();
+  let difficulty = kidMode.on ? DIFFICULTY_IDS[0] : loadDifficulty();
   const diffBtns = DIFFICULTY_IDS.map((d) =>
     h(
       'button',
@@ -442,7 +459,7 @@ function previewRoute(route: RouteData, note?: string, back: () => void = showSe
         h('li', {}, 'Something big is waiting halfway, and another at the end of the road.'),
       ),
       note && h('p', { class: 'note' }, note),
-      h('div', { class: 'difficulty' }, ...diffBtns),
+      kidMode.on ? h('p', { class: 'note' }, `🧒 Kid mode: ${DIFFICULTIES[DIFFICULTY_IDS[0]].name}, the easiest trip`) : h('div', { class: 'difficulty' }, ...diffBtns),
       h('div', { class: 'rides' }, ...rideBtns),
       rideBlurb,
       h('button', { class: 'btn primary', onclick: go }, 'Hit the road'),
@@ -703,6 +720,23 @@ function inventoryLine(s: GameState): HTMLElement {
   );
 }
 
+/** Supplies as pictures with little bars (kid mode): no numbers to read. */
+function kidSupplies(s: GameState): HTMLElement {
+  const i = s.inv;
+  const item = (icon: string, title: string, v: number, full: number) =>
+    h('span', { class: 'kid-item', title }, icon, h('span', { class: 'mini' }, h('span', { class: `fill ${v <= 0 ? 'empty' : ''}`, style: `width:${Math.min(100, (v / full) * 100)}%` })));
+  return h(
+    'div',
+    { class: 'inv kid-inv' },
+    item('💵', 'Cash', i.cash, 200),
+    item('🔫', 'Bullets', i.bullets, 60),
+    item('💥', 'Shotgun shells', i.shells, 12),
+    item('🌿', 'Catnip bombs', i.catnip, 3),
+    item('🔩', 'Scrap', i.scrap, 40),
+    ...s.crew.map((c) => h('span', { class: 'kid-item', title: CREW[c].name }, CREW[c].icon)),
+  );
+}
+
 function showDriveHud(): void {
   clearUi();
   const s = state!;
@@ -758,7 +792,7 @@ function showDriveHud(): void {
     pad('▶', 'Change lane right', () => drive?.steer(1)),
   );
   // A big shoot button for what is ahead; only in kid mode. Everyone else double-taps the target.
-  const bigShoot = false;
+  const bigShoot = kidMode.on;
   const shootBtn = pad('🔫', 'Shoot what is ahead', () => shootAhead());
   shootBtn.classList.add('shoot');
   const shootRow = h('div', { class: 'shoot-row' }, shootBtn);
@@ -791,7 +825,7 @@ function showDriveHud(): void {
     rage.el.classList.toggle('hot', rageOf(s) >= RAGE_HOSTILE);
     const key = JSON.stringify(s.inv) + s.crew.join();
     if (key !== lastInv) {
-      inv.replaceChildren(inventoryLine(s));
+      inv.replaceChildren(kidMode.on ? kidSupplies(s) : inventoryLine(s));
       lastInv = key;
     }
     (progress.firstChild as HTMLElement).style.width = `${(s.distance / p.length) * 100}%`;
@@ -992,7 +1026,8 @@ function showRoadEvent(ev: RoadEvent): void {
   const s = state!;
   saveGame(s);
   const body = h('div', { class: 'event-body' });
-  const card = h('div', { class: 'card event' }, eventPicture(ev.icon, sceneKindFor(ev.id)), h('h2', {}, ev.title), h('p', {}, ev.text), body);
+  const kid = kidMode.on;
+  const card = h('div', { class: `card event ${kid ? 'kid' : ''}` }, eventPicture(ev.icon, sceneKindFor(ev.id)), h('h2', {}, ev.title), h('p', {}, kid ? oneLine(ev.text) : ev.text), body);
   const overlay = h('div', { class: 'modal' }, card);
   const finish = (fight?: EnemyType) => {
     overlay.remove();
@@ -1002,7 +1037,7 @@ function showRoadEvent(ev: RoadEvent): void {
     hudTick?.();
   };
   body.replaceChildren(
-    ...ev.choices.map((ch) =>
+    ...(kid ? kidChoices(ev.choices) : ev.choices).map((ch) =>
       h(
         'button',
         {
@@ -1014,13 +1049,15 @@ function showRoadEvent(ev: RoadEvent): void {
             else if (out.ok) sound.coin();
             else sound.bad();
             hudTick?.();
-            narrator.say(out.message);
+            const message = kid ? oneLine(out.message) : out.message;
+            narrator.say(message);
             body.replaceChildren(
-              h('p', { class: `outcome ${out.ok ? 'good' : 'bad'}` }, out.message),
+              h('p', { class: `outcome ${out.ok ? 'good' : 'bad'}` }, message),
               h('button', { class: 'btn primary', onclick: () => finish(out.fight) }, out.fight ? 'Fight!' : 'Continue'),
             );
           },
         },
+        kid && h('span', { class: 'choice-icon' }, choiceIcon(ch.label)),
         h('b', {}, ch.label),
         ch.hint ? h('small', {}, ch.hint) : null,
       ),
@@ -1349,7 +1386,7 @@ function showCombatHud(c: CombatState): void {
         'div',
         { class: `banner ${c.boss ? 'boss' : ''}` },
         c.title,
-        h('small', {}, c.boss ? 'Hold on the boss to shoot. Steer out of the red lane!' : 'Tap or hold on enemies to shoot. Survive or wipe them out.'),
+        h('small', {}, kidMode.on ? 'Tap the bad guys!' : c.boss ? 'Hold on the boss to shoot. Swipe to steer out of the red lane!' : 'Tap or hold on enemies to shoot. Swipe to steer, up to boost.'),
       ),
       h('div', { class: 'stats' }, hp.el, esc.el),
       h(
@@ -1561,6 +1598,7 @@ window.addEventListener('click', (e) => {
 
 resize();
 requestAnimationFrame(frame);
+document.body.classList.toggle('kid', kidMode.on);
 narrateUi(ui());
 showTitle();
 registerServiceWorker();

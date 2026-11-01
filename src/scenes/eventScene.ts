@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { disposeTree, makeRide } from './common';
 import { modelsWanted } from './models';
 import { sampleCatship, sampleOutlaw, sampleWreck } from './samples';
+import { kidMode } from '../game/kidMode';
 import type { Upgrades } from '../game/upgrades';
 
 /**
@@ -386,9 +387,10 @@ export function playEventScene(
 
 const SCENES_KEY = 'rtm-scenes';
 
-/** Event scenes on or off (on unless switched off in the pause menu). */
+/** Event scenes on or off (on unless switched off in the pause menu; always on in kid mode). */
 export const eventScenes = {
   get on(): boolean {
+    if (kidMode.on) return true;
     try {
       return localStorage.getItem(SCENES_KEY) !== '0';
     } catch {
