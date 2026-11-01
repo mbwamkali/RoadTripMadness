@@ -8,6 +8,8 @@ export interface RouteStep {
   name: string;
   type: string;
   modifier?: string;
+  /** The road after this step is a motorway (from OSRM's road classes). */
+  motorway?: boolean;
 }
 
 /**
@@ -46,6 +48,7 @@ export interface RawStep {
   name: string;
   type: string;
   modifier?: string;
+  motorway?: boolean;
 }
 
 export interface RawRoute {
@@ -85,6 +88,7 @@ export function buildRouteData(raw: RawRoute): RouteData {
       name: s.name,
       type: s.type,
       modifier: s.modifier,
+      ...(s.motorway ? { motorway: true } : {}),
     };
   });
   steps.sort((a, b) => a.at - b.at);

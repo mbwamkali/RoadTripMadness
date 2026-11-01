@@ -17,6 +17,7 @@ interface OsrmStep {
   name?: string;
   ref?: string;
   maneuver: OsrmManeuver;
+  intersections?: { classes?: string[] }[];
 }
 
 export interface OsrmResponse {
@@ -51,6 +52,7 @@ export function parseOsrm(json: OsrmResponse, startLabel: string, endLabel: stri
         name: [s.name, s.ref].filter(Boolean).join(' ').trim(),
         type: s.maneuver.type,
         modifier: s.maneuver.modifier,
+        ...(s.intersections?.some((i) => i.classes?.includes('motorway')) ? { motorway: true } : {}),
       });
     }
   }

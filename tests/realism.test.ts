@@ -55,3 +55,42 @@ describe('sign names', () => {
     expect(signName('George Washington Carver Memorial Highway I 44; MO 43')).toBe('I 44');
   });
 });
+
+describe('road types', () => {
+  it('classifies roads by their names', async () => {
+    const { classifyRoad } = await import('../src/game/roads');
+    expect(classifyRoad('I 40')).toBe('interstate');
+    expect(classifyRoad('Santa Ana Freeway US 101; US 99 Hist')).toBe('interstate');
+    expect(classifyRoad('I 40 Bus')).toBe('highway');
+    expect(classifyRoad('US 66')).toBe('highway');
+    expect(classifyRoad('MO 43')).toBe('highway');
+    expect(classifyRoad('South Wabash Avenue')).toBe('local');
+    expect(classifyRoad('Some Road', true)).toBe('interstate');
+  });
+
+  it('splits Route 66 into long stretches of interstate, highway and town streets', async () => {
+    const { roadSegments, edgeAt, edgeOf, classAt } = await import('../src/game/roads');
+    const segs = roadSegments(route66, path.length);
+    const share = (c: string) => segs.filter((s) => s.cls === c).reduce((a, s) => a + s.to - s.from, 0) / path.length;
+    console.log(segs.length, 'segments', ['interstate', 'highway', 'local'].map((c) => `${c} ${(share(c) * 100).toFixed(0)}%`).join(', '));
+    expect(share('interstate')).toBeGreaterThan(0.5);
+    expect(segs[0].from).toBe(0);
+    expect(segs[segs.length - 1].to).toBe(path.length);
+    for (let i = 1; i < segs.length; i++) {
+      expect(segs[i].from).toBe(segs[i - 1].to);
+      expect(segs[i].cls).not.toBe(segs[i - 1].cls);
+    }
+    // Widths taper instead of jumping.
+    const b = segs[1].from;
+    const e0 = edgeAt(segs, b - 1);
+    const e1 = edgeAt(segs, b + 1);
+    expect(Math.abs(e1 - e0)).toBeLessThan(0.5);
+    expect(edgeAt(segs, (segs[0].from + segs[0].to) / 2)).toBeCloseTo(edgeOf(classAt(segs, 1)));
+  });
+
+  it('puts interstate exits on the right', async () => {
+    const { roadSegments, classAt } = await import('../src/game/roads');
+    const segs = roadSegments(route66, path.length);
+    for (const s of generateStops(route66, path.length, 3)) if (classAt(segs, s.at) === 'interstate') expect(s.side).toBe('right');
+  });
+});

@@ -26,10 +26,15 @@ export function demoRawRoute(seed = 7): RawRoute {
       steps.push({
         location: { lat, lng },
         name: towns[(i / 45 - 1) % towns.length],
-        type: 'turn',
+        type: 'town',
         modifier: rng() < 0.5 ? 'left' : 'right',
       });
     }
+    // The made-up roads: a state highway, then the interstate, then a US highway into town.
+    if (i === 1) steps.push({ location: { lat, lng }, name: 'NV 375', type: 'depart' });
+    if (i === 120) steps.push({ location: { lat, lng }, name: 'I 15', type: 'merge', modifier: 'slight right' });
+    if (i === 300) steps.push({ location: { lat, lng }, name: 'US 93', type: 'off ramp', modifier: 'slight right' });
+    if (i === 395) steps.push({ location: { lat, lng }, name: 'Main Street', type: 'turn', modifier: 'left' });
   }
   return {
     source: 'demo',

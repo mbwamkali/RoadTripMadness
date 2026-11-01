@@ -1,5 +1,6 @@
 import type { RouteData } from '../geo/route';
 import { hashString, makeRng, pick, type Rng } from './rng';
+import { classAt, roadSegments } from './roads';
 
 export type StopKind = 'town' | 'gas' | 'truckstop' | 'farm' | 'mall' | 'base';
 export type PlaceKind = 'pumps' | 'garage' | 'grocery' | 'hardware' | 'gunshop' | 'pharmacy' | 'police' | 'junkyard' | 'barn' | 'motel';
@@ -66,6 +67,7 @@ export function generateStops(route: RouteData, pathLength: number, seed: number
   ].filter((t) => t.at > 400 && t.at < pathLength - 600);
   const realTurns = route.steps.filter((s) => s.type !== 'town' && s.modifier && /left|right/.test(s.modifier));
   const usedTowns = new Set<string>();
+  const segments = roadSegments(route, pathLength);
   const stops: Stop[] = [];
   for (let i = 1; i <= count; i++) {
     const ideal = i * spacing;
@@ -77,7 +79,9 @@ export function generateStops(route: RouteData, pathLength: number, seed: number
     // A town's turn-off comes just before its sign.
     const at = town ? town.at + 60 : turn ? turn.at : ideal + (rng() - 0.5) * spacing * 0.3;
     const dir = town?.side ?? turn?.modifier;
-    const side: Stop['side'] = dir?.includes('left') ? 'left' : dir?.includes('right') ? 'right' : rng() < 0.5 ? 'left' : 'right';
+    // Interstate exits are on the right.
+    const onInterstate = classAt(segments, at) === 'interstate';
+    const side: Stop['side'] = onInterstate ? 'right' : dir?.includes('left') ? 'left' : dir?.includes('right') ? 'right' : rng() < 0.5 ? 'left' : 'right';
     const fuel = i % 3 === 1;
     let kind: StopKind = fuel ? pick(rng, ['gas', 'truckstop', 'town'] as const) : pickKind(rng);
     if (town && kind !== 'gas' && kind !== 'truckstop') kind = 'town';

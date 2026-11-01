@@ -39,6 +39,47 @@ export function makeRoadTexture(): THREE.CanvasTexture {
   return t;
 }
 
+/**
+ * Asphalt with lane markings for wider roads.
+ * 'highway': four lanes, double yellow in the middle, dashed white between lanes.
+ * 'carriageway': one side of a divided road, four lanes, yellow on the median side (left).
+ */
+export function makeLaneTexture(kind: 'highway' | 'carriageway'): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 256;
+  const g = c.getContext('2d')!;
+  g.fillStyle = kind === 'carriageway' ? '#46464b' : '#3e3e43';
+  g.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 1600; i++) {
+    const v = 52 + Math.random() * 30;
+    g.fillStyle = `rgb(${v},${v},${v + 4})`;
+    g.fillRect(Math.random() * 256, Math.random() * 256, 2, 2);
+  }
+  const lane = 256 / 4;
+  g.fillStyle = '#e8e2cf';
+  g.fillRect(250 - 2, 0, 4, 256); // right edge
+  if (kind === 'highway') {
+    g.fillRect(4, 0, 4, 256); // left edge
+    g.fillStyle = '#f2c230';
+    g.fillRect(128 - 7, 0, 4, 256);
+    g.fillRect(128 + 3, 0, 4, 256);
+    g.fillStyle = '#e8e2cf';
+    for (const x of [lane, lane * 3]) g.fillRect(x - 2, 0, 4, 110);
+  } else {
+    g.fillStyle = '#f2c230';
+    g.fillRect(6, 0, 4, 256); // median edge
+    g.fillStyle = '#e8e2cf';
+    for (const x of [lane, lane * 2, lane * 3]) g.fillRect(x - 2, 0, 4, 110);
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = THREE.RepeatWrapping;
+  t.wrapT = THREE.RepeatWrapping;
+  t.anisotropy = 8;
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
 export const BLINK_OFF = 0x5a3a10;
 export const BLINK_ON = 0xffb020;
 

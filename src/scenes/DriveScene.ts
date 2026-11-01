@@ -6,7 +6,8 @@ import { advance, upcomingStop, type GameState } from '../game/state';
 import { STOP_TITLES, type Stop } from '../game/stops';
 import { hashString, makeRng, type Rng } from '../game/rng';
 import { ANNOUNCED, type Landmark } from '../game/landmarks';
-import { disposeTree, makeCar, makeRoadTexture, setBlinkers, textSprite, to3, type GameScene } from './common';
+import { disposeTree, makeCar, makeLaneTexture, makeRoadTexture, setBlinkers, textSprite, to3, type GameScene } from './common';
+import { classAt, edgeAt, edgeOf, laneOffset, PROFILES, roadSegments, type RoadSegment } from '../game/roads';
 import { buildLandmark, waterTexture } from './landmarkModels';
 import { sound } from '../audio/sound';
 import { Atmosphere } from './atmosphere';
@@ -52,6 +53,13 @@ export class DriveScene implements GameScene {
   private ground: THREE.Mesh;
   private roadTex = makeRoadTexture();
   private roadMat: THREE.MeshLambertMaterial;
+  private highwayMat: THREE.MeshLambertMaterial;
+  private medianMat: THREE.MeshLambertMaterial;
+  private carriageMat: THREE.MeshLambertMaterial;
+  private laneTex = [makeLaneTexture('highway'), makeLaneTexture('carriageway')];
+  private segments: RoadSegment[];
+  /** Current sideways position of the car (eases between lanes when the road changes). */
+  private lane = 2;
   private shoulderMat: THREE.MeshLambertMaterial;
   private mats: Record<string, THREE.Material>;
   private geos: Record<string, THREE.BufferGeometry>;
@@ -81,6 +89,16 @@ export class DriveScene implements GameScene {
 
     // Layered flat surfaces: polygon offsets keep road > water > shoulder > ground without z-fighting.
     this.roadMat = new THREE.MeshLambertMaterial({ map: this.roadTex, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
+    this.highwayMat = new THREE.MeshLambertMaterial({ map: this.laneTex[0], polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
+    this.carriageMat = new THREE.MeshLambertMaterial({ map: this.laneTex[1], polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
+    this.medianMat = new THREE.MeshLambertMaterial({
+      color: new THREE.Color(this.biome.ground).multiplyScalar(0.85),
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -2,
+    });
+    this.segments = roadSegments(state.route, path.length);
+    this.lane = this.laneAt(state.distance);
     this.shoulderMat = new THREE.MeshLambertMaterial({ color: this.biome.shoulder, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
     this.mats = {
       plant: new THREE.MeshLambertMaterial({ color: this.biome.plant === 'cactus' ? 0x4f8a3c : 0x2f6b35 }),
@@ -115,6 +133,21 @@ export class DriveScene implements GameScene {
     this.scene.add(this.ground);
     this.scene.add(this.car);
     this.placeCar(true);
+  }
+
+  /** Half-width of the pavement at a distance. */
+  edge(d: number): number {
+    return edgeAt(this.segments, d);
+  }
+
+  /** How much wider than a plain two-lane road it is here (scenery moves out by this much). */
+  widen(d: number): number {
+    return this.edge(d) - ROAD_HALF;
+  }
+
+  private laneAt(d: number): number {
+    const cls = classAt(this.segments, d);
+    return laneOffset(cls) * (this.edge(d) / edgeOf(cls));
   }
 
   resize(w: number, h: number): void {
@@ -195,7 +228,7 @@ export class DriveScene implements GameScene {
     }
     if (!this.paused && !this.stopping) this.drive(dt);
     this.streamChunks();
-    this.placeCar(false);
+    this.placeCar(false, dt);
   }
 
   private drive(dt: number): void {
@@ -281,7 +314,7 @@ export class DriveScene implements GameScene {
     this.turning = {
       stop,
       t: 0,
-      from: p.clone().addScaledVector(fwd, -8),
+      from: this.car.position.clone(),
       mid: p.clone().addScaledVector(fwd, 4),
       to: p.clone().addScaledVector(side, 45),
     };
@@ -310,13 +343,17 @@ export class DriveScene implements GameScene {
     }
   }
 
-  private placeCar(snap: boolean): void {
+  private placeCar(snap: boolean, dt = 1 / 60): void {
     const d = this.state.distance;
     const p = to3(this.path.pointAt(d));
     const f = this.path.directionAt(d, 10);
     const fwd = new THREE.Vector3(f.x, 0, -f.y);
-    // Drive in the right-hand lane.
-    p.addScaledVector(new THREE.Vector3(f.y, 0, f.x), 2);
+    // Drive in the right-hand lane, easing over when the road widens or narrows.
+    const want = this.laneAt(d);
+    // Jumps (loading, debug teleports) snap; otherwise change lanes at a steady pace.
+    const jumped = this.car.position.distanceTo(p) > 150;
+    this.lane = snap || jumped ? want : this.lane + Math.sign(want - this.lane) * Math.min(Math.abs(want - this.lane), 5 * dt);
+    p.addScaledVector(new THREE.Vector3(f.y, 0, f.x), this.lane);
     this.car.position.copy(p);
     this.car.lookAt(p.clone().add(fwd));
     this.ground.position.set(p.x, 0, p.z);
@@ -324,7 +361,7 @@ export class DriveScene implements GameScene {
       this.camPos.copy(p).addScaledVector(fwd, -14).setY(7);
       this.camLook.copy(p).addScaledVector(fwd, 20);
     }
-    this.followCamera(p, fwd, snap ? 1 : 1 / 60);
+    this.followCamera(p, fwd, snap ? 1 : dt);
   }
 
   private followCamera(p: THREE.Vector3, fwd: THREE.Vector3, dt: number): void {
@@ -360,7 +397,8 @@ export class DriveScene implements GameScene {
     }
   }
 
-  private ribbon(from: number, to: number, half: number, y: number, mat: THREE.Material, vScale: number): THREE.Mesh {
+  private ribbon(from: number, to: number, half: number | ((d: number) => [number, number]), y: number, mat: THREE.Material, vScale: number, flip = false): THREE.Mesh {
+    const span = typeof half === 'number' ? (): [number, number] => [-half, half] : half;
     const pos: number[] = [];
     const uv: number[] = [];
     const idx: number[] = [];
@@ -370,8 +408,9 @@ export class DriveScene implements GameScene {
       const p = this.path.pointAt(d);
       const f = this.path.directionAt(d);
       const r = { x: f.y, y: -f.x };
-      pos.push(p.x - r.x * half, y, -(p.y - r.y * half), p.x + r.x * half, y, -(p.y + r.y * half));
-      uv.push(0, d / vScale, 1, d / vScale);
+      const [a, b] = span(d);
+      pos.push(p.x + r.x * a, y, -(p.y + r.y * a), p.x + r.x * b, y, -(p.y + r.y * b));
+      uv.push(flip ? 1 : 0, d / vScale, flip ? 0 : 1, d / vScale);
       if (i > 0) {
         const a = (i - 1) * 2;
         idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
@@ -389,8 +428,7 @@ export class DriveScene implements GameScene {
     const g = new THREE.Group();
     const from = k * CHUNK;
     const to = Math.min(this.path.length, from + CHUNK + 4);
-    g.add(this.ribbon(from, to, ROAD_HALF + 3, 0.04, this.shoulderMat, 1));
-    g.add(this.ribbon(from, to, ROAD_HALF, 0.1, this.roadMat, 16));
+    this.buildRoad(g, from, to);
 
     const rng = makeRng(this.state.seed ^ hashString(`chunk${k}`));
     const inst: Record<string, THREE.Matrix4[]> = { plant: [], trunk: [], rock: [], pole: [], building: [], roof: [] };
@@ -411,24 +449,25 @@ export class DriveScene implements GameScene {
         d > total - 1500 ? 1 - (total - d) / 1500 : 0,
         ...stopsHere.filter((s) => s.kind === 'town' || s.kind === 'mall').map((s) => Math.max(0, 1 - Math.abs(s.at - d) / 260)),
       );
-      if (Math.round(d) % 48 < 8 && !clear(d, 1)) placeAt(inst.pole, p, right, 7.5, 0, 1);
+      const wide = this.widen(d);
+      if (Math.round(d) % 48 < 8 && !clear(d, 1)) placeAt(inst.pole, p, right, 7.5 + wide, 0, 1);
       for (const side of [-1, 1]) {
         if (stopsHere.some((s) => Math.abs(s.at - d) < 30 && (s.side === 'right' ? 1 : -1) === side)) continue;
         if (clear(d, side)) continue;
         const r = rng();
         if (r < urban * 0.6) {
-          const off = side * (12 + rng() * 20);
+          const off = side * (12 + wide + rng() * 20);
           const w = 6 + rng() * 10;
           const h = 4 + rng() * (urban > 0.6 ? 18 : 6);
           placeAt(inst.building, p, right, off, rng() * Math.PI, w, h, 6 + rng() * 8);
           buildingColors.push(new THREE.Color().setHSL(0.08 + rng() * 0.1, 0.25, 0.55 + rng() * 0.25));
         } else if (r < 0.5) {
-          const off = side * (10 + rng() * 70);
+          const off = side * (10 + wide + rng() * 70);
           const s = 0.7 + rng() * 0.8;
           placeAt(inst.plant, p, right, off, rng() * 6, s);
           if (this.biome.plant !== 'cactus') placeAt(inst.trunk, p, right, off, 0, s);
         } else if (r < 0.62) {
-          placeAt(inst.rock, p, right, side * (10 + rng() * 80), rng() * 6, 0.5 + rng() * 2);
+          placeAt(inst.rock, p, right, side * (10 + wide + rng() * 80), rng() * 6, 0.5 + rng() * 2);
         }
       }
     }
@@ -443,10 +482,37 @@ export class DriveScene implements GameScene {
       if (stop.at >= from && stop.at < from + CHUNK) g.add(this.buildStop(stop, rng));
     }
     for (const l of this.state.landmarks) {
-      if (l.at >= from && l.at < from + CHUNK) g.add(buildLandmark(l, this.path));
+      if (l.at >= from && l.at < from + CHUNK) g.add(buildLandmark(l, this.path, (d) => this.edge(d)));
     }
     if (k === Math.floor(this.path.length / CHUNK)) g.add(this.buildFinish());
     return g;
+  }
+
+  /** Pavement for one chunk: two-lane roads, four-lane highways, or divided interstates. */
+  private buildRoad(g: THREE.Group, from: number, to: number): void {
+    const edge = (d: number) => this.edge(d);
+    // Gravel shoulders just outside the pavement on both sides.
+    g.add(this.ribbon(from, to, (d) => [-edge(d) - 3, -edge(d) + 0.5], 0.04, this.shoulderMat, 1));
+    g.add(this.ribbon(from, to, (d) => [edge(d) - 0.5, edge(d) + 3], 0.04, this.shoulderMat, 1));
+    for (const seg of this.segments) {
+      const a = Math.max(from, seg.from);
+      const b = Math.min(to, seg.to);
+      if (b <= a) continue;
+      const full = edgeOf(seg.cls);
+      if (seg.cls === 'interstate') {
+        const m = PROFILES.interstate.median;
+        // Lanes squeeze proportionally where the road tapers.
+        const inner = (d: number) => m * (edge(d) / full);
+        g.add(this.ribbon(a, b, (d) => [inner(d), edge(d)], 0.1, this.carriageMat, 16));
+        g.add(this.ribbon(a, b, (d) => [-edge(d), -inner(d)], 0.1, this.carriageMat, 16, true));
+        // Grass median edges.
+        g.add(this.ribbon(a, b, (d) => [-inner(d), inner(d)], 0.04, this.medianMat, 1));
+      } else if (seg.cls === 'highway') {
+        g.add(this.ribbon(a, b, (d) => [-edge(d), edge(d)], 0.1, this.highwayMat, 16));
+      } else {
+        g.add(this.ribbon(a, b, (d) => [-edge(d), edge(d)], 0.1, this.roadMat, 16));
+      }
+    }
   }
 
   private buildStop(stop: Stop, rng: Rng): THREE.Group {
@@ -456,10 +522,12 @@ export class DriveScene implements GameScene {
     const sideSign = stop.side === 'right' ? 1 : -1;
     const side = { x: f.y * sideSign, y: -f.x * sideSign };
     // Side road.
-    const len = 70;
-    const a = { x: p.x + side.x * ROAD_HALF, y: p.y + side.y * ROAD_HALF };
+    const edge = this.edge(stop.at);
+    const wide = edge - ROAD_HALF;
+    const len = 70 + wide;
+    const a = { x: p.x + side.x * edge, y: p.y + side.y * edge };
     const b = { x: p.x + side.x * len, y: p.y + side.y * len };
-    const road = new THREE.Mesh(new THREE.PlaneGeometry(7, len - ROAD_HALF), this.roadMat);
+    const road = new THREE.Mesh(new THREE.PlaneGeometry(7, len - edge), this.roadMat);
     road.rotation.x = -Math.PI / 2;
     road.rotation.z = Math.atan2(side.x, side.y);
     road.position.copy(to3({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, 0.09));
@@ -468,7 +536,8 @@ export class DriveScene implements GameScene {
     const signAt = this.path.pointAt(stop.at - 90);
     const sf = this.path.directionAt(stop.at - 90);
     const sign = textSprite(`${stop.side === 'left' ? '◀' : ''} ${stop.name} ${stop.side === 'right' ? '▶' : ''}`.trim(), STOP_TITLES[stop.kind]);
-    sign.position.copy(to3({ x: signAt.x + sf.y * sideSign * 8, y: signAt.y - sf.x * sideSign * 8 }, 5));
+    const so = this.edge(stop.at - 90) + 3.5;
+    sign.position.copy(to3({ x: signAt.x + sf.y * sideSign * so, y: signAt.y - sf.x * sideSign * so }, 5));
     g.add(sign);
     // A little cluster of buildings at the end of the side road.
     for (let i = 0; i < 4 + rng() * 4; i++) {
@@ -487,7 +556,7 @@ export class DriveScene implements GameScene {
     }
     if (stop.places.includes('pumps')) {
       const canopy = new THREE.Mesh(new THREE.BoxGeometry(16, 0.8, 10), this.mats.canopy);
-      const cpos = { x: p.x + side.x * 28 + f.x * 14, y: p.y + side.y * 28 + f.y * 14 };
+      const cpos = { x: p.x + side.x * (28 + wide) + f.x * 14, y: p.y + side.y * (28 + wide) + f.y * 14 };
       canopy.position.copy(to3(cpos, 5));
       canopy.rotation.y = Math.atan2(f.x, f.y);
       g.add(canopy);
@@ -525,9 +594,9 @@ export class DriveScene implements GameScene {
     this.ground.geometry.dispose();
     Object.values(this.geos).forEach((x) => x.dispose());
     Object.values(this.mats).forEach((x) => x.dispose());
-    this.roadMat.dispose();
-    this.shoulderMat.dispose();
+    for (const m of [this.roadMat, this.highwayMat, this.carriageMat, this.medianMat, this.shoulderMat]) m.dispose();
     this.roadTex.dispose();
+    this.laneTex.forEach((t) => t.dispose());
   }
 }
 

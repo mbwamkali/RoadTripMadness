@@ -61,7 +61,7 @@ export function waterTexture(): THREE.CanvasTexture {
 }
 
 /** A meandering river crossing under the road, with a bridge and a name sign. */
-function buildRiver(l: Landmark, path: Path): THREE.Group {
+function buildRiver(l: Landmark, path: Path, half = ROAD_HALF): THREE.Group {
   const g = new THREE.Group();
   const { p, fwd } = frame(path, l.at);
   const rng = makeRng(hashString(l.name + l.at));
@@ -105,15 +105,15 @@ function buildRiver(l: Landmark, path: Path): THREE.Group {
   for (const side of [-1, 1]) {
     for (let s = -span / 2; s <= span / 2; s += 2) {
       const f = frame(path, l.at + s);
-      const base = to3(f.p).addScaledVector(f.right, side * (ROAD_HALF + 0.4));
+      const base = to3(f.p).addScaledVector(f.right, side * (half + 0.4));
       const post = mesh(new THREE.BoxGeometry(0.25, 1.2, 0.25), steel);
       post.position.copy(base).setY(0.6);
       g.add(post);
     }
     const a = frame(path, l.at - span / 2);
     const b = frame(path, l.at + span / 2);
-    const pa = to3(a.p).addScaledVector(a.right, side * (ROAD_HALF + 0.4));
-    const pb = to3(b.p).addScaledVector(b.right, side * (ROAD_HALF + 0.4));
+    const pa = to3(a.p).addScaledVector(a.right, side * (half + 0.4));
+    const pb = to3(b.p).addScaledVector(b.right, side * (half + 0.4));
     const rail = mesh(new THREE.BoxGeometry(0.3, 0.3, pa.distanceTo(pb)), steel);
     rail.position.copy(pa).lerp(pb, 0.5).setY(1.2);
     rail.lookAt(pb.clone().setY(1.2));
@@ -126,7 +126,7 @@ function buildRiver(l: Landmark, path: Path): THREE.Group {
   // Blue river name sign before the bridge.
   const sf = frame(path, l.at - span / 2 - 30);
   const sign = textSprite(l.name, '', '#2a5f9e');
-  sign.position.copy(to3(sf.p).addScaledVector(sf.right, ROAD_HALF + 4)).setY(4.5);
+  sign.position.copy(to3(sf.p).addScaledVector(sf.right, half + 4)).setY(4.5);
   sign.scale.set(7, 2.6, 1);
   g.add(sign);
   return g;
@@ -532,17 +532,18 @@ function buildRoadSign(l: Landmark): THREE.Object3D {
 }
 
 /** Brown "point of interest" sign that announces a landmark ahead. */
-function poiSign(l: Landmark, path: Path): THREE.Object3D {
+function poiSign(l: Landmark, path: Path, edge = ROAD_HALF): THREE.Object3D {
   const f = frame(path, Math.max(0, l.at - 70));
   const sign = textSprite(l.name, LANDMARK_TITLES[l.kind], '#6b3f1f');
-  sign.position.copy(to3(f.p).addScaledVector(f.right, (l.side > 0 ? 1 : -1) * (ROAD_HALF + 4))).setY(4.5);
+  sign.position.copy(to3(f.p).addScaledVector(f.right, (l.side > 0 ? 1 : -1) * (edge + 4))).setY(4.5);
   sign.scale.set(7, 2.6, 1);
   return sign;
 }
 
 /** Builds a landmark, positioned and turned to face the road. */
-export function buildLandmark(l: Landmark, path: Path): THREE.Object3D {
-  if (l.kind === 'river') return buildRiver(l, path);
+export function buildLandmark(l: Landmark, path: Path, edgeAt: (d: number) => number = () => ROAD_HALF): THREE.Object3D {
+  if (l.kind === 'river') return buildRiver(l, path, edgeAt(l.at));
+  const wide = l.kind === 'peak' || l.kind === 'mountains' ? 0 : edgeAt(l.at) - ROAD_HALF;
   const rng = makeRng(hashString(`${l.kind}${l.name}${Math.round(l.at)}`));
   const builders: Partial<Record<Landmark['kind'], () => THREE.Object3D>> = {
     peak: () => buildPeak(rng),
@@ -563,14 +564,14 @@ export function buildLandmark(l: Landmark, path: Path): THREE.Object3D {
   const model = (builders[l.kind] ?? buildMonument)();
   const { p, fwd, right } = frame(path, l.at);
   const out = new THREE.Group();
-  model.position.copy(to3(p)).addScaledVector(right, l.side * l.offset);
+  model.position.copy(to3(p)).addScaledVector(right, l.side * (l.offset + wide));
   // Face the road; signs and billboards also angle toward oncoming traffic.
   const toRoad = right.clone().multiplyScalar(-l.side);
   const face = l.kind === 'billboard' || l.kind === 'citysign' || l.kind === 'roadsign' ? toRoad.multiplyScalar(0.35).addScaledVector(fwd, -1).normalize() : toRoad;
   model.rotation.y = Math.atan2(face.x, face.z);
   out.add(model);
   if (l.kind !== 'citysign' && l.kind !== 'roadsign' && l.kind !== 'billboard' && l.kind !== 'mountains' && l.kind !== 'watertower' && l.kind !== 'windmill') {
-    out.add(poiSign(l, path));
+    out.add(poiSign(l, path, edgeAt(Math.max(0, l.at - 70))));
   }
   return out;
 }
