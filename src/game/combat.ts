@@ -487,6 +487,13 @@ export function boost(c: CombatState, inv: Inventory): boolean {
   return true;
 }
 
+/** Eases off the gas: ends a boost early. False when not boosting. */
+export function easeOff(c: CombatState): boolean {
+  if (c.boostTime <= 0) return false;
+  c.boostTime = 0;
+  return true;
+}
+
 export type CombatOutcome = 'cleared' | 'escaped' | null;
 
 export function combatOutcome(c: CombatState): CombatOutcome {

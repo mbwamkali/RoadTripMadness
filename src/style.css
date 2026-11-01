@@ -1318,3 +1318,30 @@ ol.scores li.new {
 [hidden] {
   display: none !important;
 }
+
+/* Install app: the iPhone picture guide. */
+.install-guide ol {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  text-align: left;
+}
+.install-guide li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.guide-icon {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.12);
+  display: grid;
+  place-items: center;
+  font-size: 24px;
+  color: #6cb6ff;
+}

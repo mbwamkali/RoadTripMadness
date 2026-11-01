@@ -35,15 +35,17 @@ import {
   type GameState,
 } from './game/state';
 import { STOP_TITLES, type PlaceKind, type Stop } from './game/stops';
-import { BOOST_FUEL, BOSS_INFO, boost, createCombat, ENEMY_STATS, horn, WEAPONS, type BossKind, type CombatState, type EnemyType, type WeaponKind } from './game/combat';
+import { BOOST_FUEL, BOSS_INFO, boost, createCombat, easeOff, ENEMY_STATS, horn, WEAPONS, type BossKind, type CombatState, type EnemyType, type WeaponKind } from './game/combat';
 import { DIFFICULTIES, DIFFICULTY_IDS, type Difficulty } from './game/difficulty';
 import { addScore, loadScores, scoreFor, type ScoreEntry } from './game/scores';
 import { CREW, rollEvent, type RoadEvent } from './game/events';
 import { mpg, swipeAction } from './game/driving';
+import { installButton } from './ui/install';
+import { DoubleTap, isSwipe, type Press } from './game/gestures';
 import { RAGE_HOSTILE, RAGE_MAX, rageOf } from './game/rage';
 import { clockText, hourOf, isNight, nightDanger, weatherAt, WEATHER_INFO, type Weather } from './game/time';
 import type { GameScene } from './scenes/common';
-import { DriveScene } from './scenes/DriveScene';
+import { DriveScene, type ShotTarget } from './scenes/DriveScene';
 import { CombatScene } from './scenes/CombatScene';
 import { clearUi, fmtKm, h, ui } from './ui/dom';
 import { Minimap } from './ui/minimap';
@@ -150,6 +152,7 @@ function showTitle(): void {
       savedTrips > 0 && h('button', { class: 'btn', onclick: () => showSavedTrips(pick, showTitle) }, `Saved trips (${savedTrips})`),
       h('button', { class: 'btn', onclick: () => previewRoute(buildRouteData(demoRawRoute(Date.now() % 1000)), undefined, showTitle) }, 'Quick demo trip (made-up map)'),
       h('button', { class: 'btn ghost', onclick: showScores }, '🏆 High scores'),
+      installButton(),
       isOffline() && h('div', { class: 'offline-badge' }, 'Offline: classic, saved and atlas trips still work'),
       h(
         'p',
@@ -635,7 +638,13 @@ function showToast(icon: string, small: string, big: string, link?: string | nul
   const el = document.querySelector('.landmark-toast') as HTMLElement | null;
   if (!el) return;
   el.replaceChildren(h('span', { class: 'icon' }, icon), h('div', {}, h('small', {}, small), h('strong', {}, big), link && h('span', { class: 'more' }, 'Tap to read about it ↗')));
-  el.onclick = link ? () => window.open(link, '_blank', 'noopener') : null;
+  el.onclick = link
+    ? () => {
+        // Reading about it pauses the trip, so nothing happens on the road while you're away.
+        pauseDriving();
+        window.open(link, '_blank', 'noopener');
+      }
+    : null;
   el.classList.toggle('linked', !!link);
   el.classList.remove('show');
   void el.offsetWidth;
@@ -744,7 +753,8 @@ function showDriveHud(): void {
     h('div', { class: 'speed-ctl' }, pad('−', 'Slow down', () => drive?.pedal(-1)), speedText, pad('+', 'Speed up', () => drive?.pedal(1))),
     pad('▶', 'Change lane right', () => drive?.steer(1)),
   );
-  // Shows up when something is in the road ahead of you.
+  // A big shoot button for what is ahead; only in kid mode. Everyone else double-taps the target.
+  const bigShoot = false;
   const shootBtn = pad('🔫', 'Shoot what is ahead', () => shootAhead());
   shootBtn.classList.add('shoot');
   const shootRow = h('div', { class: 'shoot-row' }, shootBtn);
@@ -756,7 +766,7 @@ function showDriveHud(): void {
       { class: 'hud' },
       h('div', { class: 'landmark-toast' }),
       h('div', { class: 'hud-top' }, h('div', { class: 'stats' }, fuel.el, hp.el, rage.el, inv), h('div', { class: 'side' }, map.canvas, h('div', { class: 'row' }, radioBtn, speedBtn, menuBtn))),
-      h('div', { class: 'hud-bottom' }, promptEl, shootRow, dash, controls, progress, progressText),
+      h('div', { class: 'hud-bottom' }, promptEl, bigShoot && shootRow, dash, controls, progress, progressText),
     ),
   );
   try {
@@ -802,6 +812,7 @@ function showDriveHud(): void {
       controls.classList.toggle('wrong-side', drive.wrongSide);
       const t = drive.target;
       shootRow.classList.toggle('show', !!t);
+      if (t && !bigShoot) tapHint();
       if (t) {
         const label = t.type === 'obstacle' ? `🔫 ${OBSTACLE_LABEL[t.o.kind]}` : `🔫 ${t.v.hostile ? '😠 ' : ''}${VEHICLE_LABEL[t.v.kind]}`;
         if (shootBtn.textContent !== label) shootBtn.textContent = label;
@@ -811,16 +822,43 @@ function showDriveHud(): void {
   hudTick();
 }
 
+/** The first time there is something to shoot, explain double-tap. */
+function tapHint(): void {
+  try {
+    if (localStorage.getItem('rtm-tap-hint')) return;
+    localStorage.setItem('rtm-tap-hint', '1');
+  } catch {
+    return;
+  }
+  showToast('👆', 'Double-tap to shoot', 'Double-tap a car or junk in the road to fire at it');
+}
+
 const OBSTACLE_LABEL: Record<ObstacleKind, string> = { debris: 'Junk', zombie: 'Zombie', wreck: 'Wreck', roadblock: 'Roadblock' };
 const VEHICLE_LABEL: Record<VehicleKind, string> = { car: 'Car', motorcycle: 'Biker', pickup: 'Pickup', van: 'Van', truck: 'Big rig' };
 
 /** Fires at whatever is in the road ahead in your lane. */
 function shootAhead(): void {
-  const r = drive?.shoot();
+  shootAt(drive?.target ?? null);
+}
+
+/** Fires at a car or obstacle (picked by a double tap, or the one ahead). */
+function shootAt(t: ShotTarget | null): void {
+  if (!t) return;
+  const r = drive?.shoot(t);
   if (r === 'empty') showToast('🔫', 'Out of ammo', 'Dodge it or ram it');
   else if (r?.vehicle && r.destroyed) showToast('💥', `${VEHICLE_LABEL[r.kind as VehicleKind]} wrecked`, `+${r.scrap} scrap · road rage is rising`);
   else if (r && !r.vehicle && r.destroyed && r.scrap) showToast('💥', `${OBSTACLE_LABEL[r.kind as ObstacleKind]} cleared`, `+${r.scrap} scrap`);
 }
+
+/** Opens the pause menu if the car is out on the road and not already paused. */
+function pauseDriving(): void {
+  if (drive && active === drive && drive.onRoad && state?.status === 'driving') showPauseMenu();
+}
+
+// Leaving the game (another app, a link, the home screen) pauses the trip.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) pauseDriving();
+});
 
 function showPauseMenu(): void {
   if (!drive) return;
@@ -1208,6 +1246,8 @@ function startCombat(ambush: boolean, stop?: Stop, theme?: EnemyType, boss?: Bos
 
 function showCombatHud(c: CombatState): void {
   clearUi();
+  fightCombatState = c;
+  fightSteer = 0;
   const s = state!;
   const hp = bar('hp', '🔧');
   const esc = bar(c.boss ? 'bosshp' : 'escape', c.boss ? '💀' : '🏁');
@@ -1276,27 +1316,77 @@ function toNdc(e: PointerEvent): THREE.Vector2 {
   const r = canvas.getBoundingClientRect();
   return ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
 }
-// Swipe on the road to drive: sideways changes lanes, up and down change speed.
-let swipeFrom: { x: number; y: number; id: number } | null = null;
+// Touch controls. On the road: swipe sideways to change lanes, up or down to
+// change speed, and double-tap a car or obstacle to shoot it. In a fight: tap
+// or hold on enemies to shoot, swipe sideways to steer (keeps steering while
+// the finger stays down), swipe up to boost and down to ease off.
+let press: Press | null = null;
+let pressSwiped = false;
+let fightSteer = 0;
+const doubleTap = new DoubleTap();
 canvas.addEventListener('pointerdown', (e) => {
+  press = { x: e.clientX, y: e.clientY, t: e.timeStamp, id: e.pointerId };
+  pressSwiped = false;
   if (active === combat && combat) combat.pointerDown(toNdc(e));
-  else if (drive && active === drive) swipeFrom = { x: e.clientX, y: e.clientY, id: e.pointerId };
+});
+canvas.addEventListener('pointermove', (e) => {
+  if (active !== combat || !combat || !press || press.id !== e.pointerId) return;
+  if (!pressSwiped && isSwipe(press, e.clientX, e.clientY, e.timeStamp)) {
+    pressSwiped = true;
+    combat.pointerUp();
+    fightSwipe(swipeAction(e.clientX - press.x, e.clientY - press.y));
+    return;
+  }
+  if (!pressSwiped) combat.pointerDown(toNdc(e));
 });
 canvas.addEventListener('pointerup', (e) => {
-  const from = swipeFrom;
-  swipeFrom = null;
-  if (!from || from.id !== e.pointerId || !drive || active !== drive) return;
+  const from = press;
+  press = null;
+  if (!from || from.id !== e.pointerId) return;
+  if (active === combat) {
+    // A sideways swipe keeps steering for a moment after the finger lifts.
+    if (fightSteer) {
+      const dir = fightSteer;
+      setTimeout(() => {
+        if (fightCombatState && fightCombatState.steer === dir && fightSteer === dir) fightCombatState.steer = 0;
+        if (fightSteer === dir) fightSteer = 0;
+      }, 300);
+    }
+    return;
+  }
+  if (!drive || active !== drive) return;
   const act = swipeAction(e.clientX - from.x, e.clientY - from.y);
-  if (act === 'left') drive.steer(-1);
-  else if (act === 'right') drive.steer(1);
-  else if (act === 'faster') drive.pedal(1);
-  else if (act === 'slower') drive.pedal(-1);
+  if (act) {
+    doubleTap.reset();
+    if (act === 'left') drive.steer(-1);
+    else if (act === 'right') drive.steer(1);
+    else if (act === 'faster') drive.pedal(1);
+    else if (act === 'slower') drive.pedal(-1);
+    return;
+  }
+  if (doubleTap.tap(e.clientX, e.clientY, e.timeStamp)) {
+    const t = drive.pick(toNdc(e));
+    if (t) shootAt(t);
+  }
 });
-canvas.addEventListener('pointercancel', () => (swipeFrom = null));
+canvas.addEventListener('pointercancel', () => {
+  press = null;
+  if (fightCombatState && fightSteer) fightCombatState.steer = 0;
+  fightSteer = 0;
+});
 window.addEventListener('pointerup', () => combat?.pointerUp());
-canvas.addEventListener('pointermove', (e) => {
-  if (active === combat && combat && e.buttons) combat.pointerDown(toNdc(e));
-});
+
+/** The fight HUD's state, so canvas swipes can steer and boost. */
+let fightCombatState: CombatState | null = null;
+function fightSwipe(act: ReturnType<typeof swipeAction>): void {
+  const c = fightCombatState;
+  if (!c || !act || !state) return;
+  if (act === 'left' || act === 'right') {
+    fightSteer = act === 'left' ? -1 : 1;
+    c.steer = fightSteer;
+  } else if (act === 'faster') boost(c, state.inv);
+  else easeOff(c);
+}
 
 function endCombat(c: CombatState, outcome: 'cleared' | 'escaped' | 'wrecked', stop?: Stop): void {
   const s = state!;

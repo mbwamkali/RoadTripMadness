@@ -385,8 +385,16 @@ export class DriveScene implements GameScene {
     this.pendingTurn = null;
   }
 
+  /** Out on the road and moving: not paused, stopped at a place or event, or turning in. */
+  get onRoad(): boolean {
+    return !this.paused && !this.stopping && !this.turning;
+  }
+
+  /** The stop the car is signalling for: from choosing the turn until it has turned in (never while parked). */
   get signalling(): Stop | null {
-    return this.turning?.stop ?? this.pendingTurn;
+    if (this.turning) return this.turning.stop;
+    if (this.paused || this.stopping) return null;
+    return this.pendingTurn;
   }
 
   skipStop(stop: Stop): void {
@@ -591,9 +599,41 @@ export class DriveScene implements GameScene {
     return best ? { type: 'vehicle', v: best } : null;
   }
 
-  /** Fires at the obstacle ahead. Returns what happened, or null with nothing to shoot. */
-  shoot(): { kind: ObstacleKind | VehicleKind; destroyed: boolean; scrap: number; vehicle?: boolean } | 'empty' | null {
-    const t = this.target;
+  /**
+   * What a tap at a screen point (normalised device coordinates) picks: the
+   * car or obstacle in range drawn nearest the tap, within a forgiving radius
+   * so a small finger still hits a small car.
+   */
+  pick(ndc: { x: number; y: number }, radius = 0.16): ShotTarget | null {
+    if (this.paused || this.stopping || this.turning) return null;
+    const d = this.state.distance;
+    const aspect = this.camera.aspect || 1;
+    const p = new THREE.Vector3();
+    let best: ShotTarget | null = null;
+    let bestDist = radius;
+    const consider = (m: THREE.Object3D | undefined, t: ShotTarget) => {
+      if (!m) return;
+      m.getWorldPosition(p);
+      p.y += 1;
+      p.project(this.camera);
+      if (p.z > 1) return; // behind the camera
+      const dist = Math.hypot((p.x - ndc.x) * aspect, p.y - ndc.y);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = t;
+      }
+    };
+    for (const o of this.obstacles.list) if (o.d > d - 2 && o.d - d <= SHOOT_RANGE) consider(this.obstacleMeshes.get(o.id), { type: 'obstacle', o });
+    for (const v of this.traffic.vehicles) {
+      const gap = v.d - d;
+      if ((gap > -2 && gap <= SHOOT_RANGE) || (v.hostile && Math.abs(gap) < HOSTILE_RANGE)) consider(this.vehicleMeshes.get(v.id), { type: 'vehicle', v });
+    }
+    return best;
+  }
+
+  /** Fires at a target (by default the obstacle ahead). Returns what happened, or null with nothing to shoot. */
+  shoot(target: ShotTarget | null = this.target): { kind: ObstacleKind | VehicleKind; destroyed: boolean; scrap: number; vehicle?: boolean } | 'empty' | null {
+    const t = target;
     if (!t) return null;
     if (t.type === 'vehicle') return this.shootVehicle(t.v);
     const o = t.o;
@@ -762,6 +802,7 @@ export class DriveScene implements GameScene {
     const f = this.path.directionAt(stop.at);
     const fwd = new THREE.Vector3(f.x, 0, -f.y);
     const side = this.sideVector(stop);
+    this.pendingTurn = null;
     this.turning = {
       stop,
       t: 0,
