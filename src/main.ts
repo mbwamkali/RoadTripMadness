@@ -4,6 +4,7 @@ import type { Path } from './geo/geo';
 import { currentPosition, type Place } from './geo/geocode';
 import { ANNOUNCED, LANDMARK_ICONS, LANDMARK_TITLES, readMoreUrl, roadAt, type Landmark } from './game/landmarks';
 import { demoRawRoute } from './geo/demoRoute';
+import type { ObstacleKind } from './game/obstacles';
 import { addStateLines, buildRouteData, pathFromRoute, realKmAt, type RawRoute, type RouteData } from './geo/route';
 import { latLngAt, loadStateMap } from './geo/states';
 import { overpassStreets } from './geo/streets';
@@ -434,6 +435,15 @@ function startTrip(s: GameState): void {
     onRoadEvent: () => showRoadEvent(rollEvent(s)),
     onBoss: (boss) => showBossIntro(boss),
     onTick: () => hudTick?.(),
+    onRam: (kind, cost) => {
+      const what = { debris: 'You plough through the junk', zombie: 'Splat! You run down a zombie', wreck: 'You shove a wreck aside', roadblock: 'You smash through the roadblock' }[kind];
+      showToast(kind === 'zombie' ? '🧟' : '💥', what, cost ? `−${cost} car health` : 'The ram plate takes it');
+      if (cost) navigator.vibrate?.(cost > 8 ? 120 : 50);
+      if (state?.status === 'lost' && drive) {
+        drive.paused = true;
+        setTimeout(showEnd, 900);
+      }
+    },
     onCrash: (kind, dmg) => {
       const what = { car: 'a car', pickup: 'a pickup', van: 'a van', truck: 'a big rig' }[kind];
       showToast('💥', `You hit ${what}`, `−${dmg} car health`);
@@ -650,6 +660,10 @@ function showDriveHud(): void {
     h('div', { class: 'speed-ctl' }, pad('−', 'Slow down', () => drive?.pedal(-1)), speedText, pad('+', 'Speed up', () => drive?.pedal(1))),
     pad('▶', 'Change lane right', () => drive?.steer(1)),
   );
+  // Shows up when something is in the road ahead of you.
+  const shootBtn = pad('🔫', 'Shoot what is ahead', () => shootAhead());
+  shootBtn.classList.add('shoot');
+  const shootRow = h('div', { class: 'shoot-row' }, shootBtn);
   promptEl = h('div', { class: 'prompt' });
   promptFor = null;
   ui().append(
@@ -658,7 +672,7 @@ function showDriveHud(): void {
       { class: 'hud' },
       h('div', { class: 'landmark-toast' }),
       h('div', { class: 'hud-top' }, h('div', { class: 'stats' }, fuel.el, hp.el, inv), h('div', { class: 'side' }, map.canvas, h('div', { class: 'row' }, radioBtn, speedBtn, menuBtn))),
-      h('div', { class: 'hud-bottom' }, promptEl, controls, progress, progressText),
+      h('div', { class: 'hud-bottom' }, promptEl, shootRow, controls, progress, progressText),
     ),
   );
   let lastInv = '';
@@ -683,9 +697,24 @@ function showDriveHud(): void {
       speedText.textContent = `${mph} mph`;
       speedText.classList.toggle('fast', drive.throttle > 1);
       controls.classList.toggle('wrong-side', drive.wrongSide);
+      const t = drive.target;
+      shootRow.classList.toggle('show', !!t);
+      if (t) {
+        const label = `🔫 ${OBSTACLE_LABEL[t.kind]}`;
+        if (shootBtn.textContent !== label) shootBtn.textContent = label;
+      }
     }
   };
   hudTick();
+}
+
+const OBSTACLE_LABEL: Record<ObstacleKind, string> = { debris: 'Junk', zombie: 'Zombie', wreck: 'Wreck', roadblock: 'Roadblock' };
+
+/** Fires at whatever is in the road ahead in your lane. */
+function shootAhead(): void {
+  const r = drive?.shoot();
+  if (r === 'empty') showToast('🔫', 'Out of ammo', 'Dodge it or ram it');
+  else if (r?.destroyed && r.scrap) showToast('💥', `${OBSTACLE_LABEL[r.kind]} cleared`, `+${r.scrap} scrap`);
 }
 
 function showPauseMenu(): void {
@@ -1223,6 +1252,10 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'arrowright' || k === 'd') drive.steer(1);
   else if (k === 'arrowup' || k === 'w') drive.pedal(1);
   else if (k === 'arrowdown' || k === 's') drive.pedal(-1);
+  else if (k === ' ' || k === 'f') {
+    e.preventDefault();
+    shootAhead();
+  }
   else return;
   e.preventDefault();
 });

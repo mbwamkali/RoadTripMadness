@@ -4,11 +4,13 @@ import type { Path, Vec2 } from '../geo/geo';
 import { CRUISE_SPEED } from '../geo/route';
 import { advance, damage, upcomingStop, type GameState } from '../game/state';
 import { clampLane, defaultLane, laneCenter, oncoming, Traffic, type Vehicle, type VehicleKind } from '../game/traffic';
+import { Obstacles, ramObstacle, shootObstacle, SHOOT_RANGE, type Obstacle, type ObstacleKind } from '../game/obstacles';
+import { DIFFICULTIES } from '../game/difficulty';
 import { STOP_TITLES, type Stop } from '../game/stops';
 import { hashString, makeRng, type Rng } from '../game/rng';
 import { ANNOUNCED, roadAt, type Landmark } from '../game/landmarks';
 import { interstateNumber, latLngAt, stateMap } from '../geo/states';
-import { castShadows, disposeTree, makeCar, makeTrafficVehicle, makeLaneTexture, makeRoadTexture, setBlinkers, textSprite, to3, type GameScene } from './common';
+import { castShadows, disposeTree, makeCar, makeObstacle, makeTrafficVehicle, makeLaneTexture, makeRoadTexture, setBlinkers, textSprite, to3, type GameScene } from './common';
 import { classAt, edgeAt, edgeOf, isDivided, PROFILES, roadSegments, SPEED, urbanZones, type RoadClass, type RoadSegment } from '../game/roads';
 import { buildLandmark, waterTexture } from './landmarkModels';
 import { sound } from '../audio/sound';
@@ -42,6 +44,8 @@ export interface DriveCallbacks {
   onTick(): void;
   /** Hit another vehicle (damage already taken). */
   onCrash?(kind: VehicleKind, damage: number): void;
+  /** Drove into an obstacle (cost is car health lost). */
+  onRam?(kind: ObstacleKind, cost: number): void;
 }
 
 /** Shared plant models; trees are a trunk plus a crown so each part gets its own colour. */
@@ -127,6 +131,8 @@ export class DriveScene implements GameScene {
   private traffic: Traffic;
   private vehicleMeshes = new Map<number, THREE.Group>();
   private crashCooldown = 0;
+  private obstacles: Obstacles;
+  private obstacleMeshes = new Map<number, THREE.Group>();
   /** Current sideways position of the car (eases between lanes when the road changes). */
   private lane = 2;
   private shoulderMat: THREE.MeshLambertMaterial;
@@ -185,6 +191,7 @@ export class DriveScene implements GameScene {
     this.traffic = new Traffic(this.segments, path.length, CRUISE_SPEED, state.seed ^ Math.floor(state.distance), {
       urbanAt: (d) => (zones.some((z) => d >= z.from && d <= z.to) ? 1 : 0),
     });
+    this.obstacles = new Obstacles(this.segments, path.length, state.seed ^ Math.floor(state.distance), state.distance, DIFFICULTIES[state.difficulty].gap);
     this.roadSpeed = SPEED[classAt(this.segments, state.distance)].factor;
     this.shoulderMat = new THREE.MeshLambertMaterial({ color: groundColorAt(this.biomes, state.distance, 'shoulder'), polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
     // Photo grain on Medium/High (the colours still come from the climate).
@@ -384,10 +391,15 @@ export class DriveScene implements GameScene {
       return;
     }
     if (!this.paused && !this.stopping) this.drive(dt);
-    if (!this.paused) this.traffic.step(dt * (this.stopping ? 0.3 : 1), this.state.distance);
+    if (!this.paused) {
+      this.traffic.step(dt * (this.stopping ? 0.3 : 1), this.state.distance);
+      this.obstacles.step(this.state.distance);
+      this.trafficAvoidsObstacles();
+    }
     this.streamChunks();
     this.placeCar(false, dt);
     this.placeTraffic();
+    this.placeObstacles();
   }
 
   private drive(dt: number): void {
@@ -462,6 +474,18 @@ export class DriveScene implements GameScene {
   /** Hitting another vehicle hurts, knocks it off the road and slows you down. */
   private checkCrash(): void {
     if (this.crashCooldown > 0) return;
+    const o = this.obstacles.hit(this.state.distance, this.lane, (x) => this.obstacleX(x));
+    if (o) {
+      const cost = ramObstacle(this.state, o);
+      this.obstacles.remove(o);
+      if (o.kind === 'zombie') sound.kill('zombie');
+      else sound.carHit();
+      // Big things slow you right down; a zombie or a bit of junk barely does.
+      if (o.kind === 'wreck' || o.kind === 'roadblock') this.roadSpeed *= 0.4;
+      this.crashCooldown = 0.6;
+      this.cb.onRam?.(o.kind, cost);
+      return;
+    }
     const v = this.traffic.hit(this.state.distance, this.lane, (x) => this.vehicleX(x));
     if (!v) return;
     const headOn = oncoming(v.lane);
@@ -476,6 +500,86 @@ export class DriveScene implements GameScene {
     // Swerve back to your own side.
     this.playerLane = clampLane(this.laneClass, Math.max(0, this.playerLane));
     this.cb.onCrash?.(v.kind, amount);
+  }
+
+  private obstacleX(o: Obstacle): number {
+    return laneCenter(classAt(this.segments, o.d), o.lane, this.edge(o.d));
+  }
+
+  /** What a shot would hit: the nearest obstacle ahead in your lane. */
+  get target(): Obstacle | null {
+    if (this.paused || this.stopping || this.turning) return null;
+    return this.obstacles.ahead(this.state.distance, this.playerLane, SHOOT_RANGE);
+  }
+
+  /** Fires at the obstacle ahead. Returns what happened, or null with nothing to shoot. */
+  shoot(): { kind: ObstacleKind; destroyed: boolean; scrap: number } | 'empty' | null {
+    const o = this.target;
+    if (!o) return null;
+    const r = shootObstacle(this.state, o);
+    if (!r) {
+      sound.empty();
+      return 'empty';
+    }
+    sound.shot(r.ammo);
+    const m = this.obstacleMeshes.get(o.id);
+    if (r.destroyed) {
+      this.obstacles.remove(o);
+      if (o.kind === 'zombie') sound.kill('zombie');
+    } else if (m) {
+      // A little jolt so you can see the hit land.
+      m.position.y = 0.25;
+    }
+    return { kind: o.kind, destroyed: r.destroyed, scrap: r.scrap };
+  }
+
+  /** Traffic swerves round obstacles (or pulls off the road on a one-lane road). */
+  private trafficAvoidsObstacles(): void {
+    for (const o of this.obstacles.list) {
+      for (const v of this.traffic.vehicles) {
+        if (v.lane !== o.lane || v.d > o.d || o.d - v.d > 30) continue;
+        const n = PROFILES[classAt(this.segments, v.d)].lanes;
+        if (n > 1) v.lane = o.lane === 0 ? 1 : o.lane - 1;
+        else this.traffic.remove(v);
+      }
+    }
+  }
+
+  private placeObstacles(): void {
+    const alive = new Set<number>();
+    for (const o of this.obstacles.list) {
+      if (o.d - this.state.distance > this.ahead) continue;
+      alive.add(o.id);
+      let m = this.obstacleMeshes.get(o.id);
+      if (!m) {
+        const made = makeObstacle(o.kind);
+        castShadows(made, this.shadows);
+        // A fixed random turn so they don't all line up.
+        made.userData.turn = ((o.id * 2654435761) % 1000) / 1000 - 0.5;
+        this.obstacleMeshes.set(o.id, made);
+        this.scene.add(made);
+        m = made;
+      }
+      const p = this.path.pointAt(o.d);
+      const f = this.path.directionAt(o.d, 6);
+      const x = this.obstacleX(o);
+      const y = Math.max(0, m.position.y - 0.03);
+      m.position.set(p.x + f.y * x, y, -p.y + f.x * x);
+      // Zombies shamble toward you; everything else sits at an angle.
+      const face = Math.atan2(f.x, -f.y);
+      if (o.kind === 'zombie') {
+        m.rotation.y = face + Math.PI + Math.sin(this.clock * 2 + o.id) * 0.2;
+        const arm = Math.sin(this.clock * 4 + o.id) * 0.3;
+        m.getObjectByName('armL')!.rotation.x = arm;
+        m.getObjectByName('armR')!.rotation.x = -arm;
+      } else m.rotation.y = face + (o.kind === 'roadblock' ? m.userData.turn * 0.3 : m.userData.turn * 1.5);
+    }
+    for (const [id, m] of this.obstacleMeshes) {
+      if (alive.has(id)) continue;
+      this.scene.remove(m);
+      disposeTree(m);
+      this.obstacleMeshes.delete(id);
+    }
   }
 
   /** Puts a model on every traffic vehicle near the player. */

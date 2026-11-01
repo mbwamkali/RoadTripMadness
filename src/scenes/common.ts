@@ -318,6 +318,77 @@ export function makeTrafficVehicle(kind: 'car' | 'pickup' | 'van' | 'truck', col
   return g;
 }
 
+/** Things in the road: debris, a lone zombie, a burnt-out wreck or a barricade. */
+export function makeObstacle(kind: 'debris' | 'zombie' | 'wreck' | 'roadblock'): THREE.Group {
+  const g = new THREE.Group();
+  const lam = (color: number) => new THREE.MeshLambertMaterial({ color });
+  const box = (w: number, h: number, d: number, mat: THREE.Material, x: number, y: number, z: number, ry = 0) => {
+    const m = mesh3(new THREE.BoxGeometry(w, h, d), mat, x, y, z);
+    m.rotation.y = ry;
+    g.add(m);
+    return m;
+  };
+  if (kind === 'debris') {
+    // A shredded tire, a couple of crates and a sheet of plywood.
+    const tire = mesh3(new THREE.TorusGeometry(0.42, 0.18, 6, 12), lam(0x1b1b1b), -0.6, 0.18, 0.2);
+    tire.rotation.x = Math.PI / 2;
+    g.add(tire);
+    box(0.6, 0.5, 0.6, lam(0x9a6b3a), 0.5, 0.25, -0.3, 0.4);
+    box(0.45, 0.4, 0.45, lam(0x7d5530), 0.7, 0.2, 0.5, -0.3);
+    box(1.4, 0.05, 0.9, lam(0xb08a5a), 0, 0.03, 0.6, 0.7);
+  } else if (kind === 'zombie') {
+    const skin = lam(0x8fbf5a);
+    box(0.7, 0.9, 0.45, lam(0x4a5d7a), 0, 1.15, 0); // torn shirt
+    box(0.55, 0.55, 0.55, skin, 0, 1.9, 0);
+    box(0.22, 0.22, 0.65, skin, -0.45, 1.45, 0.3).name = 'armL';
+    box(0.22, 0.22, 0.65, skin, 0.45, 1.45, 0.3).name = 'armR';
+    box(0.26, 0.75, 0.26, lam(0x3b3328), -0.18, 0.37, 0);
+    box(0.26, 0.75, 0.26, lam(0x3b3328), 0.18, 0.37, 0);
+    const eye = new THREE.MeshBasicMaterial({ color: 0xff2020 });
+    box(0.1, 0.1, 0.04, eye, -0.13, 1.95, 0.28);
+    box(0.1, 0.1, 0.04, eye, 0.13, 1.95, 0.28);
+    g.scale.setScalar(1.3);
+    g.name = 'zombie';
+  } else if (kind === 'wreck') {
+    // A burnt-out car turned across the lane.
+    const car = makeTrafficVehicle('car', 0x3a2e28);
+    car.rotation.y = 0.5;
+    car.rotation.z = 0.08;
+    car.traverse((o) => {
+      if (o instanceof THREE.Mesh) o.material = lam(0x2e2924);
+    });
+    g.add(car);
+  } else {
+    // Sawhorse barricade with red and white boards and a couple of tires.
+    const stripes = document.createElement('canvas');
+    stripes.width = 64;
+    stripes.height = 16;
+    const c = stripes.getContext('2d')!;
+    for (let i = 0; i < 8; i++) {
+      c.fillStyle = i % 2 ? '#f2f2f2' : '#d42a1e';
+      c.beginPath();
+      c.moveTo(i * 10 - 8, 16);
+      c.lineTo(i * 10 + 2, 0);
+      c.lineTo(i * 10 + 12, 0);
+      c.lineTo(i * 10 + 2, 16);
+      c.fill();
+    }
+    const board = new THREE.MeshLambertMaterial({ map: new THREE.CanvasTexture(stripes) });
+    (board.map as THREE.Texture).colorSpace = THREE.SRGBColorSpace;
+    box(3.2, 0.35, 0.08, board, 0, 1.0, 0);
+    box(3.2, 0.35, 0.08, board, 0, 0.5, 0);
+    const leg = lam(0x7a7a7a);
+    for (const x of [-1.4, 1.4]) {
+      box(0.08, 1.2, 0.08, leg, x, 0.6, 0.15).rotation.x = 0.25;
+      box(0.08, 1.2, 0.08, leg, x, 0.6, -0.15).rotation.x = -0.25;
+    }
+    const lamp = new THREE.MeshBasicMaterial({ color: 0xffa020 });
+    box(0.18, 0.18, 0.1, lamp, -1.4, 1.3, 0);
+    box(0.18, 0.18, 0.1, lamp, 1.4, 1.3, 0);
+  }
+  return g;
+}
+
 function mesh3(geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number): THREE.Mesh {
   const m = new THREE.Mesh(geo, mat);
   m.position.set(x, y, z);
