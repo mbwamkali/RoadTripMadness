@@ -1,9 +1,59 @@
 import * as THREE from 'three';
 import { daylight, type Weather } from '../game/time';
 
+const TINT: Record<Weather, number> = { clear: 0, rain: 0.45, dust: 0.55, fog: 0.6, snow: 0.5 };
+const TINT_COLOR: Record<Weather, number> = { clear: 0x000000, rain: 0x5a6470, dust: 0xc28a4a, fog: 0xb8bcc0, snow: 0xd8dde6 };
+const FOG_SCALE: Record<Weather, number> = { clear: 1, rain: 0.55, dust: 0.25, fog: 0.18, snow: 0.4 };
+const NIGHT = new THREE.Color(0x0b1026);
+const DUSK = new THREE.Color(0xe0784a);
+const WARM_SUN = new THREE.Color(0xffb070);
+const WHITE = new THREE.Color(0xffffff);
+/** Seconds for weather to blend from one kind to the next. */
+const WEATHER_BLEND = 4;
+
+/** Where the sun (or, at night, the moon) is in the sky for an hour of the day. */
+export function sunDirection(hour: number, out = new THREE.Vector3()): THREE.Vector3 {
+  const night = hour < 6 || hour >= 18;
+  // The moon follows the same arc twelve hours later.
+  const h = night ? (hour + 12) % 24 : hour;
+  const a = ((h - 6) / 12) * Math.PI;
+  // Rises in the east (+x), sets in the west, a little to the south.
+  return out.set(Math.cos(a), Math.max(0.08, Math.sin(a)) * (night ? 0.8 : 1), -0.35).normalize();
+}
+
+const SKY_VERT = `
+varying vec3 vDir;
+void main() {
+  vDir = normalize(position);
+  vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  gl_Position = p.xyww;
+}`;
+
+const SKY_FRAG = `
+uniform vec3 horizon;
+uniform vec3 zenith;
+uniform vec3 sunDir;
+uniform vec3 sunColor;
+uniform float sunSize;
+uniform float glow;
+varying vec3 vDir;
+void main() {
+  vec3 d = normalize(vDir);
+  float up = clamp(d.y, 0.0, 1.0);
+  vec3 col = mix(horizon, zenith, pow(up, 0.55));
+  // Below the horizon the sky just keeps the horizon colour (it meets the fog).
+  if (d.y < 0.0) col = horizon;
+  float s = max(dot(d, sunDir), 0.0);
+  col += sunColor * glow * pow(s, 8.0) * 0.35;
+  col += sunColor * smoothstep(1.0 - sunSize, 1.0 - sunSize * 0.6, s);
+  gl_FragColor = vec4(col, 1.0);
+  #include <colorspace_fragment>
+}`;
+
 /**
- * Sky colour, fog, sun/moon light, headlights and falling weather particles.
- * Shared by the driving and combat views.
+ * Sky dome, fog, sun/moon light and shadows, headlights and falling weather
+ * particles. Shared by the driving and combat views. Changes to the hour and
+ * weather blend in smoothly every frame.
  */
 export class Atmosphere {
   private hemi = new THREE.HemisphereLight(0xfff6e0, 0x8a6a45, 1.6);
@@ -13,8 +63,19 @@ export class Atmosphere {
   private particleKind: Weather = 'clear';
   private sky = new THREE.Color();
   private stars: THREE.Points;
+  private dome: THREE.Mesh;
+  private domeMat: THREE.ShaderMaterial;
   private weather: Weather = 'clear';
+  private hour = 12;
   private light = 1;
+  /** Blended weather: how much of the tint colour shows, the tint colour, fog scale and how clear it is. */
+  private tint = 0;
+  private tintColor = new THREE.Color();
+  private fogScale = 1;
+  private clearness = 1;
+  private started = false;
+  private sunDir = new THREE.Vector3(0, 1, 0);
+  private tmp = new THREE.Color();
   /** Fog never closes in further than this (combat needs to see the enemies). */
   minFogFar = 0;
   /** Fog distances for clear daytime; weather and night pull them in. */
@@ -23,14 +84,46 @@ export class Atmosphere {
     public daySky: number,
     private fogNear: number,
     private fogFar: number,
+    shadows: { size: number; range: number } | null = null,
   ) {
     this.sun.position.set(40, 80, 30);
     scene.add(this.hemi, this.sun, this.sun.target);
     scene.fog = new THREE.Fog(daySky, fogNear, fogFar);
     scene.background = this.sky;
+    if (shadows) {
+      this.sun.castShadow = true;
+      this.sun.shadow.mapSize.set(shadows.size, shadows.size);
+      const cam = this.sun.shadow.camera;
+      cam.left = cam.bottom = -shadows.range;
+      cam.right = cam.top = shadows.range;
+      cam.near = 1;
+      cam.far = 500;
+      this.sun.shadow.bias = -0.0008;
+      this.sun.shadow.normalBias = 0.4;
+    }
     this.headlight = new THREE.SpotLight(0xfff1c8, 0, 140, 0.5, 0.45, 1);
     this.stars = makeStars();
     scene.add(this.stars);
+    this.domeMat = new THREE.ShaderMaterial({
+      uniforms: {
+        horizon: { value: new THREE.Color() },
+        zenith: { value: new THREE.Color() },
+        sunDir: { value: this.sunDir },
+        sunColor: { value: new THREE.Color() },
+        sunSize: { value: 0.0005 },
+        glow: { value: 1 },
+      },
+      vertexShader: SKY_VERT,
+      fragmentShader: SKY_FRAG,
+      side: THREE.BackSide,
+      depthWrite: false,
+      depthTest: false,
+      fog: false,
+    });
+    this.dome = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), this.domeMat);
+    this.dome.renderOrder = -10;
+    this.dome.frustumCulled = false;
+    scene.add(this.dome);
   }
 
   /** Mounts the headlight on a car (it follows the car and points ahead). */
@@ -40,39 +133,79 @@ export class Atmosphere {
     car.add(this.headlight, this.headlight.target);
   }
 
+  /** Sets the hour and weather to show. The first call applies them at once; later ones blend in. */
   set(hour: number, weather: Weather): void {
-    const d = daylight(hour);
-    this.light = d;
+    this.hour = hour;
     this.weather = weather;
-    const night = new THREE.Color(0x0b1026);
-    const dusk = new THREE.Color(0xe0784a);
-    const day = new THREE.Color(this.daySky);
+    if (!this.started) {
+      this.started = true;
+      this.blendWeather(1);
+      this.apply();
+    }
+  }
+
+  private blendWeather(k: number): void {
+    const w = this.weather;
+    this.tint += (TINT[w] - this.tint) * k;
+    // While clearing up, keep the old tint colour so it fades rather than flashing black.
+    if (w !== 'clear') this.tintColor.lerp(this.tmp.setHex(TINT_COLOR[w]), this.tint < 0.02 ? 1 : k);
+    this.fogScale += (FOG_SCALE[w] - this.fogScale) * k;
+    this.clearness += ((w === 'clear' ? 1 : 0) - this.clearness) * k;
+  }
+
+  private apply(): void {
+    const d = daylight(this.hour);
+    this.light = d;
+    const sky = this.sky;
     // Dawn and dusk get an orange band between night and day.
-    const sky = d < 0.5 ? night.clone().lerp(dusk, d * 2) : dusk.clone().lerp(day, (d - 0.5) * 2);
-    const tint: Record<Weather, number> = { clear: 0, rain: 0.45, dust: 0.55, fog: 0.6, snow: 0.5 };
-    const tintColor: Record<Weather, number> = { clear: 0, rain: 0x5a6470, dust: 0xc28a4a, fog: 0xb8bcc0, snow: 0xd8dde6 };
-    if (weather !== 'clear') sky.lerp(new THREE.Color(tintColor[weather]).multiplyScalar(0.3 + d * 0.7), tint[weather]);
-    this.sky.copy(sky);
+    if (d < 0.5) sky.copy(NIGHT).lerp(DUSK, d * 2);
+    else sky.copy(DUSK).lerp(this.tmp.setHex(this.daySky), (d - 0.5) * 2);
+    if (this.tint > 0.001) sky.lerp(this.tmp.copy(this.tintColor).multiplyScalar(0.3 + d * 0.7), this.tint);
     const fog = this.scene.fog as THREE.Fog;
     fog.color.copy(sky);
-    const fogScale: Record<Weather, number> = { clear: 1, rain: 0.55, dust: 0.25, fog: 0.18, snow: 0.4 };
     const nightScale = 0.55 + d * 0.45;
-    fog.near = this.fogNear * fogScale[weather] * nightScale * 0.6;
-    fog.far = Math.max(this.minFogFar, this.fogFar * fogScale[weather] * nightScale);
-    fog.near = Math.min(fog.near, fog.far * 0.5);
-    this.hemi.intensity = 0.25 + d * 1.35 - (weather === 'clear' ? 0 : 0.2);
+    fog.far = Math.max(this.minFogFar, this.fogFar * this.fogScale * nightScale);
+    fog.near = Math.min(this.fogNear * this.fogScale * nightScale * 0.6, fog.far * 0.5);
+    const clear = this.clearness;
+    this.hemi.intensity = 0.25 + d * 1.35 - (1 - clear) * 0.2;
     this.hemi.color.setHex(d < 0.3 ? 0x8090c0 : 0xfff6e0);
-    this.sun.intensity = 0.1 + d * 1.7 * (weather === 'clear' ? 1 : 0.5);
-    this.sun.color.copy(d < 0.6 ? new THREE.Color(0xffb070).lerp(new THREE.Color(0xffffff), d) : new THREE.Color(0xffffff));
+    this.sun.intensity = 0.1 + d * 1.7 * (0.5 + clear * 0.5);
+    if (d < 0.6) this.sun.color.copy(WARM_SUN).lerp(WHITE, d);
+    else this.sun.color.copy(WHITE);
     this.headlight.intensity = d < 0.5 ? (1 - d * 2) * 90 : 0;
-    (this.stars.material as THREE.PointsMaterial).opacity = Math.max(0, 1 - d * 3) * (weather === 'clear' ? 1 : 0.2);
+    (this.stars.material as THREE.PointsMaterial).opacity = Math.max(0, 1 - d * 3) * (0.2 + clear * 0.8);
     this.stars.visible = d < 0.35;
+    sunDirection(this.hour, this.sunDir);
+    const u = this.domeMat.uniforms;
+    (u.horizon.value as THREE.Color).copy(sky);
+    // Overhead the sky is deeper; clouds and dust flatten it out.
+    (u.zenith.value as THREE.Color).copy(sky).multiplyScalar(0.55 + 0.35 * (1 - clear)).lerp(this.tmp.setHex(0x1d3f8c), 0.25 * d * clear);
+    const night = this.hour < 6 || this.hour >= 18;
+    (u.sunColor.value as THREE.Color).copy(night ? this.tmp.setHex(0xd8e0f0) : this.sun.color).multiplyScalar(night ? 0.8 : 1.2);
+    u.sunSize.value = night ? 0.0003 : 0.0005;
+    // The disc hides behind heavy weather.
+    u.glow.value = (night ? 0.3 : 1) * (0.15 + clear * 0.85);
+    (u.sunColor.value as THREE.Color).multiplyScalar(0.25 + clear * 0.75);
+  }
+
+  /** Puts the shadow-casting sun over a point (the car) so its shadows stay sharp nearby. */
+  follow(at: THREE.Vector3): void {
+    this.sun.target.position.copy(at);
+    this.sun.position.copy(at).addScaledVector(this.sunDir, 200);
+    this.sun.target.updateMatrixWorld();
   }
 
   /** Moves particles and stars with the camera. */
-  update(dt: number, camera: THREE.Camera): void {
+  update(dt: number, camera: THREE.PerspectiveCamera, focus?: THREE.Vector3): void {
+    this.blendWeather(Math.min(1, dt / WEATHER_BLEND * 3));
+    this.apply();
+    this.follow(focus ?? camera.position);
+    this.dome.position.copy(camera.position);
+    this.dome.scale.setScalar(camera.far * 0.9);
     this.stars.position.copy(camera.position);
-    const want: Weather = this.weather === 'rain' || this.weather === 'snow' || this.weather === 'dust' ? this.weather : 'clear';
+    const falling = this.weather === 'rain' || this.weather === 'snow' || this.weather === 'dust';
+    // Particles fade out with the weather before they're removed.
+    const want: Weather = falling ? this.weather : this.weather === 'clear' && this.clearness < 0.9 ? this.particleKind : 'clear';
     if (want !== this.particleKind) {
       if (this.particles) {
         this.scene.remove(this.particles);
@@ -101,7 +234,7 @@ export class Atmosphere {
       if (arr[i] < -40) arr[i] += 80;
     }
     pos.needsUpdate = true;
-    (p.material as THREE.PointsMaterial).opacity = want === 'rain' ? 0.35 + this.light * 0.3 : 0.8;
+    (p.material as THREE.PointsMaterial).opacity = (want === 'rain' ? 0.35 + this.light * 0.3 : 0.8) * (1 - this.clearness);
   }
 
   dispose(): void {
@@ -111,6 +244,8 @@ export class Atmosphere {
     }
     this.stars.geometry.dispose();
     (this.stars.material as THREE.Material).dispose();
+    this.dome.geometry.dispose();
+    this.domeMat.dispose();
   }
 }
 

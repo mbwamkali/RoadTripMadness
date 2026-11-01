@@ -40,10 +40,31 @@ import { Minimap } from './ui/minimap';
 import { PLACE_ICONS, TownMap } from './ui/townMap';
 import { gunDamageFor, MAX_LEVEL, ramDamageFor, upgradeCost, UPGRADES, type UpgradeKind } from './game/upgrades';
 import { sound } from './audio/sound';
+import { loadQualityChoice, nextQualityChoice, quality, QUALITY_NAMES, resolveQuality, saveQualityChoice } from './scenes/quality';
+import type { Bloom } from './scenes/bloom';
 
 const canvas = document.getElementById('view') as HTMLCanvasElement;
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
+let bloom: Bloom | null = null;
+
+/** Applies the graphics quality to the renderer (scenes read it when they're built). */
+function applyQuality(): void {
+  const q = quality.profile;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, q.pixelRatio));
+  renderer.shadowMap.enabled = q.shadows;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  if (q.bloom && !bloom) {
+    void import('./scenes/bloom').then((m) => {
+      if (!quality.profile.bloom || bloom) return;
+      bloom = new m.Bloom(renderer);
+      resize();
+    });
+  } else if (!q.bloom && bloom) {
+    bloom.dispose();
+    bloom = null;
+  }
+}
+applyQuality();
 
 let active: GameScene | null = null;
 let state: GameState | null = null;
@@ -59,6 +80,7 @@ function resize(): void {
   const w = window.innerWidth;
   const hgt = window.innerHeight;
   renderer.setSize(w, hgt, false);
+  bloom?.setSize(w, hgt, renderer.getPixelRatio());
   canvas.style.width = `${w}px`;
   canvas.style.height = `${hgt}px`;
   active?.resize(w, hgt);
@@ -71,7 +93,8 @@ function frame(now: number): void {
   last = now;
   if (active) {
     active.update(dt);
-    renderer.render(active.scene, active.camera);
+    if (bloom) bloom.render(active.scene, active.camera);
+    else renderer.render(active.scene, active.camera);
   } else {
     renderer.setClearColor(0x1b1410);
     renderer.clear();
@@ -532,9 +555,16 @@ function showDriveHud(): void {
 function showPauseMenu(): void {
   if (!drive) return;
   drive.paused = true;
+  const startLevel = quality.level;
   const close = () => {
     overlay.remove();
     drive!.paused = false;
+    // Shadows, draw distance and scenery are built with the scene, so rebuild it.
+    if (quality.level !== startLevel && state) startTrip(state);
+  };
+  const qualityText = () => {
+    const c = loadQualityChoice();
+    return `Graphics: ${QUALITY_NAMES[c]}${c === 'auto' ? ` (${QUALITY_NAMES[quality.level]})` : ''}`;
   };
   const overlay = h(
     'div',
@@ -555,6 +585,20 @@ function showPauseMenu(): void {
           },
         },
         `Sound effects: ${sound.settings.sfx ? 'on' : 'off'}`,
+      ),
+      h(
+        'button',
+        {
+          class: 'btn',
+          onclick: (e: Event) => {
+            const c = nextQualityChoice(loadQualityChoice());
+            saveQualityChoice(c);
+            quality.level = resolveQuality(c);
+            applyQuality();
+            (e.currentTarget as HTMLElement).textContent = qualityText();
+          },
+        },
+        qualityText(),
       ),
       h(
         'button',

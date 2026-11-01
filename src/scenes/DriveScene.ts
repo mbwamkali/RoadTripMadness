@@ -6,11 +6,12 @@ import { advance, upcomingStop, type GameState } from '../game/state';
 import { STOP_TITLES, type Stop } from '../game/stops';
 import { hashString, makeRng, type Rng } from '../game/rng';
 import { ANNOUNCED, type Landmark } from '../game/landmarks';
-import { disposeTree, makeCar, makeLaneTexture, makeRoadTexture, setBlinkers, textSprite, to3, type GameScene } from './common';
+import { castShadows, disposeTree, makeCar, makeLaneTexture, makeRoadTexture, setBlinkers, textSprite, to3, type GameScene } from './common';
 import { classAt, edgeAt, edgeOf, laneOffset, PROFILES, roadSegments, type RoadSegment } from '../game/roads';
 import { buildLandmark, waterTexture } from './landmarkModels';
 import { sound } from '../audio/sound';
 import { Atmosphere } from './atmosphere';
+import { quality } from './quality';
 import { hourOf, weatherAt } from '../game/time';
 import { BIOMES, biomeAtDistance, biomeSpans, groundColorAt, type BiomeId, type BiomeSpan, type PlantKind } from '../game/biomes';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
@@ -125,6 +126,10 @@ export class DriveScene implements GameScene {
   private atmosphere: Atmosphere;
   private skyTimer = 0;
   private announced = new Set<number>();
+  /** From the graphics quality setting. */
+  private ahead: number;
+  private density: number;
+  private shadows: boolean;
 
   constructor(
     private state: GameState,
@@ -133,7 +138,12 @@ export class DriveScene implements GameScene {
   ) {
     this.car = makeCar(undefined, state.upgrades);
     this.biomes = biomeSpans(state.route, path);
-    this.atmosphere = new Atmosphere(this.scene, groundColorAt(this.biomes, state.distance, 'sky'), 300, 1300);
+    const q = quality.profile;
+    this.ahead = AHEAD * q.drawScale;
+    this.density = q.density;
+    this.shadows = q.shadows;
+    this.camera.far = 2500 * q.drawScale;
+    this.atmosphere = new Atmosphere(this.scene, groundColorAt(this.biomes, state.distance, 'sky'), 300, 1300 * q.drawScale, q.shadows ? { size: q.shadowSize, range: 70 } : null);
     this.atmosphere.attachHeadlights(this.car);
     this.atmosphere.set(hourOf(state), weatherAt(state));
 
@@ -173,7 +183,9 @@ export class DriveScene implements GameScene {
       new THREE.MeshLambertMaterial({ color: groundColorAt(this.biomes, state.distance), polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 4 }),
     );
     this.ground.rotation.x = -Math.PI / 2;
+    this.ground.receiveShadow = true;
     this.scene.add(this.ground);
+    castShadows(this.car, this.shadows);
     this.scene.add(this.car);
     this.placeCar(true);
   }
@@ -227,6 +239,7 @@ export class DriveScene implements GameScene {
     disposeTree(this.car);
     this.car = makeCar(undefined, this.state.upgrades);
     this.atmosphere.attachHeadlights(this.car);
+    castShadows(this.car, this.shadows);
     this.car.position.copy(pos);
     this.car.quaternion.copy(rot);
     this.scene.add(this.car);
@@ -270,9 +283,10 @@ export class DriveScene implements GameScene {
     if (this.skyTimer <= 0) {
       this.skyTimer = 0.25;
       this.applyBiomeColours();
-      this.atmosphere.set(hourOf(this.state), weatherAt(this.state));
     }
-    this.atmosphere.update(dt, this.camera);
+    // The clock moves every frame so dawn and dusk come on smoothly.
+    this.atmosphere.set(hourOf(this.state), weatherAt(this.state));
+    this.atmosphere.update(dt, this.camera, this.car.position);
     const water = waterTexture();
     water.offset.y -= dt * 0.25;
     for (const g of this.chunks.values()) {
@@ -443,7 +457,7 @@ export class DriveScene implements GameScene {
   private streamChunks(): void {
     const d = this.state.distance;
     const first = Math.max(0, Math.floor((d - BEHIND) / CHUNK));
-    const last = Math.floor(Math.min(this.path.length, d + AHEAD) / CHUNK);
+    const last = Math.floor(Math.min(this.path.length, d + this.ahead) / CHUNK);
     for (const [k, g] of this.chunks) {
       if (k < first || k > last) {
         this.scene.remove(g);
@@ -528,7 +542,7 @@ export class DriveScene implements GameScene {
         } else {
           const b = BIOMES[biomeAtDistance(this.biomes, d)];
           const r2 = rng();
-          if (r2 < b.density) {
+          if (r2 < b.density * this.density) {
             const kind = pickPlant(b.plants, rng());
             if (kind === 'crops') {
               // Rows of crops run alongside the road, in fields set back from it.
@@ -542,7 +556,7 @@ export class DriveScene implements GameScene {
               const rot = rng() * 6;
               for (const part of PLANT_PARTS[kind]) placeAt(inst[part], p, right, off, rot, s);
             }
-          } else if (r2 < b.density + b.rocks * 0.5) {
+          } else if (r2 < b.density * this.density + b.rocks * 0.5 * this.density) {
             placeAt(inst.rock, p, right, side * (10 + wide + rng() * 80), rng() * 6, 0.5 + rng() * 2);
           }
         }
@@ -562,6 +576,7 @@ export class DriveScene implements GameScene {
       if (l.at >= from && l.at < from + CHUNK) g.add(buildLandmark(l, this.path, (d) => this.edge(d)));
     }
     if (k === Math.floor(this.path.length / CHUNK)) g.add(this.buildFinish());
+    if (this.shadows) castShadows(g, true);
     return g;
   }
 

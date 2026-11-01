@@ -289,3 +289,21 @@ function addUpgradeParts(car: THREE.Group, up: Upgrades, metal: THREE.Material, 
     car.add(ram);
   }
 }
+
+const SHADOW_BOX = new THREE.Box3();
+
+/** Lets solid things cast shadows; flat ones (road, water, shoulders) only receive them. */
+export function castShadows(root: THREE.Object3D, on: boolean): void {
+  if (!on) return;
+  root.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh) return;
+    m.receiveShadow = true;
+    const geo = m.geometry;
+    if (!geo.boundingBox) geo.computeBoundingBox();
+    m.updateMatrix();
+    const box = SHADOW_BOX.copy(geo.boundingBox!).applyMatrix4(m.matrix);
+    const tall = box.max.y - box.min.y > 0.3;
+    m.castShadow = tall && !(m.material as THREE.Material).transparent;
+  });
+}

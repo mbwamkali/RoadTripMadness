@@ -12,9 +12,10 @@ import {
 import { damage, type GameState } from '../game/state';
 import { sound } from '../audio/sound';
 import { Atmosphere } from './atmosphere';
+import { quality } from './quality';
 import { hourOf, weatherAt } from '../game/time';
 import { biomeSpans, groundColorAt } from '../game/biomes';
-import { disposeTree, makeCar, makeRoadTexture, type GameScene } from './common';
+import { castShadows, disposeTree, makeCar, makeRoadTexture, type GameScene } from './common';
 
 export interface CombatCallbacks {
   onCarHit(dmg: number): void;
@@ -38,6 +39,7 @@ export class CombatScene implements GameScene {
   camera = new THREE.PerspectiveCamera(60, 1, 0.3, 400);
   private car: THREE.Group;
   private atmosphere: Atmosphere;
+  private shadows = quality.profile.shadows;
   private roadTex = makeRoadTexture();
   private road: THREE.Mesh;
   private props: THREE.Group = new THREE.Group();
@@ -57,13 +59,14 @@ export class CombatScene implements GameScene {
     private cb: CombatCallbacks,
   ) {
     this.car = makeCar(undefined, state.upgrades);
-    this.atmosphere = new Atmosphere(this.scene, combat.title.includes('cat') || combat.boss === 'mothership' ? 0x5a3f8a : 0xe8a868, 60, 170);
+    this.atmosphere = new Atmosphere(this.scene, combat.title.includes('cat') || combat.boss === 'mothership' ? 0x5a3f8a : 0xe8a868, 60, 170, this.shadows ? { size: quality.profile.shadowSize, range: 45 } : null);
     this.atmosphere.minFogFar = combat.boss ? 90 : 55;
     this.atmosphere.set(hourOf(state), weatherAt(state));
     this.atmosphere.attachHeadlights(this.car);
 
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshLambertMaterial({ color: groundColorAt(biomeSpans(state.route), state.distance) }));
     ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
     this.scene.add(ground);
 
     this.roadTex.repeat.set(1, 200 / 16);
@@ -85,6 +88,9 @@ export class CombatScene implements GameScene {
       if (!post) m.scale.setScalar(0.6 + Math.random() * 2.2);
       this.props.add(m);
     }
+    this.road.receiveShadow = true;
+    castShadows(this.props, this.shadows);
+    castShadows(this.car, this.shadows);
     this.scene.add(this.props);
     this.scene.add(this.car);
 
@@ -187,7 +193,7 @@ export class CombatScene implements GameScene {
       (this.warning.material as THREE.MeshBasicMaterial).opacity = 0.25 + 0.3 * (0.5 + 0.5 * Math.sin(c.time * (8 + (1.5 - boss.timer) * 14)));
     }
     this.updateFx(dt);
-    this.atmosphere.update(dt, this.camera);
+    this.atmosphere.update(dt, this.camera, this.car.position);
     this.cb.onTick();
 
     const outcome = this.state.status === 'lost' ? 'wrecked' : combatOutcome(c);
@@ -277,6 +283,7 @@ export class CombatScene implements GameScene {
       let g = this.meshes.get(e.id);
       if (!g) {
         g = buildEnemy(e.type);
+        castShadows(g, this.shadows);
         this.meshes.set(e.id, g);
         this.scene.add(g);
       }

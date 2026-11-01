@@ -107,6 +107,7 @@ STATES="VA WV" sh scripts/fetch-osm-roads.sh data-src/osm-test   # a quick test 
 - **Real places.** Stops sit at real towns from the map, or borrow a nearby town's name ("Tulsa Quik Fill"). Fuel stops are real gas stations from OpenStreetMap when online. Green guide signs with interstate/US/state shields mark where the route changes road, and the HUD shows the road you're on.
 - **Lanes by road type.** From the real road names: interstates and freeways are divided, four lanes each way; US and state highways are four lanes with a double yellow; other roads are two-lane. Widths taper between types and interstate exits are always on the right.
 - **Climate.** Ten biomes from a rough US climate map (latitude bands elsewhere) set the ground, plants (saguaros, sagebrush, prairie grass, cornfields, oaks, pines, palms), sky tint and weather as you drive.
+- **Graphics quality (build plan phase 1).** Low, Medium or High, picked for the device (weak devices Low, phones Medium, computers High) and changeable in the pause menu. It sets the pixel ratio, sun shadows (Medium and High), how far ahead scenery is built, how many plants line the road, and a soft bloom glow (High only, loaded on demand). A sky dome blends from the horizon colour to a deeper overhead colour, with a sun that crosses the sky with the clock and a moon at night. The light and shadows follow the sun's position, and the hour and weather now blend smoothly every frame instead of jumping.
 
 ## Ideas for next steps
 
