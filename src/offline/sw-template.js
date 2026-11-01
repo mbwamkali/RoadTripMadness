@@ -41,7 +41,8 @@ self.addEventListener('fetch', (event) => {
   if (req.mode === 'navigate') {
     // Network first for the page, so updates arrive; the cached copy when offline.
     event.respondWith(
-      fetch(req)
+      // no-cache: always ask the server, so the browser's own cache can't hand back an old page.
+      fetch(req, { cache: 'no-cache' })
         .then((res) => {
           const copy = res.clone();
           caches.open(CACHE).then((c) => c.put('./', copy));

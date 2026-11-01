@@ -15,7 +15,8 @@ import { overpassStreets } from './geo/streets';
 import { fetchLiveConditions, liveEnabled, setLiveEnabled, type LiveConditions } from './geo/liveWeather';
 import { isOffline, planTrip, searchAnywhere } from './offline/planner';
 import { tripCache } from './offline/tripCache';
-import { registerServiceWorker } from './offline/registerSw';
+import { checkForUpdate, registerServiceWorker } from './offline/registerSw';
+import { buildLabel } from './build';
 import { showClassics, showSavedTrips } from './ui/tripScreens';
 import {
   buyFuel,
@@ -162,6 +163,7 @@ function showTitle(): void {
       kidModeButton(),
       installButton(),
       isOffline() && h('div', { class: 'offline-badge' }, 'Offline: classic, saved and atlas trips still work'),
+      buildLine(),
       h(
         'p',
         { class: 'fine' },
@@ -171,6 +173,17 @@ function showTitle(): void {
       ),
     ),
   );
+}
+
+/** The build number, with a button that looks for a newer one. */
+function buildLine(): HTMLElement {
+  const check = h('button', { class: 'btn small ghost' }, '🔄 Check for updates');
+  check.addEventListener('click', async () => {
+    check.textContent = 'Checking…';
+    const r = await checkForUpdate();
+    check.textContent = r === 'updating' ? 'Updating… the game will reload' : r === 'current' ? '✅ You have the newest build' : '📴 Offline, try again later';
+  });
+  return h('div', { class: 'build-line' }, h('span', { class: 'build' }, buildLabel()), check);
 }
 
 /** The Kid mode switch on the title screen. */
@@ -974,6 +987,7 @@ function showPauseMenu(): void {
       { class: 'card', 'data-quiet': true },
       h('h2', {}, 'Paused'),
       h('p', {}, `Encounters survived: ${state!.encounters} · Kills: ${state!.kills}`),
+      h('p', { class: 'fine build' }, buildLabel()),
       sightsPassed(),
       h('button', { class: 'btn primary', onclick: close }, 'Keep driving'),
       h(
@@ -1674,7 +1688,20 @@ requestAnimationFrame(frame);
 document.body.classList.toggle('kid', kidMode.on);
 narrateUi(ui());
 showTitle();
-registerServiceWorker();
+registerServiceWorker(() => {
+  // A new build just took over. Off the road, reload straight into it; mid-trip, offer it (the trip is saved).
+  if (!state || state.status !== 'driving') {
+    location.reload();
+    return;
+  }
+  if (document.querySelector('.update-banner')) return;
+  const banner = h('button', { class: 'update-banner' }, '🆕 New version ready · tap to update');
+  banner.addEventListener('click', () => {
+    if (state?.status === 'driving') saveGame(state);
+    location.reload();
+  });
+  document.body.append(banner);
+});
 
 // Handy for automated play tests.
 (window as unknown as { rtm: unknown }).rtm = {

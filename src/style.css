@@ -1539,3 +1539,34 @@ body.kid .howto-tip b {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent) inset;
 }
+
+/* ------------------------------------------------------------------ build number and updates */
+.build-line {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.build {
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.build-line .btn {
+  width: auto;
+}
+.update-banner {
+  position: fixed;
+  left: 50%;
+  top: calc(8px + var(--safe-t));
+  transform: translateX(-50%);
+  z-index: 50;
+  padding: 10px 16px;
+  border-radius: 999px;
+  border: 0;
+  background: var(--accent);
+  color: #1b1410;
+  font: inherit;
+  font-weight: 700;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}

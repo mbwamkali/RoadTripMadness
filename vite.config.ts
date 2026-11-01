@@ -2,6 +2,24 @@ import { defineConfig, type Plugin } from 'vite';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execSync } from 'node:child_process';
+
+/** The build number (commits on main) and short commit, shown on screen so testers can tell which build they have. */
+function buildInfo(): { number: string; commit: string; time: string } {
+  const git = (cmd: string) => {
+    try {
+      return execSync(`git ${cmd}`, { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+    } catch {
+      return '';
+    }
+  };
+  return {
+    number: git('rev-list --count HEAD') || '0',
+    commit: (process.env.GITHUB_SHA ?? git('rev-parse HEAD')).slice(0, 7) || 'dev',
+    time: new Date().toISOString(),
+  };
+}
+const BUILD = buildInfo();
 
 /** Every file in public/, as paths relative to the site root. */
 function publicFiles(dir = 'public', base = ''): string[] {
@@ -37,6 +55,7 @@ function serviceWorker(): Plugin {
 export default defineConfig({
   base: './',
   plugins: [serviceWorker()],
+  define: { __BUILD__: JSON.stringify(BUILD) },
   build: { target: 'es2020', chunkSizeWarningLimit: 1000 },
   test: { environment: 'node', include: ['tests/**/*.test.ts'] },
 } as never);
