@@ -1,4 +1,5 @@
 import { DIFFICULTIES, type Difficulty } from './difficulty';
+import { threatScoreBonus } from './career';
 import type { GameState } from './state';
 
 export interface ScoreEntry {
@@ -6,6 +7,8 @@ export interface ScoreEntry {
   route: string;
   difficulty: Difficulty;
   won: boolean;
+  /** Threat level the trip was driven at (older scores: none). */
+  threat?: number;
   /** ISO date. */
   date: string;
 }
@@ -32,8 +35,10 @@ export function scoreFor(s: GameState, pathLength: number): ScoreBreakdown {
     lines.push(['Cash left', Math.round(s.inv.cash)]);
   }
   const base = lines.reduce((a, [, v]) => a + v, 0);
-  const mult = DIFFICULTIES[s.difficulty].score;
-  if (mult !== 1) lines.push([`${DIFFICULTIES[s.difficulty].name} ×${mult}`, Math.round(base * mult) - base]);
+  const mult = DIFFICULTIES[s.difficulty].score * (1 + threatScoreBonus(s.threat ?? 0));
+  const dm = DIFFICULTIES[s.difficulty].score;
+  if (dm !== 1) lines.push([`${DIFFICULTIES[s.difficulty].name} ×${dm}`, Math.round(base * dm) - base]);
+  if (s.threat) lines.push([`Threat level ${s.threat}`, Math.round(base * mult) - Math.round(base * dm)]);
   return { total: Math.round(base * mult), lines };
 }
 

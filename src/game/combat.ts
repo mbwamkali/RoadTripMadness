@@ -184,6 +184,8 @@ export interface CombatOptions {
   /** Difficulty: enemy health and damage multipliers. */
   hpScale?: number;
   dmgScale?: number;
+  /** Extra enemies per fight from the threat level (career). */
+  extra?: number;
   dodge?: number;
   steerScale?: number;
 }
@@ -232,9 +234,9 @@ export function createCombat(opts: CombatOptions): CombatState {
   // Each fight leans toward one kind of threat so they feel distinct.
   const theme = opts.theme ?? (opts.ambush ? (rng() < 0.6 ? 'zombie' : 'outlaw') : pickTheme(rng, p));
   if (theme === 'zombie' && rng() < (opts.hordeChance ?? 0)) {
-    return { ...common, escapeAt: 45, queue: hordeWaves(rng, p, opts.hordeMax ?? 40), title: 'ZOMBIE HORDE!', boss: null, horde: true };
+    return { ...common, escapeAt: 45, queue: hordeWaves(rng, p, opts.hordeMax ?? 40, (opts.extra ?? 0) * 2), title: 'ZOMBIE HORDE!', boss: null, horde: true };
   }
-  const count = Math.round(5 + p * 9 + rng() * 3);
+  const count = Math.round(5 + p * 9 + rng() * 3) + (opts.extra ?? 0);
   const types: EnemyType[] = [];
   for (let i = 0; i < count; i++) {
     const r = rng();
@@ -252,9 +254,9 @@ export function createCombat(opts: CombatOptions): CombatState {
   return { ...common, escapeAt: 45, queue, title: titles[theme as 'zombie' | 'outlaw' | 'catship'] ?? titles.zombie, boss: null, horde: false };
 }
 
-/** 20 to 40 zombies (at most `max`) in three or four waves, each wave a tight rush. */
-export function hordeWaves(rng: Rng, p: number, max: number): Spawn[] {
-  const total = Math.min(max, Math.round(20 + p * 12 + rng() * 8));
+/** 20 to 40 zombies (more with `extra` from the threat level, at most `max`) in three or four waves, each wave a tight rush. */
+export function hordeWaves(rng: Rng, p: number, max: number, extra = 0): Spawn[] {
+  const total = Math.min(max, Math.round(20 + p * 12 + rng() * 8) + extra);
   const waves = total > 28 ? 4 : 3;
   const out: Spawn[] = [];
   let t = 1;

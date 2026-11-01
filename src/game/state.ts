@@ -53,6 +53,8 @@ export interface GameState {
   bikeUsed?: boolean;
   /** Road rage, 0 to 100: rises when you shoot traffic, cools as you drive (see rage.ts). */
   rage?: number;
+  /** Threat level carried over from earlier wins (see career.ts): tougher, bigger fights. */
+  threat?: number;
   /** 0: halfway boss to come, 1: final boss to come, 2: both done. */
   bossStage: number;
   bossesBeaten: number;
@@ -77,7 +79,13 @@ export function fuelPerUnit(pathLength: number): number {
   return TANK / (pathLength / 3.2);
 }
 
-export function newGame(route: RouteData, seed = Date.now() & 0xffffffff, difficulty: Difficulty = 'normal', ride: Ride = 'car'): GameState {
+export function newGame(
+  route: RouteData,
+  seed = Date.now() & 0xffffffff,
+  difficulty: Difficulty = 'normal',
+  ride: Ride = 'car',
+  carry?: { upgrades: Upgrades; threat: number },
+): GameState {
   const path = pathFromRoute(route);
   const rng = makeRng(seed);
   const stops = generateStops(route, path.length, seed);
@@ -91,7 +99,7 @@ export function newGame(route: RouteData, seed = Date.now() & 0xffffffff, diffic
     landmarks: fillLandmarks(route, path.length, stops, route.landmarks ?? [], seed),
     distance: 0,
     health: MAX_HEALTH,
-    upgrades: noUpgrades(),
+    upgrades: carry ? { ...carry.upgrades } : noUpgrades(),
     crew: [],
     nextEventAt: path.length * range(rng, 0.05, 0.09),
     eventsSeen: 0,
@@ -109,6 +117,7 @@ export function newGame(route: RouteData, seed = Date.now() & 0xffffffff, diffic
     encounters: 0,
     difficulty,
     ...(ride !== 'car' ? { ride } : {}),
+    ...(carry?.threat ? { threat: carry.threat } : {}),
     bossStage: 0,
     bossesBeaten: 0,
     kills: 0,

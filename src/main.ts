@@ -36,6 +36,7 @@ import {
 } from './game/state';
 import { STOP_TITLES, type PlaceKind, type Stop } from './game/stops';
 import { classAt, roadSegments } from './game/roads';
+import { afterTrip, freshCareer, loadCareer, saveCareer, threatFor, threatScale } from './game/career';
 import { BOOST_FUEL, BOSS_INFO, boost, createCombat, easeOff, ENEMY_STATS, horn, WEAPONS, type BossKind, type CombatState, type EnemyType, type WeaponKind } from './game/combat';
 import { DIFFICULTIES, DIFFICULTY_IDS, type Difficulty } from './game/difficulty';
 import { addScore, loadScores, scoreFor, type ScoreEntry } from './game/scores';
@@ -196,7 +197,7 @@ function scoreTable(list: ScoreEntry[], highlight = -1): HTMLElement {
         { class: i === highlight ? 'new' : '' },
         h('b', {}, e.score.toLocaleString()),
         h('span', { class: 'who' }, `${e.won ? '🏁' : '💥'} ${e.route}`),
-        h('span', { class: 'diff' }, `${DIFFICULTIES[e.difficulty]?.icon ?? ''} ${e.date}`),
+        h('span', { class: 'diff' }, `${DIFFICULTIES[e.difficulty]?.icon ?? ''}${e.threat ? ` ⚠️${e.threat}` : ''} ${e.date}`),
       ),
     ),
   );
@@ -421,7 +422,8 @@ function previewRoute(route: RouteData, note?: string, back: () => void = showSe
         .catch(() => null)
     : null;
   const go = () => {
-    const g = newGame(route, s.seed, difficulty, ride);
+    const career = loadCareer();
+    const g = newGame(route, s.seed, difficulty, ride, { upgrades: career.upgrades, threat: threatFor(career, kidMode.on) });
     startTrip(g);
     void streets?.then((names) => {
       if (!names || state !== g) return;
@@ -463,12 +465,39 @@ function previewRoute(route: RouteData, note?: string, back: () => void = showSe
       kidMode.on ? h('p', { class: 'note' }, `🧒 Kid mode: ${DIFFICULTIES[DIFFICULTY_IDS[0]].name}, the easiest trip`) : h('div', { class: 'difficulty' }, ...diffBtns),
       h('div', { class: 'rides' }, ...rideBtns),
       rideBlurb,
+      careerNote(),
       h('button', { class: 'btn primary', onclick: go }, 'Hit the road'),
       realMap && liveBtn,
       h('button', { class: 'btn ghost', onclick: back }, back === showSetup ? '← Pick different places' : '← Back'),
       h('p', { class: 'fine' }, route.attribution, realMap ? ' Weather data by Open-Meteo.com.' : ''),
     ),
   );
+}
+
+/** The carried-over upgrades and threat level, with a way to start over from scratch. */
+function careerNote(): HTMLElement | false {
+  const c = loadCareer();
+  const threat = threatFor(c, kidMode.on);
+  const levels = Object.values(c.upgrades).reduce((a, b) => a + b, 0);
+  if (!threat && !levels) return false;
+  const box = h(
+    'div',
+    { class: 'note career' },
+    h('p', {}, `⚠️ Threat level ${threat}: enemies are tougher, hit harder and come in bigger groups.`),
+    levels > 0 && h('p', {}, `🔧 Your car upgrades from earlier trips came along (${levels} level${levels === 1 ? '' : 's'}).`),
+  );
+  const reset = h('button', { class: 'btn small ghost' }, 'Start over (no upgrades, threat 0)');
+  reset.addEventListener('click', () => {
+    if (reset.dataset.sure !== '1') {
+      reset.dataset.sure = '1';
+      reset.textContent = 'Tap again to start over';
+      return;
+    }
+    saveCareer(freshCareer());
+    box.remove();
+  });
+  box.append(reset);
+  return box;
 }
 
 /** "It's 9:45 PM at the start. Right now: rain, then clear." */
@@ -1318,11 +1347,13 @@ function startCombat(ambush: boolean, stop?: Stop, theme?: EnemyType, boss?: Bos
   const s = state!;
   sound.stopMusic();
   const diff = DIFFICULTIES[s.difficulty];
+  const ts = threatScale(s.threat ?? 0);
   const c = createCombat({
     theme,
     boss,
-    hpScale: diff.hp,
-    dmgScale: diff.dmg,
+    hpScale: diff.hp * ts.hp,
+    dmgScale: diff.dmg * ts.dmg,
+    extra: ts.extra,
     gunner: s.crew.includes('gunner'),
     seed: s.seed + s.encounters * 31 + (ambush ? 7 : 0) + Math.floor(s.distance),
     progress: s.distance / path!.length + nightDanger(hourOf(s)),
@@ -1565,9 +1596,14 @@ function showEnd(): void {
     route: `${s.route.startLabel.split(',')[0]} → ${s.route.endLabel.split(',')[0]}`,
     difficulty: s.difficulty,
     won,
+    ...(s.threat ? { threat: s.threat } : {}),
     date: new Date().toLocaleDateString(),
   };
   const { list, rank } = addScore(entry);
+  // A finished trip keeps its upgrades and raises the threat for the next one.
+  const before = loadCareer();
+  const career = afterTrip(before, won, s.upgrades, kidMode.on);
+  saveCareer(career);
   ui().replaceChildren(
     h(
       'div',
@@ -1582,6 +1618,14 @@ function showEnd(): void {
         h('li', {}, `Car condition ${Math.round(s.health)}%, ${Math.round(s.inv.fuel)} fuel left`),
         h('li', {}, `${s.bossesBeaten} of 2 bosses beaten on ${DIFFICULTIES[s.difficulty].name}`),
       ),
+      won &&
+        h(
+          'p',
+          { class: 'note' },
+          career.threat > before.threat
+            ? `🔧 Your upgrades come with you. ⚠️ Next trip is threat level ${career.threat}: the bad guys get tougher!`
+            : '🔧 Your upgrades come with you to the next trip.',
+        ),
       h(
         'div',
         { class: 'score' },
