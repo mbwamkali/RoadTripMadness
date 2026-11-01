@@ -704,6 +704,38 @@ body.hurt::after {
   font-size: 16px;
 }
 
+.landmark-toast.linked.show {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.landmark-toast .more {
+  display: block;
+  color: var(--accent, #ffb347);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.sights {
+  text-align: left;
+  margin: 4px 0 12px;
+}
+
+.sights h3 {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0 0 6px;
+  font-weight: 600;
+}
+
+.sights a {
+  display: block;
+  padding: 6px 0;
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
 @media (orientation: landscape) and (max-height: 500px) {
   .landmark-toast {
     top: calc(10px + var(--safe-t));

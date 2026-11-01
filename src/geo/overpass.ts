@@ -147,6 +147,14 @@ function kindFor(tags: Record<string, string>): MapFeature['kind'] | null {
   return null;
 }
 
+/** A Wikipedia (or Wikidata) page for a map feature, from its tags. */
+export function wikiUrl(tags: Record<string, string>): string | undefined {
+  const m = tags.wikipedia?.match(/^([a-z-]{2,12}):(.+)$/);
+  if (m) return `https://${m[1]}.wikipedia.org/wiki/${encodeURIComponent(m[2].trim().replace(/ /g, '_'))}`;
+  if (/^Q\d+$/.test(tags.wikidata ?? '')) return `https://www.wikidata.org/wiki/${tags.wikidata}`;
+  return undefined;
+}
+
 /** Cities (or towns of 50,000 or more) get wider interstates around them. */
 function isBigPlace(tags: Record<string, string>): boolean {
   const pop = parseInt((tags.population ?? '').replace(/[, ]/g, ''), 10);
@@ -162,7 +170,8 @@ export function parseOverpass(json: { elements?: OsmElement[] }): MapFeature[] {
     if (kind === 'fuel') name = name || tags.brand || tags.operator;
     if (!kind || !name) continue;
     if (kind === 'river') {
-      if (e.geometry?.length) out.push({ kind, name, line: e.geometry.map((g) => ({ lat: g.lat, lng: g.lon })) });
+      const wiki = wikiUrl(tags);
+      if (e.geometry?.length) out.push({ kind, name, line: e.geometry.map((g) => ({ lat: g.lat, lng: g.lon })), ...(wiki ? { wiki } : {}) });
       continue;
     }
     let point: LatLng | undefined;
@@ -177,8 +186,10 @@ export function parseOverpass(json: { elements?: OsmElement[] }): MapFeature[] {
     if (kind === 'fuel') {
       const truck = tags.hgv === 'yes' || TRUCK_BRANDS.test(`${name} ${tags.brand ?? ''}`);
       out.push({ kind, name, point, ...(truck ? { truck: true } : {}) });
-    } else if (kind === 'citysign' && isBigPlace(tags)) out.push({ kind, name, point, big: true });
-    else out.push({ kind, name, point });
+    } else {
+      const wiki = wikiUrl(tags);
+      out.push({ kind, name, point, ...(kind === 'citysign' && isBigPlace(tags) ? { big: true } : {}), ...(wiki ? { wiki } : {}) });
+    }
   }
   return out;
 }

@@ -42,6 +42,8 @@ export interface Landmark {
   arrow?: 'left' | 'right' | 'straight';
   /** Town signs: a city, where interstates widen. */
   big?: boolean;
+  /** Wikipedia page from the map data. */
+  wiki?: string;
 }
 
 export const LANDMARK_TITLES: Record<LandmarkKind, string> = {
@@ -95,10 +97,24 @@ export interface MapFeature {
   truck?: boolean;
   /** Towns: a city (50,000 people or more). */
   big?: boolean;
+  /** Its Wikipedia page, when the map links one. */
+  wiki?: string;
   /** A point feature, or the centre of an area. */
   point?: LatLng;
   /** A line feature (rivers). */
   line?: LatLng[];
+}
+
+/**
+ * Where to read about a real landmark: its Wikipedia page from the map, or a
+ * Wikipedia search for it. Made-up scenery has none.
+ */
+export function readMoreUrl(l: Landmark, state?: string): string | null {
+  if (!l.real || l.kind === 'roadsign' || l.kind === 'mountains') return null;
+  if (l.wiki) return l.wiki;
+  const name = l.name.replace(/^(Leaving|Welcome to) /, '');
+  const q = l.kind === 'citysign' && state ? `${name}, ${state}` : name;
+  return `https://en.wikipedia.org/w/index.php?search=${encodeURIComponent(q)}`;
 }
 
 /** Projects a lat/lng into the route's game plane (same projection buildRouteData used). */
@@ -198,7 +214,7 @@ export function placeFeatures(route: RouteData, path: Path, features: MapFeature
     if (f.kind === 'fuel') continue;
     if (f.kind === 'river' && f.line) {
       for (const c of lineCrossings(path, index, f.line.map(project))) {
-        out.push({ at: c.at, side: 1, offset: 0, kind: 'river', name: f.name, real: true, angle: c.angle });
+        out.push({ at: c.at, side: 1, offset: 0, kind: 'river', name: f.name, real: true, angle: c.angle, ...(f.wiki ? { wiki: f.wiki } : {}) });
       }
       continue;
     }
@@ -208,13 +224,13 @@ export function placeFeatures(route: RouteData, path: Path, features: MapFeature
     // The world is shrunk, so pull things in close enough to see; peaks stay on the horizon.
     if (f.kind === 'peak') {
       if (far > 1500) continue;
-      out.push({ at, side: lateral < 0 ? -1 : 1, offset: Math.max(350, Math.min(900, far)), kind: 'peak', name: f.name, real: true });
+      out.push({ at, side: lateral < 0 ? -1 : 1, offset: Math.max(350, Math.min(900, far)), kind: 'peak', name: f.name, real: true, ...(f.wiki ? { wiki: f.wiki } : {}) });
     } else if (f.kind === 'citysign') {
       if (far > 250) continue;
-      out.push({ at, side: 1, offset: 9, kind: 'citysign', name: f.name, real: true, ...(f.big ? { big: true } : {}) });
+      out.push({ at, side: 1, offset: 9, kind: 'citysign', name: f.name, real: true, ...(f.big ? { big: true } : {}), ...(f.wiki ? { wiki: f.wiki } : {}) });
     } else {
       if (far > 400) continue;
-      out.push({ at, side: lateral < 0 ? -1 : 1, offset: Math.max(28, Math.min(110, far)), kind: f.kind, name: f.name, real: true });
+      out.push({ at, side: lateral < 0 ? -1 : 1, offset: Math.max(28, Math.min(110, far)), kind: f.kind, name: f.name, real: true, ...(f.wiki ? { wiki: f.wiki } : {}) });
     }
   }
   return thin(out.sort((a, b) => a.at - b.at), path.length);

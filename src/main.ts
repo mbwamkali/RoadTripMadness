@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import './style.css';
 import type { Path } from './geo/geo';
 import { currentPosition, type Place } from './geo/geocode';
-import { LANDMARK_ICONS, LANDMARK_TITLES, roadAt, type Landmark } from './game/landmarks';
+import { ANNOUNCED, LANDMARK_ICONS, LANDMARK_TITLES, readMoreUrl, roadAt, type Landmark } from './game/landmarks';
 import { demoRawRoute } from './geo/demoRoute';
 import { addStateLines, buildRouteData, pathFromRoute, realKmAt, type RawRoute, type RouteData } from './geo/route';
 import { loadStateMap } from './geo/states';
@@ -455,21 +455,46 @@ function renderSignalling(stop: Stop): void {
 }
 
 let toastTimer = 0;
-function showLandmarkToast(l: Landmark): void {
-  if (l.kind === 'stateline') return showToast(LANDMARK_ICONS[l.kind], 'Now entering', l.name);
-  const verb = l.kind === 'river' ? 'Crossing' : l.kind === 'citysign' ? '' : 'Passing';
-  showToast(LANDMARK_ICONS[l.kind], verb ? `${verb} · ${LANDMARK_TITLES[l.kind]}` : LANDMARK_TITLES[l.kind], l.name);
+/** The state a spot on the route is in, for Wikipedia searches ("Barstow, California"). */
+function stateNameAt(at: number): string | undefined {
+  return state?.route.states?.filter((st) => st.at <= at).pop()?.name;
 }
 
-function showToast(icon: string, small: string, big: string): void {
-  const el = document.querySelector('.landmark-toast');
+function showLandmarkToast(l: Landmark): void {
+  const link = readMoreUrl(l, stateNameAt(l.at));
+  if (l.kind === 'stateline') return showToast(LANDMARK_ICONS[l.kind], 'Now entering', l.name, link);
+  const verb = l.kind === 'river' ? 'Crossing' : l.kind === 'citysign' ? '' : 'Passing';
+  showToast(LANDMARK_ICONS[l.kind], verb ? `${verb} · ${LANDMARK_TITLES[l.kind]}` : LANDMARK_TITLES[l.kind], l.name, link);
+}
+
+function showToast(icon: string, small: string, big: string, link?: string | null): void {
+  const el = document.querySelector('.landmark-toast') as HTMLElement | null;
   if (!el) return;
-  el.replaceChildren(h('span', { class: 'icon' }, icon), h('div', {}, h('small', {}, small), h('strong', {}, big)));
+  el.replaceChildren(h('span', { class: 'icon' }, icon), h('div', {}, h('small', {}, small), h('strong', {}, big), link && h('span', { class: 'more' }, 'Tap to read about it ↗')));
+  el.onclick = link ? () => window.open(link, '_blank', 'noopener') : null;
+  el.classList.toggle('linked', !!link);
   el.classList.remove('show');
-  void (el as HTMLElement).offsetWidth;
+  void el.offsetWidth;
   el.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => el.classList.remove('show'), 3500);
+  toastTimer = window.setTimeout(() => el.classList.remove('show'), link ? 5000 : 3500);
+}
+
+/** Real sights already passed, newest first, with somewhere to read about each. */
+function sightsPassed(): HTMLElement | null {
+  const s = state;
+  if (!s) return null;
+  const seen = s.landmarks.filter((l) => l.real && l.at <= s.distance && ANNOUNCED.has(l.kind) && !/^(Leaving|Welcome to) /.test(l.name)).slice(-6).reverse();
+  if (!seen.length) return null;
+  return h(
+    'div',
+    { class: 'sights' },
+    h('h3', {}, 'Sights you passed'),
+    ...seen.map((l) => {
+      const url = readMoreUrl(l, stateNameAt(l.at));
+      return h('a', { href: url ?? '#', target: '_blank', rel: 'noopener' }, `${LANDMARK_ICONS[l.kind]} ${l.name}`);
+    }),
+  );
 }
 
 function bar(cls: string, label: string): { el: HTMLElement; set: (v: number, max: number, text?: string) => void } {
@@ -580,6 +605,7 @@ function showPauseMenu(): void {
       { class: 'card' },
       h('h2', {}, 'Paused'),
       h('p', {}, `Encounters survived: ${state!.encounters} · Kills: ${state!.kills}`),
+      sightsPassed(),
       h('button', { class: 'btn primary', onclick: close }, 'Keep driving'),
       h(
         'button',
