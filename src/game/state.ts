@@ -1,6 +1,7 @@
 import { pathFromRoute, type RouteData } from '../geo/route';
 import type { Path } from '../geo/geo';
 import { fillLandmarks, type Landmark } from './landmarks';
+import type { LiveConditions } from '../geo/liveWeather';
 import type { CrewMember } from './events';
 import { hourOf, nightLoot } from './time';
 import { fuelEfficiency, MAX_LEVEL, maxHealthFor, noUpgrades, tankFor, upgradeCost, UPGRADES, type UpgradeKind, type Upgrades } from './upgrades';
@@ -36,6 +37,8 @@ export interface GameState {
   eventsSeen: number;
   /** Hours spent off the road (scavenging), which moves the clock. */
   hoursSpent: number;
+  /** Real weather along the route and the real start time, when looked up. */
+  live?: LiveConditions;
   /** Stop ids already passed or visited. */
   passed: string[];
   /** Searches done per stop+place, which raises the ambush risk. */

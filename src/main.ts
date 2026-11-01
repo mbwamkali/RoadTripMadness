@@ -6,6 +6,7 @@ import { ANNOUNCED, LANDMARK_ICONS, LANDMARK_TITLES, readMoreUrl, roadAt, type L
 import { demoRawRoute } from './geo/demoRoute';
 import { addStateLines, buildRouteData, pathFromRoute, realKmAt, type RawRoute, type RouteData } from './geo/route';
 import { loadStateMap } from './geo/states';
+import { fetchLiveConditions, liveEnabled, setLiveEnabled, type LiveConditions } from './geo/liveWeather';
 import { isOffline, planTrip, searchAnywhere } from './offline/planner';
 import { tripCache } from './offline/tripCache';
 import { registerServiceWorker } from './offline/registerSw';
@@ -32,7 +33,7 @@ import { BOOST_FUEL, BOSS_INFO, boost, createCombat, ENEMY_STATS, horn, WEAPONS,
 import { DIFFICULTIES, DIFFICULTY_IDS, type Difficulty } from './game/difficulty';
 import { addScore, loadScores, scoreFor, type ScoreEntry } from './game/scores';
 import { CREW, rollEvent, type RoadEvent } from './game/events';
-import { clockText, hourOf, isNight, nightDanger, weatherAt, WEATHER_INFO } from './game/time';
+import { clockText, hourOf, isNight, nightDanger, weatherAt, WEATHER_INFO, type Weather } from './game/time';
 import type { GameScene } from './scenes/common';
 import { DriveScene } from './scenes/DriveScene';
 import { CombatScene } from './scenes/CombatScene';
@@ -310,6 +311,40 @@ function previewRoute(route: RouteData, note?: string, back: () => void = showSe
   const syncDiff = () => diffBtns.forEach((b, i) => b.classList.toggle('selected', DIFFICULTY_IDS[i] === difficulty));
   syncDiff();
   const p = pathFromRoute(route);
+  // Real weather along the route and the real time at the start (Open-Meteo).
+  let live: Promise<LiveConditions | null> | null = null;
+  const liveLi = h('li', {});
+  const liveBtn = h('button', { class: 'btn small ghost' }, '');
+  const lookUpLive = () => {
+    const on = liveEnabled();
+    liveBtn.textContent = `Real weather and time: ${on ? 'on' : 'off'}`;
+    if (!on) {
+      live = null;
+      liveLi.textContent = 'The clock starts at 8 AM and the weather follows the climate.';
+      return;
+    }
+    liveLi.textContent = 'Looking up the real weather along the way…';
+    const mine = (live = fetchLiveConditions(route, p));
+    void mine.then((c) => {
+      if (live !== mine) return;
+      liveLi.textContent = c ? describeLive(c) : "Couldn't get the real weather, so it follows the climate instead.";
+    });
+  };
+  liveBtn.addEventListener('click', () => {
+    setLiveEnabled(!liveEnabled());
+    lookUpLive();
+  });
+  const realMap = route.source !== 'demo';
+  if (realMap) lookUpLive();
+  const go = () => {
+    const g = newGame(route, s.seed, difficulty);
+    startTrip(g);
+    void live?.then((c) => {
+      if (!c || state !== g) return;
+      // Too late to reset the clock once the car is moving; the weather still blends in.
+      g.live = g.distance > 50 ? { weather: c.weather } : c;
+    });
+  };
   const map = new Minimap(p, s.stops, 220);
   map.draw(0, []);
   const km = route.realMeters / 1000;
@@ -329,16 +364,30 @@ function previewRoute(route: RouteData, note?: string, back: () => void = showSe
           h('li', {}, `${route.landmarks!.length} real sights to pass, like ${[...new Set(route.landmarks!.map((l) => l.name))].slice(0, 3).join(', ')}`),
         (route.fuel?.length ?? 0) > 0 && h('li', {}, `Fuel stops are real gas stations from the map (${route.fuel!.length} along the way)`),
         (route.states?.length ?? 0) > 1 && h('li', {}, `Crosses ${route.states!.length} states: ${route.states!.map((st) => st.code).join(' → ')}`),
+        realMap && liveLi,
         h('li', {}, 'Green dots have gas pumps. Your tank lasts about a third of the trip.'),
         h('li', {}, 'Something big is waiting halfway, and another at the end of the road.'),
       ),
       note && h('p', { class: 'note' }, note),
       h('div', { class: 'difficulty' }, ...diffBtns),
-      h('button', { class: 'btn primary', onclick: () => startTrip(newGame(route, s.seed, difficulty)) }, 'Hit the road'),
+      h('button', { class: 'btn primary', onclick: go }, 'Hit the road'),
+      realMap && liveBtn,
       h('button', { class: 'btn ghost', onclick: back }, back === showSetup ? '← Pick different places' : '← Back'),
-      h('p', { class: 'fine' }, route.attribution),
+      h('p', { class: 'fine' }, route.attribution, realMap ? ' Weather data by Open-Meteo.com.' : ''),
     ),
   );
+}
+
+/** "It's 9:45 PM at the start. Right now: rain, then clear." */
+function describeLive(c: LiveConditions): string {
+  const kinds: Weather[] = [];
+  for (const p of c.weather) if (kinds[kinds.length - 1] !== p.w) kinds.push(p.w);
+  const wx = kinds
+    .slice(0, 4)
+    .map((k) => `${WEATHER_INFO[k].icon} ${WEATHER_INFO[k].name.toLowerCase()}`)
+    .join(', then ') + (kinds.length > 4 ? ' and more' : '');
+  const time = c.startHour !== undefined ? `It's ${clockText(c.startHour)} at the start. ` : '';
+  return `${time}Real weather right now: ${wx}.`;
 }
 
 // --------------------------------------------------------------- driving

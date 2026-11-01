@@ -8,7 +8,7 @@ const START_HOUR = 8;
 
 /** Hour of day, 0-24. Driving and time spent at stops both move the clock. */
 export function hourOf(s: GameState): number {
-  return (START_HOUR + (s.distance / DAY_LENGTH) * 24 + (s.hoursSpent ?? 0)) % 24;
+  return ((s.live?.startHour ?? START_HOUR) + (s.distance / DAY_LENGTH) * 24 + (s.hoursSpent ?? 0)) % 24;
 }
 
 /** 0 at night, 1 at midday, with smooth dawn and dusk. */
@@ -38,8 +38,18 @@ export const WEATHER_INFO: Record<Weather, { icon: string; name: string }> = {
 
 const WEATHER_SPAN = 3500;
 
-/** Weather for a stretch of road, from the local climate: deserts get dust, the cold North and mountains get snow. */
+/**
+ * Weather for a stretch of road: the real weather there right now when it
+ * was looked up, otherwise from the local climate (deserts get dust, the cold
+ * North and mountains get snow).
+ */
 export function weatherAt(s: GameState, distance = s.distance): Weather {
+  const live = s.live?.weather;
+  if (live?.length) {
+    let best = live[0];
+    for (const p of live) if (Math.abs(p.at - distance) < Math.abs(best.at - distance)) best = p;
+    return best.w;
+  }
   const span = Math.floor(distance / WEATHER_SPAN);
   if (span === 0) return 'clear';
   const r = makeRng(s.seed ^ hashString(`weather${span}`))();
