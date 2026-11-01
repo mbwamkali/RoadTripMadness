@@ -32,6 +32,7 @@ import { DriveScene } from './scenes/DriveScene';
 import { CombatScene } from './scenes/CombatScene';
 import { clearUi, fmtKm, h, ui } from './ui/dom';
 import { Minimap } from './ui/minimap';
+import { sound } from './audio/sound';
 
 const canvas = document.getElementById('view') as HTMLCanvasElement;
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
@@ -83,6 +84,8 @@ function setScene(scene: GameScene | null): void {
 // --------------------------------------------------------------- title & setup
 
 function showTitle(): void {
+  sound.stopMusic();
+  sound.engine(0);
   setScene(null);
   disposeAll();
   clearUi();
@@ -264,6 +267,7 @@ function startTrip(s: GameState): void {
   });
   setScene(drive);
   showDriveHud();
+  sound.startMusic();
 }
 
 let promptEl: HTMLElement | null = null;
@@ -349,13 +353,14 @@ function renderSignalling(stop: Stop): void {
 
 let toastTimer = 0;
 function showLandmarkToast(l: Landmark): void {
+  const verb = l.kind === 'river' ? 'Crossing' : l.kind === 'citysign' ? '' : 'Passing';
+  showToast(LANDMARK_ICONS[l.kind], verb ? `${verb} · ${LANDMARK_TITLES[l.kind]}` : LANDMARK_TITLES[l.kind], l.name);
+}
+
+function showToast(icon: string, small: string, big: string): void {
   const el = document.querySelector('.landmark-toast');
   if (!el) return;
-  const verb = l.kind === 'river' ? 'Crossing' : l.kind === 'citysign' ? '' : 'Passing';
-  el.replaceChildren(
-    h('span', { class: 'icon' }, LANDMARK_ICONS[l.kind]),
-    h('div', {}, h('small', {}, verb ? `${verb} · ${LANDMARK_TITLES[l.kind]}` : LANDMARK_TITLES[l.kind]), h('strong', {}, l.name)),
-  );
+  el.replaceChildren(h('span', { class: 'icon' }, icon), h('div', {}, h('small', {}, small), h('strong', {}, big)));
   el.classList.remove('show');
   void (el as HTMLElement).offsetWidth;
   el.classList.add('show');
@@ -407,6 +412,14 @@ function showDriveHud(): void {
     speedBtn.textContent = drive!.warp === 1 ? '▶' : '▶▶';
   });
   const menuBtn = h('button', { class: 'btn small round', title: 'Menu' }, '☰');
+  const stationName = () => ({ off: 'Radio off', twang: 'KTWG Country', synth: 'Neon FM' })[sound.station];
+  const radioBtn = h('button', { class: `btn small round ${sound.station === 'off' ? 'off' : ''}`, title: stationName() }, '📻');
+  radioBtn.addEventListener('click', () => {
+    sound.nextStation();
+    radioBtn.classList.toggle('off', sound.station === 'off');
+    radioBtn.title = stationName();
+    showToast('📻', 'Car radio', stationName());
+  });
   menuBtn.addEventListener('click', () => showPauseMenu());
   promptEl = h('div', { class: 'prompt' });
   promptFor = null;
@@ -415,7 +428,7 @@ function showDriveHud(): void {
       'div',
       { class: 'hud' },
       h('div', { class: 'landmark-toast' }),
-      h('div', { class: 'hud-top' }, h('div', { class: 'stats' }, fuel.el, hp.el, inv), h('div', { class: 'side' }, map.canvas, h('div', { class: 'row' }, speedBtn, menuBtn))),
+      h('div', { class: 'hud-top' }, h('div', { class: 'stats' }, fuel.el, hp.el, inv), h('div', { class: 'side' }, map.canvas, h('div', { class: 'row' }, radioBtn, speedBtn, menuBtn))),
       h('div', { class: 'hud-bottom' }, promptEl, progress, progressText),
     ),
   );
@@ -457,6 +470,17 @@ function showPauseMenu(): void {
         'button',
         {
           class: 'btn',
+          onclick: (e: Event) => {
+            sound.setSfx(!sound.settings.sfx);
+            (e.currentTarget as HTMLElement).textContent = `Sound effects: ${sound.settings.sfx ? 'on' : 'off'}`;
+          },
+        },
+        `Sound effects: ${sound.settings.sfx ? 'on' : 'off'}`,
+      ),
+      h(
+        'button',
+        {
+          class: 'btn',
           onclick: () => {
             saveGame(state!);
             state = null;
@@ -490,6 +514,8 @@ function showStop(stop: Stop): void {
   };
   const say = (r: ActionResult) => {
     log.prepend(h('p', { class: r.ok ? '' : 'muted' }, r.message));
+    if (r.ambush) sound.bad();
+    else if (r.ok) sound.coin();
     if (r.ambush) {
       setTimeout(() => startCombat(true, stop), 700);
       return;
@@ -530,6 +556,7 @@ function showStop(stop: Stop): void {
             saveGame(s);
             showDriveHud();
             drive!.resume();
+            sound.startMusic();
             setScene(drive);
           },
         },
@@ -544,6 +571,7 @@ function showStop(stop: Stop): void {
 
 function startCombat(ambush: boolean, stop?: Stop): void {
   const s = state!;
+  sound.stopMusic();
   const c = createCombat({ seed: s.seed + s.encounters * 31 + (ambush ? 7 : 0) + Math.floor(s.distance), progress: s.distance / path!.length, ambush });
   combat?.dispose();
   combat = new CombatScene(c, s, {
@@ -665,6 +693,7 @@ function endCombat(c: CombatState, outcome: 'cleared' | 'escaped' | 'wrecked', s
               } else {
                 showDriveHud();
                 drive!.resume();
+            sound.startMusic();
                 setScene(drive);
               }
             },
@@ -682,6 +711,9 @@ function showEnd(): void {
   const s = state!;
   clearSave();
   const won = s.status === 'won';
+  sound.stopMusic();
+  sound.engine(0);
+  sound.fanfare(won);
   const km = realKmAt(s.route, s.distance);
   ui().replaceChildren(
     h(
@@ -702,6 +734,12 @@ function showEnd(): void {
   );
   state = null;
 }
+
+// Audio may only start after a user gesture; every tap makes sure it's running.
+window.addEventListener('pointerdown', () => sound.unlock(), { capture: true });
+window.addEventListener('click', (e) => {
+  if ((e.target as HTMLElement).closest?.('.btn, .result')) sound.click();
+});
 
 resize();
 requestAnimationFrame(frame);

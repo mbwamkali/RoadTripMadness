@@ -7,6 +7,7 @@ import { hashString, makeRng, type Rng } from '../game/rng';
 import { ANNOUNCED, type Landmark } from '../game/landmarks';
 import { addLights, disposeTree, makeCar, makeRoadTexture, setBlinkers, textSprite, to3, type GameScene } from './common';
 import { buildLandmark, waterTexture } from './landmarkModels';
+import { sound } from '../audio/sound';
 
 const CHUNK = 400;
 const BEHIND = 250;
@@ -57,6 +58,7 @@ export class DriveScene implements GameScene {
   private turning: { stop: Stop; t: number; from: THREE.Vector3; mid: THREE.Vector3; to: THREE.Vector3 } | null = null;
   private stopping = false;
   private clock = 0;
+  private lastBlink = false;
   private announced = new Set<number>();
 
   constructor(
@@ -147,7 +149,12 @@ export class DriveScene implements GameScene {
   update(dt: number): void {
     this.clock += dt;
     const sig = this.signalling;
-    setBlinkers(this.car, sig ? (sig.side === 'left' ? 'L' : 'R') : null, !!sig && Math.floor(this.clock * 3) % 2 === 0);
+    const blinkOn = Math.floor(this.clock * 3) % 2 === 0;
+    setBlinkers(this.car, sig ? (sig.side === 'left' ? 'L' : 'R') : null, !!sig && blinkOn);
+    if (sig && blinkOn !== this.lastBlink) sound.tick(blinkOn);
+    this.lastBlink = blinkOn;
+    const moving = !this.paused && (!this.stopping || !!this.turning);
+    sound.engine(moving ? (this.turning ? 0.6 : this.warp) : 0);
     const water = waterTexture();
     water.offset.y -= dt * 0.25;
     for (const g of this.chunks.values()) {

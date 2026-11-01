@@ -762,3 +762,7 @@ body.hurt::after {
   font-size: 14px;
   margin: 0;
 }
+
+.btn.round.off {
+  opacity: 0.5;
+}
