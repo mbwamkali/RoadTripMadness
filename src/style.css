@@ -814,3 +814,56 @@ body.hurt::after {
 .outcome.bad {
   color: #ff9d8a;
 }
+
+/* ------------------------------------------------------------------ town map */
+
+.town-map {
+  width: 100%;
+  height: auto;
+  border-radius: 16px;
+  display: block;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
+  touch-action: manipulation;
+}
+
+.town-map.night {
+  filter: brightness(0.6) saturate(0.8) hue-rotate(-10deg);
+}
+
+.town-map .building {
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.town-map .building:focus {
+  outline: none;
+}
+
+.town-map .building.selected .roof {
+  stroke: #ffd23f;
+  stroke-width: 3;
+}
+
+.town-map .building.risky .roof {
+  stroke: #ff6a4a;
+  stroke-width: 2;
+  stroke-dasharray: 5 4;
+}
+
+.town-map .building.selected.risky .roof {
+  stroke: #ffd23f;
+  stroke-dasharray: none;
+}
+
+.sheet {
+  min-height: 60px;
+}
+
+.sheet .hint {
+  text-align: center;
+  margin: 8px 0;
+}
+
+.sheet .place p {
+  margin: 0 0 8px;
+}

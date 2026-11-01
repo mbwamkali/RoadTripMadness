@@ -33,6 +33,7 @@ import { DriveScene } from './scenes/DriveScene';
 import { CombatScene } from './scenes/CombatScene';
 import { clearUi, fmtKm, h, ui } from './ui/dom';
 import { Minimap } from './ui/minimap';
+import { PLACE_ICONS, TownMap } from './ui/townMap';
 import { gunDamageFor, MAX_LEVEL, ramDamageFor, upgradeCost, UPGRADES, type UpgradeKind } from './game/upgrades';
 import { sound } from './audio/sound';
 
@@ -538,6 +539,19 @@ function showRoadEvent(ev: RoadEvent): void {
 
 // --------------------------------------------------------------- explore a stop
 
+const PLACE_BLURBS: Record<PlaceKind, string> = {
+  pumps: 'Pumps still work if you pay. Or poke around for gas cans.',
+  garage: 'Tools, lifts and spare parts. A mechanic will fix you up for a price.',
+  grocery: 'Shelves mostly bare, but the till might have cash.',
+  hardware: 'Scrap metal, pipes and the odd box of shells.',
+  gunshop: 'Bars on the windows. Whatever is left in here is worth it.',
+  pharmacy: 'Cash in the register and, weirdly, catnip.',
+  police: 'Evidence lockers full of ammo. Doors hanging open.',
+  junkyard: 'Mountains of scrap. Something growls behind the crusher.',
+  barn: 'Hay, a tractor, and a few jerry cans.',
+  motel: 'Room keys still on the hooks. Guests left in a hurry.',
+};
+
 function showStop(stop: Stop): void {
   const s = state!;
   saveGame(s);
@@ -552,7 +566,8 @@ function showStop(stop: Stop): void {
     fuel.set(s.inv.fuel, tankSize(s));
     hp.set(s.health, maxHealth(s));
     invEl.replaceChildren(inventoryLine(s));
-    cards.replaceChildren(...stop.places.map(placeCard));
+    map.setSearches(Object.fromEntries(stop.places.map((p) => [p, s.searches[`${stop.id}:${p}`] ?? 0])));
+    sheet.replaceChildren(current ? placeCard(current) : h('p', { class: 'muted hint' }, '👆 Tap a building to walk over and look around.'));
   };
   const say = (r: ActionResult) => {
     log.prepend(h('p', { class: r.ok ? '' : 'muted' }, r.message));
@@ -579,9 +594,20 @@ function showStop(stop: Stop): void {
       );
     }
     actions.push(h('button', { class: 'btn small', onclick: () => say(search(s, stop.id, place)) }, n === 0 ? 'Search' : `Search again (${n === 1 ? 'risky' : 'very risky'})`));
-    return h('div', { class: `place ${place}` }, h('h3', {}, PLACE_TITLES[place]), h('div', { class: 'row' }, ...actions));
+    return h(
+      'div',
+      { class: `place ${place}` },
+      h('h3', {}, `${PLACE_ICONS[place]} ${PLACE_TITLES[place]}`),
+      h('p', { class: 'muted' }, PLACE_BLURBS[place]),
+      h('div', { class: 'row' }, ...actions),
+    );
   };
-  const cards = h('div', { class: 'places' });
+  let current: PlaceKind | null = null;
+  const sheet = h('div', { class: 'sheet' });
+  const map = new TownMap(stop, isNight(hourOf(s)), (place) => {
+    current = place;
+    refresh();
+  });
   ui().append(
     h(
       'div',
@@ -596,7 +622,8 @@ function showStop(stop: Stop): void {
       ),
       meters,
       invEl,
-      cards,
+      map.svg,
+      sheet,
       log,
       h(
         'button',
