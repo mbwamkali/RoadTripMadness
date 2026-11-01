@@ -199,6 +199,12 @@ class Sound {
 
   kill(type: 'zombie' | 'outlaw' | 'catship' | 'boss'): void {
     if (!this.ready) return;
+    if (type === 'boss') {
+      this.noise(1.4, 'lowpass', 500, 0.9, 0.6);
+      this.tone('sine', 110, 1.2, 0.35, { to: 30 });
+      this.tone('sawtooth', 220, 0.8, 0.08, { to: 60, at: this.t + 0.2 });
+      return;
+    }
     if (type === 'zombie') {
       this.noise(0.25, 'lowpass', 500, 0.5, 2);
       this.tone('sawtooth', 140, 0.35, 0.12, { to: 50 });
@@ -242,6 +248,13 @@ class Sound {
   charge(): void {
     if (!this.ready) return;
     this.tone('sine', 200, 1.3, 0.1, { to: 1400, attack: 0.2 });
+  }
+
+  /** A boss's big attack landing. */
+  slam(hit: boolean): void {
+    if (!this.ready) return;
+    this.noise(0.6, 'lowpass', 350, hit ? 0.9 : 0.5, 1.2);
+    this.tone('sine', 90, 0.5, hit ? 0.35 : 0.2, { to: 28 });
   }
 
   laser(): void {

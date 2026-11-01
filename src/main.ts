@@ -14,24 +14,31 @@ import {
   clearSave,
   FUEL_PRICE,
   loadGame,
-  MAX_HEALTH,
+  maxHealth,
+  buyUpgrade,
   newGame,
   PLACE_TITLES,
   repair,
   repairCost,
   saveGame,
   search,
-  TANK,
+  tankSize,
   type ActionResult,
   type GameState,
 } from './game/state';
 import { STOP_TITLES, type PlaceKind, type Stop } from './game/stops';
-import { BOOST_FUEL, boost, createCombat, horn, WEAPONS, type CombatState, type WeaponKind } from './game/combat';
+import { BOOST_FUEL, BOSS_INFO, boost, createCombat, ENEMY_STATS, horn, WEAPONS, type BossKind, type CombatState, type EnemyType, type WeaponKind } from './game/combat';
+import { DIFFICULTIES, DIFFICULTY_IDS, type Difficulty } from './game/difficulty';
+import { addScore, loadScores, scoreFor, type ScoreEntry } from './game/scores';
+import { CREW, rollEvent, type RoadEvent } from './game/events';
+import { clockText, hourOf, isNight, nightDanger, weatherAt, WEATHER_INFO } from './game/time';
 import type { GameScene } from './scenes/common';
 import { DriveScene } from './scenes/DriveScene';
 import { CombatScene } from './scenes/CombatScene';
 import { clearUi, fmtKm, h, ui } from './ui/dom';
 import { Minimap } from './ui/minimap';
+import { PLACE_ICONS, TownMap } from './ui/townMap';
+import { gunDamageFor, MAX_LEVEL, ramDamageFor, upgradeCost, UPGRADES, type UpgradeKind } from './game/upgrades';
 import { sound } from './audio/sound';
 
 const canvas = document.getElementById('view') as HTMLCanvasElement;
@@ -103,10 +110,50 @@ function showTitle(): void {
       h('button', { class: 'btn', onclick: () => showClassics(pick, showTitle) }, 'Classic road trips'),
       savedTrips > 0 && h('button', { class: 'btn', onclick: () => showSavedTrips(pick, showTitle) }, `Saved trips (${savedTrips})`),
       h('button', { class: 'btn', onclick: () => previewRoute(buildRouteData(demoRawRoute(Date.now() % 1000)), undefined, showTitle) }, 'Quick demo trip (made-up map)'),
+      h('button', { class: 'btn ghost', onclick: showScores }, '🏆 High scores'),
       isOffline() && h('div', { class: 'offline-badge' }, 'Offline: classic, saved and atlas trips still work'),
       h('p', { class: 'fine' }, 'Maps © OpenStreetMap contributors. Routing by OSRM. Offline atlas from Natural Earth.'),
     ),
   );
+}
+
+function scoreTable(list: ScoreEntry[], highlight = -1): HTMLElement {
+  if (!list.length) return h('p', { class: 'muted' }, 'No trips finished yet. Get out there!');
+  return h(
+    'ol',
+    { class: 'scores' },
+    ...list.map((e, i) =>
+      h(
+        'li',
+        { class: i === highlight ? 'new' : '' },
+        h('b', {}, e.score.toLocaleString()),
+        h('span', { class: 'who' }, `${e.won ? '🏁' : '💥'} ${e.route}`),
+        h('span', { class: 'diff' }, `${DIFFICULTIES[e.difficulty]?.icon ?? ''} ${e.date}`),
+      ),
+    ),
+  );
+}
+
+function showScores(): void {
+  clearUi();
+  ui().append(
+    h(
+      'div',
+      { class: 'screen scores-screen' },
+      h('h2', {}, '🏆 High scores'),
+      scoreTable(loadScores()),
+      h('button', { class: 'btn ghost', onclick: showTitle }, '← Back'),
+    ),
+  );
+}
+
+function loadDifficulty(): Difficulty {
+  try {
+    const d = localStorage.getItem('rtm-difficulty') as Difficulty | null;
+    return d && d in DIFFICULTIES ? d : 'normal';
+  } catch {
+    return 'normal';
+  }
 }
 
 function placePicker(label: string, onPick: (p: Place | null) => void, withGps: boolean): HTMLElement {
@@ -213,6 +260,28 @@ function showSetup(): void {
 function previewRoute(route: RouteData, note?: string, back: () => void = showSetup): void {
   clearUi();
   const s = newGame(route);
+  let difficulty = loadDifficulty();
+  const diffBtns = DIFFICULTY_IDS.map((d) =>
+    h(
+      'button',
+      {
+        class: 'btn diff',
+        onclick: () => {
+          difficulty = d;
+          try {
+            localStorage.setItem('rtm-difficulty', d);
+          } catch {
+            /* ignore */
+          }
+          syncDiff();
+        },
+      },
+      h('b', {}, `${DIFFICULTIES[d].icon} ${DIFFICULTIES[d].name}`),
+      h('span', {}, DIFFICULTIES[d].blurb),
+    ),
+  );
+  const syncDiff = () => diffBtns.forEach((b, i) => b.classList.toggle('selected', DIFFICULTY_IDS[i] === difficulty));
+  syncDiff();
   const p = pathFromRoute(route);
   const map = new Minimap(p, s.stops, 220);
   map.draw(0, []);
@@ -232,9 +301,11 @@ function previewRoute(route: RouteData, note?: string, back: () => void = showSe
         (route.landmarks?.length ?? 0) > 0 &&
           h('li', {}, `${route.landmarks!.length} real sights to pass, like ${[...new Set(route.landmarks!.map((l) => l.name))].slice(0, 3).join(', ')}`),
         h('li', {}, 'Green dots have gas pumps. Your tank lasts about a third of the trip.'),
+        h('li', {}, 'Something big is waiting halfway, and another at the end of the road.'),
       ),
       note && h('p', { class: 'note' }, note),
-      h('button', { class: 'btn primary', onclick: () => startTrip(s) }, 'Hit the road'),
+      h('div', { class: 'difficulty' }, ...diffBtns),
+      h('button', { class: 'btn primary', onclick: () => startTrip(newGame(route, s.seed, difficulty)) }, 'Hit the road'),
       h('button', { class: 'btn ghost', onclick: back }, back === showSetup ? '← Pick different places' : '← Back'),
       h('p', { class: 'fine' }, route.attribution),
     ),
@@ -263,6 +334,8 @@ function startTrip(s: GameState): void {
     onPrompt: (stop, dist) => updatePrompt(stop, dist),
     onEnterStop: (stop) => showStop(stop),
     onLandmark: (l) => showLandmarkToast(l),
+    onRoadEvent: () => showRoadEvent(rollEvent(s)),
+    onBoss: (boss) => showBossIntro(boss),
     onTick: () => hudTick?.(),
   });
   setScene(drive);
@@ -393,6 +466,7 @@ function inventoryLine(s: GameState): HTMLElement {
     h('span', { title: 'Bullets' }, `🔫 ${i.bullets}`),
     h('span', { title: 'Shotgun shells' }, `💥 ${i.shells}`),
     h('span', { title: 'Catnip bombs' }, `🌿 ${i.catnip}`),
+    ...s.crew.map((c) => h('span', { title: `${CREW[c].name}: ${CREW[c].perk}` }, CREW[c].icon)),
   );
 }
 
@@ -435,16 +509,18 @@ function showDriveHud(): void {
   let lastInv = '';
   let frameCount = 0;
   hudTick = () => {
-    fuel.set(s.inv.fuel, TANK);
-    hp.set(s.health, MAX_HEALTH);
-    const key = JSON.stringify(s.inv);
+    fuel.set(s.inv.fuel, tankSize(s));
+    hp.set(s.health, maxHealth(s));
+    const key = JSON.stringify(s.inv) + s.crew.join();
     if (key !== lastInv) {
       inv.replaceChildren(inventoryLine(s));
       lastInv = key;
     }
     (progress.firstChild as HTMLElement).style.width = `${(s.distance / p.length) * 100}%`;
     const left = realKmAt(s.route, p.length - s.distance);
-    progressText.textContent = `${fmtKm(left)} to ${s.route.endLabel.split(',')[0]}`;
+    const hour = hourOf(s);
+    const wx = weatherAt(s);
+    progressText.textContent = `${isNight(hour) ? '🌙' : '☀️'} ${clockText(hour)} · ${wx === 'clear' ? '' : `${WEATHER_INFO[wx].icon} ${WEATHER_INFO[wx].name} · `}${fmtKm(left)} to ${s.route.endLabel.split(',')[0]}`;
     if (frameCount++ % 10 === 0) map.draw(s.distance, s.passed);
   };
   hudTick();
@@ -494,7 +570,63 @@ function showPauseMenu(): void {
   ui().append(overlay);
 }
 
+// --------------------------------------------------------------- road events
+
+function showRoadEvent(ev: RoadEvent): void {
+  const s = state!;
+  saveGame(s);
+  const body = h('div', { class: 'event-body' });
+  const card = h('div', { class: 'card event' }, h('div', { class: 'event-icon' }, ev.icon), h('h2', {}, ev.title), h('p', {}, ev.text), body);
+  const overlay = h('div', { class: 'modal' }, card);
+  const finish = (fight?: EnemyType) => {
+    overlay.remove();
+    if (s.status === 'lost') return showEnd();
+    if (fight) return startCombat(false, undefined, fight);
+    drive?.resume();
+    hudTick?.();
+  };
+  body.replaceChildren(
+    ...ev.choices.map((ch) =>
+      h(
+        'button',
+        {
+          class: 'btn choice',
+          disabled: !ch.enabled,
+          onclick: () => {
+            const out = ch.apply();
+            if (out.fight) sound.bad();
+            else if (out.ok) sound.coin();
+            else sound.bad();
+            hudTick?.();
+            body.replaceChildren(
+              h('p', { class: `outcome ${out.ok ? 'good' : 'bad'}` }, out.message),
+              h('button', { class: 'btn primary', onclick: () => finish(out.fight) }, out.fight ? 'Fight!' : 'Continue'),
+            );
+          },
+        },
+        h('b', {}, ch.label),
+        ch.hint ? h('small', {}, ch.hint) : null,
+      ),
+    ),
+  );
+  sound.charge();
+  ui().append(overlay);
+}
+
 // --------------------------------------------------------------- explore a stop
+
+const PLACE_BLURBS: Record<PlaceKind, string> = {
+  pumps: 'Pumps still work if you pay. Or poke around for gas cans.',
+  garage: 'Tools, lifts and spare parts. A mechanic will fix you up for a price.',
+  grocery: 'Shelves mostly bare, but the till might have cash.',
+  hardware: 'Scrap metal, pipes and the odd box of shells.',
+  gunshop: 'Bars on the windows. Whatever is left in here is worth it.',
+  pharmacy: 'Cash in the register and, weirdly, catnip.',
+  police: 'Evidence lockers full of ammo. Doors hanging open.',
+  junkyard: 'Mountains of scrap. Something growls behind the crusher.',
+  barn: 'Hay, a tractor, and a few jerry cans.',
+  motel: 'Room keys still on the hooks. Guests left in a hurry.',
+};
 
 function showStop(stop: Stop): void {
   const s = state!;
@@ -507,10 +639,11 @@ function showStop(stop: Stop): void {
   const hp = bar('hp', '🔧');
   meters.append(fuel.el, hp.el);
   const refresh = () => {
-    fuel.set(s.inv.fuel, TANK);
-    hp.set(s.health, MAX_HEALTH);
+    fuel.set(s.inv.fuel, tankSize(s));
+    hp.set(s.health, maxHealth(s));
     invEl.replaceChildren(inventoryLine(s));
-    cards.replaceChildren(...stop.places.map(placeCard));
+    map.setSearches(Object.fromEntries(stop.places.map((p) => [p, s.searches[`${stop.id}:${p}`] ?? 0])));
+    sheet.replaceChildren(current ? placeCard(current) : h('p', { class: 'muted hint' }, '👆 Tap a building to walk over and look around.'));
   };
   const say = (r: ActionResult) => {
     log.prepend(h('p', { class: r.ok ? '' : 'muted' }, r.message));
@@ -526,27 +659,47 @@ function showStop(stop: Stop): void {
     const n = s.searches[`${stop.id}:${place}`] ?? 0;
     const actions: HTMLElement[] = [];
     if (place === 'pumps') {
-      const want = Math.max(0, Math.floor(TANK - s.inv.fuel));
+      const want = Math.max(0, Math.floor(tankSize(s) - s.inv.fuel));
       actions.push(h('button', { class: 'btn small primary', onclick: () => say(buyFuel(s)), disabled: want === 0 }, `Fill up ($${Math.min(want * FUEL_PRICE, Math.floor(s.inv.cash / FUEL_PRICE) * FUEL_PRICE)})`));
     }
     if (place === 'garage') {
       const cost = repairCost(s);
       actions.push(
         h('button', { class: 'btn small primary', onclick: () => say(repair(s)), disabled: cost.hp === 0 }, cost.hp ? `Repair (${cost.scrap} scrap or $${cost.cash})` : 'Car is fine'),
+        h('button', { class: 'btn small', onclick: () => showUpgrades(s, say) }, '🔧 Upgrades'),
       );
     }
     actions.push(h('button', { class: 'btn small', onclick: () => say(search(s, stop.id, place)) }, n === 0 ? 'Search' : `Search again (${n === 1 ? 'risky' : 'very risky'})`));
-    return h('div', { class: `place ${place}` }, h('h3', {}, PLACE_TITLES[place]), h('div', { class: 'row' }, ...actions));
+    return h(
+      'div',
+      { class: `place ${place}` },
+      h('h3', {}, `${PLACE_ICONS[place]} ${PLACE_TITLES[place]}`),
+      h('p', { class: 'muted' }, PLACE_BLURBS[place]),
+      h('div', { class: 'row' }, ...actions),
+    );
   };
-  const cards = h('div', { class: 'places' });
+  let current: PlaceKind | null = null;
+  const sheet = h('div', { class: 'sheet' });
+  const map = new TownMap(stop, isNight(hourOf(s)), (place) => {
+    current = place;
+    refresh();
+  });
   ui().append(
     h(
       'div',
       { class: 'screen explore' },
       h('h2', {}, `${stop.name}`, h('small', {}, ` ${STOP_TITLES[stop.kind]}`)),
+      h(
+        'p',
+        { class: 'muted' },
+        isNight(hourOf(s))
+          ? `🌙 ${clockText(hourOf(s))}. It's dark: you'll find more, but every search takes 45 minutes.`
+          : `☀️ ${clockText(hourOf(s))}. Every search takes 45 minutes.`,
+      ),
       meters,
       invEl,
-      cards,
+      map.svg,
+      sheet,
       log,
       h(
         'button',
@@ -567,12 +720,98 @@ function showStop(stop: Stop): void {
   refresh();
 }
 
+/** The garage's upgrade shop, as a modal over the explore screen. */
+function showUpgrades(s: GameState, say: (r: ActionResult) => void): void {
+  const list = h('div', { class: 'upgrades' });
+  const wallet = h('p', { class: 'muted' });
+  const render = () => {
+    wallet.textContent = `You have ${Math.floor(s.inv.scrap)} scrap and $${Math.floor(s.inv.cash)}.`;
+    list.replaceChildren(
+      ...(Object.keys(UPGRADES) as UpgradeKind[]).map((k) => {
+        const u = UPGRADES[k];
+        const level = s.upgrades[k];
+        const maxed = level >= MAX_LEVEL;
+        const cost = upgradeCost(level);
+        const afford = s.inv.scrap >= cost.scrap && s.inv.cash >= cost.cash;
+        return h(
+          'div',
+          { class: 'upgrade' },
+          h('span', { class: 'icon' }, u.icon),
+          h(
+            'div',
+            { class: 'info' },
+            h('strong', {}, u.name),
+            h('span', { class: 'pips' }, '●'.repeat(level) + '○'.repeat(MAX_LEVEL - level)),
+            h('small', {}, maxed ? u.describe(level) : `Next: ${u.describe(level + 1)}`),
+          ),
+          h(
+            'button',
+            {
+              class: `btn small ${afford && !maxed ? 'primary' : ''}`,
+              disabled: maxed || !afford,
+              onclick: () => {
+                const r = buyUpgrade(s, k);
+                say(r);
+                if (r.ok) drive?.refreshCar();
+                render();
+              },
+            },
+            maxed ? 'Maxed' : `${cost.scrap}🔩 $${cost.cash}`,
+          ),
+        );
+      }),
+    );
+  };
+  const overlay = h(
+    'div',
+    { class: 'modal' },
+    h('div', { class: 'card wide' }, h('h2', {}, 'Garage upgrades'), wallet, list, h('button', { class: 'btn primary', onclick: () => overlay.remove() }, 'Done')),
+  );
+  render();
+  ui().append(overlay);
+}
+
 // --------------------------------------------------------------- combat
 
-function startCombat(ambush: boolean, stop?: Stop): void {
+function showBossIntro(boss: BossKind): void {
   const s = state!;
   sound.stopMusic();
-  const c = createCombat({ seed: s.seed + s.encounters * 31 + (ambush ? 7 : 0) + Math.floor(s.distance), progress: s.distance / path!.length, ambush });
+  sound.bad();
+  const info = BOSS_INFO[boss];
+  saveGame(s);
+  ui().append(
+    h(
+      'div',
+      { class: 'modal boss-intro' },
+      h(
+        'div',
+        { class: 'card' },
+        h('div', { class: 'boss-icon' }, boss === 'brute' ? '🧟' : boss === 'warrig' ? '🚚' : '🐱'),
+        h('h2', {}, ENEMY_STATS[boss].name),
+        h('p', {}, info.intro),
+        h('p', { class: 'muted' }, `No running from this one. Ammo: ${s.inv.bullets} bullets, ${s.inv.shells} shells, ${s.inv.catnip} catnip.`),
+        h('button', { class: 'btn primary', onclick: () => startCombat(false, undefined, undefined, boss) }, 'Bring it on'),
+      ),
+    ),
+  );
+}
+
+function startCombat(ambush: boolean, stop?: Stop, theme?: EnemyType, boss?: BossKind): void {
+  const s = state!;
+  sound.stopMusic();
+  const diff = DIFFICULTIES[s.difficulty];
+  const c = createCombat({
+    theme,
+    boss,
+    hpScale: diff.hp,
+    dmgScale: diff.dmg,
+    gunner: s.crew.includes('gunner'),
+    seed: s.seed + s.encounters * 31 + (ambush ? 7 : 0) + Math.floor(s.distance),
+    progress: s.distance / path!.length + nightDanger(hourOf(s)),
+    ambush,
+    gunDamage: gunDamageFor(s.upgrades),
+    ramDamage: ramDamageFor(s.upgrades),
+  });
   combat?.dispose();
   combat = new CombatScene(c, s, {
     onCarHit: () => {
@@ -591,7 +830,7 @@ function showCombatHud(c: CombatState): void {
   clearUi();
   const s = state!;
   const hp = bar('hp', '🔧');
-  const esc = bar('escape', '🏁');
+  const esc = bar(c.boss ? 'bosshp' : 'escape', c.boss ? '💀' : '🏁');
   const weapons: WeaponKind[] = ['bullets', 'shells', 'catnip'];
   const wbtns = weapons.map((w) =>
     h('button', { class: 'btn weapon', onclick: () => ((c.weapon = w), syncWeapons()) }, h('b', {}, WEAPONS[w].name), h('span', {}, '')),
@@ -624,7 +863,12 @@ function showCombatHud(c: CombatState): void {
     h(
       'div',
       { class: 'hud combat' },
-      h('div', { class: 'banner' }, c.title, h('small', {}, 'Tap or hold on enemies to shoot. Survive or wipe them out.')),
+      h(
+        'div',
+        { class: `banner ${c.boss ? 'boss' : ''}` },
+        c.title,
+        h('small', {}, c.boss ? 'Hold on the boss to shoot. Steer out of the red lane!' : 'Tap or hold on enemies to shoot. Survive or wipe them out.'),
+      ),
       h('div', { class: 'stats' }, hp.el, esc.el),
       h(
         'div',
@@ -635,8 +879,11 @@ function showCombatHud(c: CombatState): void {
     ),
   );
   hudTick = () => {
-    hp.set(s.health, MAX_HEALTH);
-    esc.set(c.escape, c.escapeAt, `${c.enemies.length + c.queue.length} left`);
+    hp.set(s.health, maxHealth(s));
+    if (c.boss) {
+      const b = c.enemies.find((e) => e.id === c.bossId);
+      esc.set(b ? b.hp : c.queue.length ? 1 : 0, b ? b.maxHp : 1, b ? `${Math.ceil(b.hp)}` : c.queue.length ? 'Incoming…' : 'Down!');
+    } else esc.set(c.escape, c.escapeAt, `${c.enemies.length + c.queue.length} left`);
     hornBtn.classList.toggle('cooling', c.hornCooldown > 0);
     boostBtn.classList.toggle('cooling', c.boostCooldown > 0 || s.inv.fuel < BOOST_FUEL + 1);
     syncWeapons();
@@ -669,6 +916,12 @@ function endCombat(c: CombatState, outcome: 'cleared' | 'escaped' | 'wrecked', s
     found.push(`${v} ${k}`);
   }
   s.log.push(`${c.title} ${outcome === 'cleared' ? 'Wiped them out' : 'Got away'}.`);
+  if (c.boss) s.bossesBeaten++;
+  let patched = 0;
+  if (s.crew.includes('mechanic')) {
+    patched = Math.min(8, maxHealth(s) - s.health);
+    s.health += patched;
+  }
   saveGame(s);
   ui().append(
     h(
@@ -677,9 +930,10 @@ function endCombat(c: CombatState, outcome: 'cleared' | 'escaped' | 'wrecked', s
       h(
         'div',
         { class: 'card' },
-        h('h2', {}, outcome === 'cleared' ? 'Wiped them out!' : 'You got away!'),
+        h('h2', {}, c.boss ? `${ENEMY_STATS[c.boss].name} is down!` : outcome === 'cleared' ? 'Wiped them out!' : 'You got away!'),
         h('p', {}, `${c.kills} taken down. Car at ${Math.round(s.health)}%.`),
         found.length > 0 && h('p', {}, `Picked up ${found.join(', ')}.`),
+        patched > 0 && h('p', {}, `🧰 Your mechanic patches ${Math.round(patched)} damage.`),
         h(
           'button',
           {
@@ -698,7 +952,7 @@ function endCombat(c: CombatState, outcome: 'cleared' | 'escaped' | 'wrecked', s
               }
             },
           },
-          stop ? `Back to ${stop.name}` : 'Keep driving',
+          stop ? `Back to ${stop.name}` : c.boss === 'mothership' ? `Roll into ${s.route.endLabel.split(',')[0]}` : 'Keep driving',
         ),
       ),
     ),
@@ -715,6 +969,15 @@ function showEnd(): void {
   sound.engine(0);
   sound.fanfare(won);
   const km = realKmAt(s.route, s.distance);
+  const score = scoreFor(s, pathFromRoute(s.route).length);
+  const entry: ScoreEntry = {
+    score: score.total,
+    route: `${s.route.startLabel.split(',')[0]} → ${s.route.endLabel.split(',')[0]}`,
+    difficulty: s.difficulty,
+    won,
+    date: new Date().toLocaleDateString(),
+  };
+  const { list, rank } = addScore(entry);
   ui().replaceChildren(
     h(
       'div',
@@ -727,7 +990,16 @@ function showEnd(): void {
         h('li', {}, `${fmtKm(km)} driven`),
         h('li', {}, `${s.encounters} fights, ${s.kills} taken down`),
         h('li', {}, `Car condition ${Math.round(s.health)}%, ${Math.round(s.inv.fuel)} fuel left`),
+        h('li', {}, `${s.bossesBeaten} of 2 bosses beaten on ${DIFFICULTIES[s.difficulty].name}`),
       ),
+      h(
+        'div',
+        { class: 'score' },
+        h('div', { class: 'total' }, h('small', {}, rank === 0 ? 'NEW HIGH SCORE' : 'Score'), score.total.toLocaleString()),
+        h('ul', { class: 'breakdown' }, ...score.lines.map(([k, v]) => h('li', {}, h('span', {}, k), h('b', {}, `${v >= 0 ? '+' : ''}${v}`)))),
+      ),
+      h('h3', {}, '🏆 High scores'),
+      scoreTable(list, rank),
       h('button', { class: 'btn primary', onclick: showSetup }, 'Plan another trip'),
       h('button', { class: 'btn', onclick: showTitle }, 'Title screen'),
     ),
