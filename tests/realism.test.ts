@@ -123,3 +123,47 @@ describe('climate', () => {
     for (let i = 1; i < spans.length; i++) expect(spans[i].from).toBe(spans[i - 1].to);
   });
 });
+
+describe('real gas stations', () => {
+  it('reads gas stations from OpenStreetMap, including brand-only ones and truck stops', async () => {
+    const { parseOverpass, buildFuelQuery } = await import('../src/geo/overpass');
+    expect(buildFuelQuery([{ lat: 35, lng: -101 }, { lat: 35.2, lng: -102 }])).toContain('"amenity"="fuel"');
+    const f = parseOverpass({
+      elements: [
+        { type: 'node', lat: 35.1, lon: -101.8, tags: { amenity: 'fuel', brand: 'Shell' } },
+        { type: 'way', center: { lat: 35.2, lon: -101.7 }, tags: { amenity: 'fuel', name: "Love's Travel Stop" } },
+        { type: 'node', lat: 35.3, lon: -101.6, tags: { amenity: 'fuel' } },
+      ],
+    } as never);
+    expect(f).toEqual([
+      { kind: 'fuel', name: 'Shell', point: { lat: 35.1, lng: -101.8 } },
+      { kind: 'fuel', name: "Love's Travel Stop", point: { lat: 35.2, lng: -101.7 }, truck: true },
+    ]);
+  });
+
+  it('turns stations beside the road into fuel stops', async () => {
+    const raw = unpackRoute(JSON.parse(fs.readFileSync('public/data/routes/route-66.json', 'utf8')) as PackedRoute);
+    raw.features = [
+      ...atlas.featuresAlong(raw.coords),
+      // A station every 40 route points, every fifth one a truck stop.
+      ...raw.coords
+        .filter((_, i) => i % 40 === 20)
+        .map((point, i) => ({
+          kind: 'fuel' as const,
+          name: i % 5 === 0 ? "Love's Travel Stop" : 'Phillips 66',
+          point,
+          ...(i % 5 === 0 ? { truck: true } : {}),
+        })),
+    ];
+    const route = buildRouteData(raw);
+    const p = pathFromRoute(route);
+    expect(route.fuel?.length).toBeGreaterThanOrEqual(5);
+    const stops = generateStops(route, p.length, 1);
+    const real = stops.filter((s) => s.real);
+    console.log(real.map((s) => `${s.kind}: ${s.name}`).join(' | '));
+    expect(real.length).toBeGreaterThanOrEqual(4);
+    expect(new Set(real.map((s) => s.name)).size).toBeGreaterThanOrEqual(3);
+    expect(real.every((s) => s.places.includes('pumps'))).toBe(true);
+    expect(real.some((s) => s.name.startsWith('Phillips 66'))).toBe(true);
+  });
+});

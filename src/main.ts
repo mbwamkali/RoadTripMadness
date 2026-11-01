@@ -300,6 +300,7 @@ function previewRoute(route: RouteData, note?: string, back: () => void = showSe
         h('li', {}, `${s.stops.length} places to turn off for fuel and supplies`),
         (route.landmarks?.length ?? 0) > 0 &&
           h('li', {}, `${route.landmarks!.length} real sights to pass, like ${[...new Set(route.landmarks!.map((l) => l.name))].slice(0, 3).join(', ')}`),
+        (route.fuel?.length ?? 0) > 0 && h('li', {}, `Fuel stops are real gas stations from the map (${route.fuel!.length} along the way)`),
         h('li', {}, 'Green dots have gas pumps. Your tank lasts about a third of the trip.'),
         h('li', {}, 'Something big is waiting halfway, and another at the end of the road.'),
       ),

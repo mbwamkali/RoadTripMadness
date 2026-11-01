@@ -28,7 +28,8 @@ export async function planTrip(
       const raw = await fetchRoute(from, to, from.label, to.label);
       progress('Scouting landmarks along the way…');
       raw.features = await fetchMapFeatures(raw.coords);
-      if (!raw.features.length) raw.features = await atlasFeatures(raw);
+      // Gas stations alone don't make a trip interesting; borrow the atlas's sights if the lookup found none.
+      if (!raw.features.some((f) => f.kind !== 'fuel')) raw.features = [...raw.features, ...(await atlasFeatures(raw))];
       tripCache.save(raw, { start: from, end: to });
       return { raw, via: 'online' };
     } catch (e) {

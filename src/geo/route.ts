@@ -1,4 +1,4 @@
-import { placeFeatures, type Landmark, type MapFeature } from '../game/landmarks';
+import { placeFeatures, placeFuel, type FuelStation, type Landmark, type MapFeature } from '../game/landmarks';
 import { chaikin, dedupe, makeProjection, Path, resample, type LatLng, type Vec2 } from './geo';
 
 /** One maneuver on the real route (from OSRM), placed along the game path. */
@@ -31,6 +31,8 @@ export interface RouteData {
   attribution: string;
   /** Real landmarks from OpenStreetMap, placed along the path (optional; filled in after routing). */
   landmarks?: Landmark[];
+  /** Real gas stations beside the road (optional; from OpenStreetMap). */
+  fuel?: FuelStation[];
 }
 
 /** Cruise speed of the car in game units per second. */
@@ -106,7 +108,12 @@ export function buildRouteData(raw: RawRoute): RouteData {
     steps,
     attribution: raw.attribution,
   };
-  if (raw.features?.length) data.landmarks = placeFeatures(data, pathFromRoute(data), raw.features);
+  if (raw.features?.length) {
+    const path = pathFromRoute(data);
+    data.landmarks = placeFeatures(data, path, raw.features);
+    const fuel = placeFuel(data, path, raw.features);
+    if (fuel.length) data.fuel = fuel;
+  }
   return data;
 }
 

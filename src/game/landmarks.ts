@@ -83,8 +83,11 @@ export const ANNOUNCED: ReadonlySet<LandmarkKind> = new Set(['river', 'peak', 'm
 // ------------------------------------------------------------ real map features
 
 export interface MapFeature {
-  kind: LandmarkKind;
+  /** 'fuel' features are real gas stations; they become stops, not scenery. */
+  kind: LandmarkKind | 'fuel';
   name: string;
+  /** Fuel: a truck stop (big rigs welcome). */
+  truck?: boolean;
   /** A point feature, or the centre of an area. */
   point?: LatLng;
   /** A line feature (rivers). */
@@ -185,6 +188,7 @@ export function placeFeatures(route: RouteData, path: Path, features: MapFeature
   const index = new PathIndex(path);
   const out: Landmark[] = [];
   for (const f of features) {
+    if (f.kind === 'fuel') continue;
     if (f.kind === 'river' && f.line) {
       for (const c of lineCrossings(path, index, f.line.map(project))) {
         out.push({ at: c.at, side: 1, offset: 0, kind: 'river', name: f.name, real: true, angle: c.angle });
@@ -207,6 +211,39 @@ export function placeFeatures(route: RouteData, path: Path, features: MapFeature
     }
   }
   return thin(out.sort((a, b) => a.at - b.at), path.length);
+}
+
+/** A real gas station beside the route. */
+export interface FuelStation {
+  at: number;
+  side: 'left' | 'right';
+  name: string;
+  truck: boolean;
+}
+
+/** Places real gas stations along the path, at most one every few hundred units (truck stops win). */
+export function placeFuel(route: RouteData, path: Path, features: MapFeature[], gap = 300): FuelStation[] {
+  const project = routeProjector(route);
+  const index = new PathIndex(path);
+  const all: FuelStation[] = [];
+  for (const f of features) {
+    if (f.kind !== 'fuel' || !f.point) continue;
+    const { at, lateral } = locate(path, project(f.point), index);
+    // The world is shrunk ~50x, so "beside the road" is a few units.
+    if (Math.abs(lateral) > 40 || at < 300 || at > path.length - 500) continue;
+    all.push({ at, side: lateral < 0 ? 'left' : 'right', name: f.name, truck: !!f.truck });
+  }
+  all.sort((a, b) => a.at - b.at);
+  const out: FuelStation[] = [];
+  for (const s of all) {
+    const last = out[out.length - 1];
+    if (last && s.at - last.at < gap) {
+      if (s.truck && !last.truck) out[out.length - 1] = s;
+      continue;
+    }
+    out.push(s);
+  }
+  return out;
 }
 
 /** Keeps landmarks from bunching up; rivers always stay. */

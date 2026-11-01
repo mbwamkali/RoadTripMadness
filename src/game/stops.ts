@@ -13,6 +13,8 @@ export interface Stop {
   kind: StopKind;
   name: string;
   places: PlaceKind[];
+  /** A real gas station from the map. */
+  real?: boolean;
 }
 
 export const STOP_TITLES: Record<StopKind, string> = {
@@ -69,29 +71,42 @@ export function generateStops(route: RouteData, pathLength: number, seed: number
   const usedTowns = new Set<string>();
   const segments = roadSegments(route, pathLength);
   const stops: Stop[] = [];
+  const stations = route.fuel ?? [];
+  const usedStations = new Set<number>();
+  const nearestTown = (at: number, within: number) =>
+    towns.filter((t) => Math.abs(t.at - at) < within).sort((a, b) => Math.abs(a.at - at) - Math.abs(b.at - at))[0];
+  const closest = <T extends { at: number }>(list: T[], ideal: number, within: number, skip: (t: T) => boolean) =>
+    list.filter((t) => !skip(t) && Math.abs(t.at - ideal) < within).sort((a, b) => Math.abs(a.at - ideal) - Math.abs(b.at - ideal))[0];
+
   for (let i = 1; i <= count; i++) {
     const ideal = i * spacing;
-    // Prefer a real town near the ideal spot, then a real turn, then anywhere.
-    const town = towns
-      .filter((t) => !usedTowns.has(t.name) && Math.abs(t.at - ideal) < spacing * 0.35)
-      .sort((a, b) => Math.abs(a.at - ideal) - Math.abs(b.at - ideal))[0];
-    const turn = town ? undefined : realTurns.find((t) => Math.abs(t.at - ideal) < spacing * 0.3);
-    // A town's turn-off comes just before its sign.
-    const at = town ? town.at + 60 : turn ? turn.at : ideal + (rng() - 0.5) * spacing * 0.3;
-    const dir = town?.side ?? turn?.modifier;
+    const fuel = i % 3 === 1;
+    // Fuel stops go to a real gas station when there is one; other stops prefer a real town.
+    let station = fuel ? closest(stations, ideal, spacing * 0.35, (t) => usedStations.has(t.at)) : undefined;
+    const town = station ? undefined : closest(towns, ideal, spacing * 0.35, (t) => usedTowns.has(t.name));
+    if (!station && !town) station = closest(stations, ideal, spacing * 0.35, (t) => usedStations.has(t.at));
+    const turn = town || station ? undefined : realTurns.find((t) => Math.abs(t.at - ideal) < spacing * 0.3);
+    // A town's turn-off comes just after its sign.
+    const at = station ? station.at : town ? town.at + 60 : turn ? turn.at : ideal + (rng() - 0.5) * spacing * 0.3;
+    const dir = station?.side ?? town?.side ?? turn?.modifier;
     // Interstate exits are on the right.
     const onInterstate = classAt(segments, at) === 'interstate';
     const side: Stop['side'] = onInterstate ? 'right' : dir?.includes('left') ? 'left' : dir?.includes('right') ? 'right' : rng() < 0.5 ? 'left' : 'right';
-    const fuel = i % 3 === 1;
     let kind: StopKind = fuel ? pick(rng, ['gas', 'truckstop', 'town'] as const) : pickKind(rng);
-    if (town && kind !== 'gas' && kind !== 'truckstop') kind = 'town';
+    if (station) kind = station.truck ? 'truckstop' : 'gas';
+    else if (town && kind !== 'gas' && kind !== 'truckstop') kind = 'town';
     const places = pick(rng, PLACES_BY_KIND[kind]).slice();
     if (fuel && !places.includes('pumps')) places.unshift('pumps');
     let name: string;
-    if (town && kind === 'town') name = town.name;
+    if (station) {
+      // "Shell" on its own says little; "Shell, Tucumcari" says where you are.
+      const near = nearestTown(at, spacing * 0.6);
+      name = near && station.name.split(' ').length <= 2 ? `${station.name}, ${near.name}` : station.name;
+      usedStations.add(station.at);
+    } else if (town && kind === 'town') name = town.name;
     else {
       // Out-of-town stops borrow the nearest real town's name, the way real ones do.
-      const nearby = towns.filter((t) => Math.abs(t.at - at) < spacing).sort((a, b) => Math.abs(a.at - at) - Math.abs(b.at - at))[0];
+      const nearby = nearestTown(at, spacing);
       name = nearby ? `${nearby.name} ${pick(rng, OUTSKIRTS[kind])}` : pick(rng, MADE_UP_NAMES);
     }
     if (town) usedTowns.add(town.name);
@@ -102,6 +117,7 @@ export function generateStops(route: RouteData, pathLength: number, seed: number
       kind,
       name,
       places,
+      ...(station ? { real: true } : {}),
     });
   }
   stops.sort((a, b) => a.at - b.at);

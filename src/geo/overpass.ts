@@ -1,5 +1,5 @@
 import type { LatLng } from './geo';
-import type { LandmarkKind, MapFeature } from '../game/landmarks';
+import type { MapFeature } from '../game/landmarks';
 
 /** Public Overpass API (OpenStreetMap query service). Light use only; one query per trip. */
 export const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
@@ -74,16 +74,30 @@ export function buildOverpassQuery(coords: LatLng[]): string {
 out geom 700;`;
 }
 
+/** Gas stations close to the road. A separate query so a long route's stations can't crowd out its sights. */
+export function buildFuelQuery(coords: LatLng[]): string {
+  const line = simplify(coords, 300, 150)
+    .map((c) => `${c.lat.toFixed(5)},${c.lng.toFixed(5)}`)
+    .join(',');
+  return `[out:json][timeout:25];
+nwr["amenity"="fuel"](around:350,${line});
+out center tags 600;`;
+}
+
+const TRUCK_BRANDS = /\b(love'?s|pilot|flying j|petro|ta\b|travelcenters|travel center|travel plaza|truck ?stop|kwik trip|buc-ee'?s|sapp bros)/i;
+
 interface OsmElement {
   type: 'node' | 'way' | 'relation';
   lat?: number;
   lon?: number;
+  center?: { lat: number; lon: number };
   bounds?: { minlat: number; minlon: number; maxlat: number; maxlon: number };
   geometry?: { lat: number; lon: number }[];
   tags?: Record<string, string>;
 }
 
-function kindFor(tags: Record<string, string>): LandmarkKind | null {
+function kindFor(tags: Record<string, string>): MapFeature['kind'] | null {
+  if (tags.amenity === 'fuel') return 'fuel';
   if (tags.waterway) return 'river';
   if (tags.natural === 'peak' || tags.natural === 'volcano') return 'peak';
   if (tags.place) return 'citysign';
@@ -103,7 +117,8 @@ export function parseOverpass(json: { elements?: OsmElement[] }): MapFeature[] {
   for (const e of json.elements ?? []) {
     const tags = e.tags ?? {};
     const kind = kindFor(tags);
-    const name = tags['name:en'] || tags.name;
+    let name = tags['name:en'] || tags.name;
+    if (kind === 'fuel') name = name || tags.brand || tags.operator;
     if (!kind || !name) continue;
     if (kind === 'river') {
       if (e.geometry?.length) out.push({ kind, name, line: e.geometry.map((g) => ({ lat: g.lat, lng: g.lon })) });
@@ -111,24 +126,34 @@ export function parseOverpass(json: { elements?: OsmElement[] }): MapFeature[] {
     }
     let point: LatLng | undefined;
     if (e.lat !== undefined && e.lon !== undefined) point = { lat: e.lat, lng: e.lon };
+    else if (e.center) point = { lat: e.center.lat, lng: e.center.lon };
     else if (e.bounds) point = { lat: (e.bounds.minlat + e.bounds.maxlat) / 2, lng: (e.bounds.minlon + e.bounds.maxlon) / 2 };
     else if (e.geometry?.length) {
       const g = e.geometry;
       point = { lat: g.reduce((s, p) => s + p.lat, 0) / g.length, lng: g.reduce((s, p) => s + p.lon, 0) / g.length };
     }
-    if (point) out.push({ kind, name, point });
+    if (!point) continue;
+    if (kind === 'fuel') {
+      const truck = tags.hgv === 'yes' || TRUCK_BRANDS.test(`${name} ${tags.brand ?? ''}`);
+      out.push({ kind, name, point, ...(truck ? { truck: true } : {}) });
+    } else out.push({ kind, name, point });
   }
   return out;
 }
 
-/** Fetches landmarks near a route. Never throws: a trip without real landmarks still works. */
+/** Fetches landmarks and gas stations near a route. Never throws: a trip without real map data still works. */
 export async function fetchMapFeatures(coords: LatLng[], timeoutMs = 20000): Promise<MapFeature[]> {
+  const [sights, fuel] = await Promise.all([runQuery(buildOverpassQuery(coords), timeoutMs), runQuery(buildFuelQuery(coords), timeoutMs)]);
+  return [...sights, ...fuel];
+}
+
+async function runQuery(query: string, timeoutMs: number): Promise<MapFeature[]> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await fetch(OVERPASS_URL, {
       method: 'POST',
-      body: new URLSearchParams({ data: buildOverpassQuery(coords) }),
+      body: new URLSearchParams({ data: query }),
       signal: ctrl.signal,
     });
     if (!res.ok) return [];

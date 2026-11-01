@@ -88,6 +88,9 @@ node scripts/bake-routes.mjs                          # needs router.project-osr
 - **Town map.** Stops show a small top-down map; tap a building and you walk over to it.
 - **Boss fights.** Halfway through the trip either Big Rotten Earl (giant zombie) or Mad Maxine's war rig blocks the road; the Cat Queen's mothership waits just outside the destination. There is no escaping a boss. Its big attack lights a lane red first, so steering out of it dodges the hit, and it calls in minions of its kind.
 - **Difficulty and high scores.** Sunday drive, Road trip and Madness change starting supplies, enemy health and damage, fuel use and how often fights happen. A score (distance, kills, bosses, a finish bonus) is scaled by difficulty and the top ten are kept on the device.
+- **Real places.** Stops sit at real towns from the map, or borrow a nearby town's name ("Tulsa Quik Fill"). Fuel stops are real gas stations from OpenStreetMap when online. Green guide signs with interstate/US/state shields mark where the route changes road, and the HUD shows the road you're on.
+- **Lanes by road type.** From the real road names: interstates and freeways are divided, four lanes each way; US and state highways are four lanes with a double yellow; other roads are two-lane. Widths taper between types and interstate exits are always on the right.
+- **Climate.** Ten biomes from a rough US climate map (latitude bands elsewhere) set the ground, plants (saguaros, sagebrush, prairie grass, cornfields, oaks, pines, palms), sky tint and weather as you drive.
 
 ## Ideas for next steps
 

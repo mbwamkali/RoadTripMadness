@@ -30,6 +30,8 @@ src/
     time.ts            Clock, day/night and weather
     difficulty.ts      Difficulty settings
     scores.ts          Score and the local high-score table
+    roads.ts           Road types and lane layouts from real road names
+    biomes.ts          Climate zones along the route
     rng.ts             Seeded random numbers, so runs are reproducible
   scenes/
     DriveScene.ts      On-rails driving view; streams road and scenery in chunks
