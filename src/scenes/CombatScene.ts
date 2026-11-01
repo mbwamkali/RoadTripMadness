@@ -15,9 +15,13 @@ import { Atmosphere } from './atmosphere';
 import { quality } from './quality';
 import { detailTexture } from './textures';
 import { hourOf, weatherAt } from '../game/time';
-import { biomeSpans, groundColorAt } from '../game/biomes';
-import { castShadows, disposeTree, makeRide, makeRoadTexture, type GameScene } from './common';
-import { modelMesh, modelsWanted } from './models';
+import { biomeAtDistance, biomeSpans, BIOMES, groundColorAt, type BiomeId, type PlantKind } from '../game/biomes';
+import { fightRoad, type FightRoad } from '../game/fightRoad';
+import { classAt, roadSegments } from '../game/roads';
+import { pick } from '../game/rng';
+import { pathFromRoute } from '../geo/route';
+import { castShadows, disposeTree, makeLaneTexture, makeRide, makeRoadTexture, type GameScene } from './common';
+import { modelMesh, modelsWanted, treeModelsWanted, type ModelName } from './models';
 import { sampleBrute, sampleCatship, sampleMothership, sampleOutlaw, sampleWarRig } from './samples';
 
 export interface CombatCallbacks {
@@ -45,7 +49,8 @@ export class CombatScene implements GameScene {
   private shadows = quality.profile.shadows;
   private groundMap: THREE.Texture | null = null;
   private roadTex = makeRoadTexture();
-  private road: THREE.Mesh;
+  /** Lane textures that scroll with the road (-1 for the far carriageway, which is turned around). */
+  private scrolling: { tex: THREE.Texture; dir: number }[] = [];
   private props: THREE.Group = new THREE.Group();
   private meshes = new Map<number, THREE.Group>();
   private fx: Fx[] = [];
@@ -74,26 +79,12 @@ export class CombatScene implements GameScene {
     ground.receiveShadow = true;
     this.scene.add(ground);
 
-    this.roadTex.repeat.set(1, 200 / 16);
-    this.road = new THREE.Mesh(new THREE.PlaneGeometry(10, 200), new THREE.MeshLambertMaterial({ map: this.roadTex }));
-    this.road.rotation.x = -Math.PI / 2;
-    this.road.position.set(0, 0.02, -60);
-    this.scene.add(this.road);
-
-    // Roadside rocks and posts that scroll past to sell the speed.
-    const rockGeo = new THREE.DodecahedronGeometry(1, 0);
-    const rockMat = new THREE.MeshLambertMaterial({ color: 0x8c7660 });
-    const postGeo = new THREE.BoxGeometry(0.3, 2.5, 0.3).translate(0, 1.25, 0);
-    const postMat = new THREE.MeshLambertMaterial({ color: 0xf0f0f0 });
-    for (let i = 0; i < 40; i++) {
-      const post = i % 2 === 0;
-      const m = new THREE.Mesh(post ? postGeo : rockGeo, post ? postMat : rockMat);
-      const side = i % 4 < 2 ? -1 : 1;
-      m.position.set(side * (post ? 6.5 : 9 + Math.random() * 25), post ? 0 : 0.4, -150 + i * 4.5);
-      if (!post) m.scale.setScalar(0.6 + Math.random() * 2.2);
-      this.props.add(m);
-    }
-    this.road.receiveShadow = true;
+    // The same kind of road you were driving on: lanes, median and shoulders.
+    const path = pathFromRoute(state.route);
+    const layout = fightRoad(classAt(roadSegments(state.route, path.length), state.distance));
+    this.buildRoad(layout);
+    // Roadside posts and the biome's plants and rocks scroll past to sell the speed.
+    this.buildProps(layout, biomeAtDistance(biomeSpans(state.route, path), state.distance));
     castShadows(this.props, this.shadows);
     castShadows(this.car, this.shadows);
     this.scene.add(this.props);
@@ -172,7 +163,7 @@ export class CombatScene implements GameScene {
     sound.engine(1, c.boostTime > 0);
 
     const speed = ROAD_SPEED * (c.boostTime > 0 ? 2.2 : 1);
-    this.roadTex.offset.y += (speed * dt) / 16;
+    for (const r of this.scrolling) r.tex.offset.y += (r.dir * speed * dt) / 16;
     if (this.groundMap) this.groundMap.offset.y = (this.groundMap.offset.y + (speed * dt) / 30) % 1;
     for (const p of this.props.children) {
       p.position.z += speed * dt;
@@ -372,13 +363,117 @@ export class CombatScene implements GameScene {
     this.fx = this.fx.filter((f) => f.life > 0);
   }
 
+  private buildRoad(layout: FightRoad): void {
+    const g = new THREE.Group();
+    const lay = (mesh: THREE.Mesh, x: number, y: number) => {
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.position.set(x, y, -60);
+      mesh.receiveShadow = true;
+      g.add(mesh);
+      return mesh;
+    };
+    for (const st of layout.strips) {
+      const tex = st.kind === 'local' ? this.roadTex : makeLaneTexture(st.kind);
+      // The lane textures are drawn four lanes wide (two for 'carriageway2' across half the canvas).
+      tex.repeat.set(1, STRIP_LEN / 16);
+      const m = lay(new THREE.Mesh(new THREE.PlaneGeometry(st.width, STRIP_LEN), new THREE.MeshLambertMaterial({ map: tex })), st.x, 0.02);
+      if (st.flipped) m.rotation.z = Math.PI;
+      this.scrolling.push({ tex, dir: st.flipped ? -1 : 1 });
+    }
+    const shoulderMat = new THREE.MeshLambertMaterial({ color: 0x5a5a5e });
+    for (const sh of layout.shoulders) lay(new THREE.Mesh(new THREE.PlaneGeometry(sh.width, STRIP_LEN), shoulderMat), sh.x, 0.015);
+    this.scene.add(g);
+  }
+
+  private buildProps(layout: FightRoad, biome: BiomeId): void {
+    const info = BIOMES[biome];
+    const kinds = Object.entries(info.plants) as [PlantKind, number][];
+    const total = kinds.reduce((a, [, w]) => a + w, 0);
+    let seed = 1;
+    const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    const pickPlant = (): PlantKind => {
+      let r = rand() * total;
+      for (const [k, w] of kinds) if ((r -= w) <= 0) return k;
+      return kinds[0][0];
+    };
+    const postGeo = new THREE.BoxGeometry(0.3, 2.5, 0.3).translate(0, 1.25, 0);
+    const postMat = new THREE.MeshLambertMaterial({ color: 0xf0f0f0 });
+    const rockGeo = new THREE.DodecahedronGeometry(1, 0);
+    const rockMat = new THREE.MeshLambertMaterial({ color: 0x8c7660 });
+    for (let i = 0; i < 40; i++) {
+      const z = -150 + i * 4.5;
+      // Reflector posts at both edges (and along the median of a divided road).
+      if (i % 2 === 0) {
+        for (const x of [layout.left - 1, layout.right + 1, ...(layout.median ? [layout.median.x + layout.median.width / 2 - 0.6] : [])]) {
+          if (i % 4 === 0 && x === layout.left - 1 && layout.median) continue;
+          const post = new THREE.Mesh(postGeo, postMat);
+          post.position.set(x, 0, z);
+          this.props.add(post);
+        }
+      }
+      // Plants and rocks out past the edges, as thick as the biome grows them.
+      for (const side of [-1, 1]) {
+        if (rand() > Math.max(0.25, info.density)) continue;
+        const edge = side < 0 ? layout.left : layout.right;
+        const x = edge + side * (4 + rand() * 26);
+        let m: THREE.Object3D;
+        if (rand() < Math.max(0.15, info.rocks)) {
+          m = modelMesh(pick(rand, ['rock-1', 'rock-2', 'rock-3'] as const)) ?? new THREE.Mesh(rockGeo, rockMat);
+          m.scale.setScalar(0.6 + rand() * 2);
+        } else {
+          const kind = pickPlant();
+          const names = FIGHT_PLANTS[kind];
+          const useModel = names && (!FIGHT_TREES.has(kind) || treeModelsWanted());
+          m = (useModel ? modelMesh(pick(rand, names)) : null) ?? simplePlant(kind);
+          m.scale.setScalar(0.8 + rand() * 0.5);
+        }
+        m.rotation.y = rand() * Math.PI * 2;
+        m.position.set(x, 0, z + rand() * 3);
+        this.props.add(m);
+      }
+    }
+  }
+
   dispose(): void {
     this.atmosphere.dispose();
     for (const g of this.meshes.values()) disposeTree(g);
     for (const f of this.fx) disposeTree(f.obj);
     disposeTree(this.scene);
     this.roadTex.dispose();
+    for (const r of this.scrolling) if (r.tex !== this.roadTex) r.tex.dispose();
   }
+}
+
+// ---------------------------------------------------------------- road and roadside
+
+const STRIP_LEN = 200;
+
+/** What grows by the road in a fight, per plant kind: CC0 models when loaded, else simple shapes. */
+const FIGHT_PLANTS: Partial<Record<PlantKind, ModelName[]>> = {
+  saguaro: ['cactus-1', 'cactus-2', 'cactus-3'],
+  shrub: ['bush-1', 'bush-2'],
+  grass: ['grass'],
+  crops: ['corn', 'wheat'],
+  oak: ['oak-1', 'oak-2', 'oak-3'],
+  pine: ['pine-1', 'pine-2'],
+  palm: ['palm-1', 'palm-2'],
+};
+const FIGHT_TREES = new Set<PlantKind>(['oak', 'pine', 'palm']);
+
+/** A plain stand-in plant for Low (or before the models load). */
+function simplePlant(kind: PlantKind): THREE.Object3D {
+  const g = new THREE.Group();
+  const lam = (c: number) => new THREE.MeshLambertMaterial({ color: c, flatShading: true });
+  if (kind === 'oak' || kind === 'pine' || kind === 'palm') {
+    g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.35, 2.5, 6).translate(0, 1.25, 0), lam(0x6b4a2a)));
+    const crown = kind === 'pine' ? new THREE.ConeGeometry(1.8, 5, 7).translate(0, 4.5, 0) : new THREE.IcosahedronGeometry(2, 0).translate(0, 3.8, 0);
+    g.add(new THREE.Mesh(crown, lam(kind === 'pine' ? 0x2f5a35 : kind === 'palm' ? 0x4f8a3a : 0x4a7a3a)));
+  } else if (kind === 'saguaro') {
+    g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.55, 4.5, 7).translate(0, 2.25, 0), lam(0x4f7a3a)));
+  } else {
+    g.add(new THREE.Mesh(new THREE.IcosahedronGeometry(0.8, 0).translate(0, 0.5, 0), lam(kind === 'crops' ? 0xc9b25a : 0x6f8a45)));
+  }
+  return g;
 }
 
 // ---------------------------------------------------------------- enemy models
