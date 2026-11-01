@@ -156,6 +156,55 @@ def simplify(pts, tol):
     return [p for p, kk in zip(pts, keep) if kk]
 
 
+def join_cut_ends(ways, max_m=5.0):
+    """Rejoins roads cut apart at state lines.
+
+    State extracts cut every road at the border and add a new node on each
+    side; the two nodes are often a metre apart and have different ids, so
+    the road would stop at the border. Dead ends that lie within max_m of
+    another way's dead end are made into one node. Returns how many were joined.
+    """
+    count = {}
+    for wi, w in enumerate(ways):
+        last = len(w['pts']) - 1
+        for i, (nid, lon, lat) in enumerate(w['pts']):
+            c = count.setdefault(nid, [0, wi, lon, lat])
+            c[0] += 1 if i in (0, last) else 2
+    cell = 0.0003
+    grid = {}
+    for nid, (n, wi, lon, lat) in count.items():
+        if n == 1:
+            grid.setdefault((math.floor(lon / cell), math.floor(lat / cell)), []).append(nid)
+    remap = {}
+    for (cx, cy), ids in list(grid.items()):
+        for a in ids:
+            if a in remap:
+                continue
+            _, wa, lon, lat = count[a]
+            best, best_m = None, max_m
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for b in grid.get((cx + dx, cy + dy), []):
+                        if b == a or b in remap or count[b][1] == wa:
+                            continue
+                        m = haversine((lon, lat), (count[b][2], count[b][3]))
+                        if m <= best_m:
+                            best, best_m = b, m
+            if best is not None:
+                remap[best] = a
+                remap.setdefault(a, a)
+    joined = 0
+    for w in ways:
+        pts = w['pts']
+        for i in (0, len(pts) - 1):
+            b = pts[i][0]
+            a = remap.get(b)
+            if a is not None and a != b:
+                pts[i] = (a, count[a][2], count[a][3])
+                joined += 1
+    return joined
+
+
 def split_at_junctions(ways, exits):
     """Cuts ways into edges that run junction to junction (across both layers)."""
     use = {}
@@ -306,6 +355,8 @@ def main():
     r.apply_file(args.pbf, locations=True)
     print(f'read {len(r.ways)} ways, {len(r.exits)} exits, {len(r.towns)} towns', file=sys.stderr)
 
+    joined = join_cut_ends(r.ways)
+    print(f'joined {joined} road ends cut apart at state lines', file=sys.stderr)
     edges = split_at_junctions(r.ways, r.exits)
     edges = merge_chains(edges, set(r.exits))
 
