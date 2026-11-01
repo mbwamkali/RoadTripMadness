@@ -1,6 +1,7 @@
 import type { Place } from '../geo/geocode';
 import { searchPlaces } from '../geo/geocode';
 import { fetchRoute } from '../geo/osrm';
+import { fetchLocalStreets } from '../geo/localStreets';
 import { fetchMapFeatures } from '../geo/overpass';
 import type { RawRoute } from '../geo/route';
 import { loadAtlas } from './atlas';
@@ -10,7 +11,10 @@ import { tripCache } from './tripCache';
 /**
  * Trip planning, best first:
  *  1. Our own road files from OpenStreetMap (data/osm/), routed on the device.
- *     They are cached after first use, so this also works offline.
+ *     They are cached after first use, so this also works offline. When
+ *     online, the local streets at each end are looked up too, so the trip
+ *     starts on the right street; without them it starts with a straight
+ *     link to the nearest highway.
  *  2. The public OSRM server, if the road files can't be loaded (for example
  *     in local development before a road build). Add ?router=osrm to the page
  *     address to use it first, for comparing routes.
@@ -41,7 +45,9 @@ export async function planTrip(
 ): Promise<{ raw: RawRoute; via: PlannedVia; note?: string }> {
   const problems: string[] = [];
   const own = async () => {
-    const net = await loadRoadNet([from, to], progress);
+    // The street lookup runs while the road files load.
+    const streets = isOffline() ? null : fetchLocalStreets([from, to]);
+    const net = await loadRoadNet([from, to], progress, streets);
     progress('Finding the fastest route…');
     const raw = net.planTrip(from, to, from.label, to.label);
     await addFeatures(raw, progress);

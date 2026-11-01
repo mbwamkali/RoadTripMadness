@@ -1,5 +1,7 @@
 import { haversineMeters, type LatLng } from '../geo/geo';
 import type { RawRoute, RawStep } from '../geo/route';
+import type { OsmElement } from '../geo/overpass';
+import { joinLocalStreets } from '../geo/localStreets';
 import { MinHeap, nearRoute, turnModifier } from './atlas';
 
 /**
@@ -14,7 +16,7 @@ import { MinHeap, nearRoute, turnModifier } from './atlas';
 /** One road file (backbone or tile), version 2. See scripts/build-osm-roads.py for the format. */
 export interface RoadFile {
   version: 2;
-  kind: 'backbone' | 'tile';
+  kind: 'backbone' | 'tile' | 'local';
   q: number;
   attribution: string;
   classes: string[];
@@ -53,8 +55,12 @@ export interface Town extends LatLng {
   pop: number;
 }
 
-/** Cruising speed when OpenStreetMap gives no speed limit, by class: motorway, trunk, primary. */
-const DEFAULT_KMH = [105, 88, 72];
+/**
+ * Cruising speed when OpenStreetMap gives no speed limit, by class: motorway,
+ * trunk, primary, and for local streets (src/geo/localStreets.ts) secondary,
+ * tertiary and minor streets.
+ */
+const DEFAULT_KMH = [105, 88, 72, 64, 56, 40];
 /** Traffic averages about this share of the speed limit (matches OSRM's trip times within about 5%). */
 const PACE = 0.8;
 /** Off-network stretch from the start or end to the nearest road: slower, and roads wind. */
@@ -67,7 +73,7 @@ const CELL_DEG = 0.1;
 /** Turn-offs closer together than this are merged into the later one. */
 const MIN_STEP_GAP_M = 250;
 
-const nodeKey = (x: number, y: number) => (x + 2e7) * 4e7 + (y + 2e7);
+export const nodeKey = (x: number, y: number) => (x + 2e7) * 4e7 + (y + 2e7);
 
 export class RoadNet {
   readonly attribution: string;
@@ -129,7 +135,7 @@ export class RoadNet {
     this.eIx = new Int32Array(edgeCount);
     this.cost = new Float64Array(edgeCount);
     const oneway = new Uint8Array(edgeCount);
-    let maxKmh = Math.max(...DEFAULT_KMH);
+    let maxKmh = DEFAULT_KMH[0];
     let ei = 0;
     files.forEach((f, fi) => {
       const map = localToGlobal[fi];
@@ -456,8 +462,16 @@ export function loadRoadIndex(): Promise<RoadIndex> {
  * Loads the backbone and the tiles around the given points and builds a road
  * network from them. File URLs carry the build date, so the service worker
  * keeps one copy of each build and a new build replaces it cleanly.
+ *
+ * `streets` is a running lookup of the local streets around the points
+ * (src/geo/localStreets.ts). When it answers, its streets are joined on;
+ * when it fails, the network is just the highways.
  */
-export async function loadRoadNet(points: LatLng[], progress: (message: string) => void = () => {}): Promise<RoadNet> {
+export async function loadRoadNet(
+  points: LatLng[],
+  progress: (message: string) => void = () => {},
+  streets: Promise<{ elements?: OsmElement[] } | null> | null = null,
+): Promise<RoadNet & { localStreets: boolean }> {
   const index = await loadRoadIndex();
   const v = encodeURIComponent(index.built);
   if (!backboneLoad || (await backboneLoad.catch(() => null))?.built !== index.built) {
@@ -482,5 +496,12 @@ export async function loadRoadNet(points: LatLng[], progress: (message: string) 
       return load;
     }),
   );
-  return new RoadNet([backbone, ...tiles], towns);
+  const files = [backbone, ...tiles];
+  let local: RoadFile | null = null;
+  if (streets) {
+    progress('Finding the local streets…');
+    const json = await streets.catch(() => null);
+    local = json ? joinLocalStreets(json, files) : null;
+  }
+  return Object.assign(new RoadNet(local ? [...files, local] : files, towns), { localStreets: !!local });
 }

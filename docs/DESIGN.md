@@ -85,6 +85,7 @@ The game plans trips with its own road network instead of the public OSRM server
 - `.github/workflows/osm-roads.yml` runs monthly (or by hand from the Actions tab). It runs `scripts/fetch-osm-roads.sh` (state-by-state OpenStreetMap extracts, filtered with osmium) and `scripts/build-osm-roads.py`, and stores the result on the `osm-roads` release as `osm-roads.tar.gz`.
 - The Pages deploy unpacks that release into `data/osm/` on the site: `index.json`, `backbone.json` (interstates and major highways), `tiles/<x>_<y>.json` (US and state routes per 2° square), `towns.json` and `LICENSE-ODbL.txt`. They are copied in after the build so the service worker doesn't precache them all.
 - These files are OpenStreetMap data and stay under the ODbL; the game's code is not affected.
+- **Local streets at each end** (`src/geo/localStreets.ts`). When online, the planner asks Overpass once per trip for the streets around the start and end (side streets within 2 km, bigger roads within 6 km), while the road files load. The answer becomes a small road file in the same format (extra classes: secondary, tertiary, minor). It joins the highways at the junctions they share, and streets that never reach a highway are dropped. So a trip from a home address starts on its own street instead of a straight line to the nearest highway. If the lookup fails or takes over 12 seconds, the trip keeps that straight link. A saved trip keeps its streets for offline play.
 
 Build them locally (needs osmium-tool and `pip install osmium`; about 14 GB of downloads):
 
