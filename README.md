@@ -34,3 +34,7 @@ npm run dev
 Open the printed network URL on a phone or tablet on the same Wi-Fi. "Quick demo trip" works offline; planning a real trip needs internet access to OpenStreetMap's search and the OSRM routing server.
 
 Map data © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors.
+
+## License
+
+The code is licensed under the [Apache License 2.0](LICENSE). It is free to use, change and share. Please keep the [NOTICE](NOTICE) file and credit **mbwamkali** as the original author. Data derived from OpenStreetMap stays under the ODbL, and other bundled assets are listed in [docs/CREDITS.md](docs/CREDITS.md).
