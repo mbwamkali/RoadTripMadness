@@ -13,11 +13,11 @@ import * as THREE from 'three';
  * charge, wheel).
  */
 
-type V3 = [number, number, number];
+export type V3 = [number, number, number];
 
 const mats = new Map<string, THREE.Material>();
 /** Flat-shaded Lambert, shared by colour. */
-function lam(color: number, emissive = 0): THREE.Material {
+export function lam(color: number, emissive = 0): THREE.Material {
   const key = `l${color}-${emissive}`;
   let m = mats.get(key);
   if (!m) {
@@ -27,7 +27,7 @@ function lam(color: number, emissive = 0): THREE.Material {
   return m;
 }
 /** Unlit colour, for lights, eyes and glows. */
-function glow(color: number, opacity = 1): THREE.Material {
+export function glow(color: number, opacity = 1): THREE.Material {
   const key = `g${color}-${opacity}`;
   let m = mats.get(key);
   if (!m) {
@@ -38,7 +38,7 @@ function glow(color: number, opacity = 1): THREE.Material {
   return m;
 }
 
-function add(parent: THREE.Object3D, geo: THREE.BufferGeometry, mat: THREE.Material, pos: V3 = [0, 0, 0], rot: V3 = [0, 0, 0], name = ''): THREE.Mesh {
+export function add(parent: THREE.Object3D, geo: THREE.BufferGeometry, mat: THREE.Material, pos: V3 = [0, 0, 0], rot: V3 = [0, 0, 0], name = ''): THREE.Mesh {
   const m = new THREE.Mesh(geo, mat);
   m.position.set(...pos);
   m.rotation.set(...rot);
@@ -47,16 +47,16 @@ function add(parent: THREE.Object3D, geo: THREE.BufferGeometry, mat: THREE.Mater
   return m;
 }
 
-const box = (w: number, h: number, d: number) => new THREE.BoxGeometry(w, h, d);
-const ball = (r: number, ws = 8, hs = 6) => new THREE.SphereGeometry(r, ws, hs);
-const cyl = (rt: number, rb: number, h: number, s = 8) => new THREE.CylinderGeometry(rt, rb, h, s);
-const cone = (r: number, h: number, s = 6) => new THREE.ConeGeometry(r, h, s);
-const capsule = (r: number, len: number) => new THREE.CapsuleGeometry(r, len, 2, 8);
+export const box = (w: number, h: number, d: number) => new THREE.BoxGeometry(w, h, d);
+export const ball = (r: number, ws = 8, hs = 6) => new THREE.SphereGeometry(r, ws, hs);
+export const cyl = (rt: number, rb: number, h: number, s = 8) => new THREE.CylinderGeometry(rt, rb, h, s);
+export const cone = (r: number, h: number, s = 6) => new THREE.ConeGeometry(r, h, s);
+export const capsule = (r: number, len: number) => new THREE.CapsuleGeometry(r, len, 2, 8);
 /** A solid of revolution from [radius, y] points. */
 const lathe = (pts: [number, number][], s = 16) => new THREE.LatheGeometry(pts.map(([r, y]) => new THREE.Vector2(r, y)), s);
 
 /** A side profile (points as [z, y]) extruded across a width, centred on x = 0, with soft edges. */
-function profile(width: number, pts: [number, number][], bevel = 0.08): THREE.BufferGeometry {
+export function profile(width: number, pts: [number, number][], bevel = 0.08): THREE.BufferGeometry {
   const shape = new THREE.Shape(pts.map(([z, y]) => new THREE.Vector2(z, y)));
   const geo = new THREE.ExtrudeGeometry(shape, { depth: width - bevel * 2, bevelEnabled: true, bevelSize: bevel, bevelThickness: bevel, bevelSegments: 2 });
   geo.rotateY(-Math.PI / 2);
@@ -65,7 +65,7 @@ function profile(width: number, pts: [number, number][], bevel = 0.08): THREE.Bu
 }
 
 /** A wheel with a tyre, a rim and a hub, axle along x. */
-function wheel(parent: THREE.Object3D, r: number, w: number, pos: V3, rim = 0xb8b8b8): THREE.Group {
+export function wheel(parent: THREE.Object3D, r: number, w: number, pos: V3, rim = 0xb8b8b8): THREE.Group {
   const g = new THREE.Group();
   g.name = 'wheel';
   const tyre = new THREE.TorusGeometry(r * 0.78, r * 0.24, 6, 14).rotateY(Math.PI / 2);
@@ -270,7 +270,7 @@ export function sampleOutlaw(): THREE.Group {
 }
 
 /** A cat's head: round, muzzle, ears with pink insides, big eyes, whiskers. */
-function catHead(parent: THREE.Object3D, fur: number, eye: number, r: number, pos: V3, stripes = 0): void {
+export function catHead(parent: THREE.Object3D, fur: number, eye: number, r: number, pos: V3, stripes = 0): void {
   const [x, y, z] = pos;
   add(parent, ball(r, 10, 8).scale(1.1, 0.95, 1), lam(fur), [x, y, z]);
   add(parent, ball(r * 0.45, 8, 6).scale(1.3, 0.8, 0.9), lam(0xfff1e2), [x, y - r * 0.35, z + r * 0.72]);

@@ -8,9 +8,16 @@ import { makeRng, range, type Rng } from './rng';
  * x is across the road (lanes at about -2.5 .. 2.5), y is height.
  */
 
-export type BossKind = 'brute' | 'warrig' | 'mothership';
+export type BossKind = 'brute' | 'warrig' | 'mothership' | 'hermit' | 'pizza';
 export type EnemyType = 'zombie' | 'outlaw' | 'catship' | BossKind;
-export const BOSSES: BossKind[] = ['brute', 'warrig', 'mothership'];
+export const BOSSES: BossKind[] = ['brute', 'warrig', 'mothership', 'hermit', 'pizza'];
+/** The halfway boss is drawn from this pool (the Cat Queen always waits at the end). */
+export const HALF_BOSSES: BossKind[] = ['brute', 'warrig', 'hermit', 'pizza'];
+/** Bosses that throw things at the car between their big attacks. */
+const THROWING_BOSSES: Partial<Record<BossKind, { every: [number, number]; dmg: number; dur: number }>> = {
+  hermit: { every: [1.8, 2.6], dmg: 5, dur: 1.1 },
+  pizza: { every: [1.3, 1.9], dmg: 4, dur: 0.9 },
+};
 export const isBoss = (t: EnemyType): t is BossKind => (BOSSES as EnemyType[]).includes(t);
 export type WeaponKind = AmmoKind | 'rocks';
 
@@ -39,6 +46,10 @@ export interface Enemy {
   onCar?: boolean;
   /** Seconds of steering a climber has been shaken by (enough throws it off). */
   shaken?: number;
+  /** Throwing bosses: time to the next small throw (between big attacks). */
+  throwTimer?: number;
+  /** The hermit: time to his next hop across the road. */
+  hopTimer?: number;
 }
 
 /** Junk thrown at the car: flies from the thrower to where the car was, and hits if the car is still there. */
@@ -106,6 +117,8 @@ export interface CombatState {
   ramDamage: number;
   gunner: boolean;
   gunnerTimer: number;
+  /** Car condition won back in the fight (the pizza driver's pizzas). */
+  heal: number;
   /** The boss of a boss fight (no escaping; beat it to win). */
   boss: BossKind | null;
   bossId: number | null;
@@ -125,26 +138,45 @@ export const ENEMY_STATS: Record<EnemyType, { hp: number; name: string }> = {
   brute: { hp: 45, name: 'Big Rotten Earl' },
   warrig: { hp: 55, name: "Mad Maxine's war rig" },
   mothership: { hp: 70, name: 'The Cat Queen' },
+  hermit: { hp: 40, name: 'The Crazy Hermit' },
+  pizza: { hp: 42, name: 'The Angry Pizza Driver' },
 };
 
-export const BOSS_INFO: Record<BossKind, { title: string; intro: string; minion: EnemyType; slamDamage: number }> = {
+export const BOSS_INFO: Record<BossKind, { title: string; intro: string; minion: EnemyType | null; slamDamage: number; icon: string }> = {
   brute: {
     title: 'BOSS: Big Rotten Earl',
     intro: 'A zombie the size of a barn lumbers onto the highway. Watch for the red lane and steer out of it before he stomps.',
     minion: 'zombie',
     slamDamage: 16,
+    icon: '🧟',
   },
   warrig: {
     title: "BOSS: Mad Maxine's war rig",
     intro: 'An armoured eighteen-wheeler covered in spikes swings in ahead of you. When a lane lights up red, a rocket is coming.',
     minion: 'outlaw',
     slamDamage: 14,
+    icon: '🚚',
   },
   mothership: {
     title: 'BOSS: The Cat Queen',
     intro: 'The sky goes purple. A mothership the size of a stadium descends over your destination. Dodge the red beam. Catnip hurts her a lot.',
     minion: 'catship',
     slamDamage: 18,
+    icon: '🐱',
+  },
+  hermit: {
+    title: 'BOSS: The Crazy Hermit',
+    intro: 'A wild hermit with a huge beard jumps out of the bushes. He throws everything he owns at you! Dodge the junk, and steer out of the red lane before the big one lands.',
+    minion: null,
+    slamDamage: 15,
+    icon: '🧔',
+  },
+  pizza: {
+    title: 'BOSS: The Angry Pizza Driver',
+    intro: 'A pizza car roars up behind you. The driver is mad, and he is throwing pizzas! Dodge them and the red lane. Beat him and the pizzas are yours.',
+    minion: null,
+    slamDamage: 14,
+    icon: '🍕',
   },
 };
 
@@ -210,6 +242,7 @@ export function createCombat(opts: CombatOptions): CombatState {
     events: [],
     kills: 0,
     loot: {},
+    heal: 0,
     gunDamage: opts.gunDamage ?? 1,
     ramDamage: opts.ramDamage ?? 6,
     gunner: !!opts.gunner,
@@ -301,8 +334,21 @@ function spawn(c: CombatState, type: EnemyType, horde = false): Enemy {
     e.x = 0;
     e.y = type === 'mothership' ? 14 : 0;
     e.z = -90;
-    e.holdZ = type === 'brute' ? -20 : type === 'warrig' ? -16 : -34;
+    e.holdZ = type === 'brute' ? -20 : type === 'warrig' ? -16 : type === 'hermit' ? -18 : type === 'pizza' ? -10 : -34;
     e.timer = 4;
+    if (type === 'hermit') {
+      // Leaps out from the roadside and stays off the road, hopping from side to side.
+      e.holdX = side * 5.5;
+      e.x = side * 8;
+      e.hopTimer = range(r, 6, 8);
+    }
+    if (type === 'pizza') {
+      // Comes up from behind like the outlaws, then rides just ahead.
+      e.z = 30;
+      e.x = side * 4;
+      e.holdX = side * 3.4;
+    }
+    if (THROWING_BOSSES[type]) e.throwTimer = 3;
   } else if (type === 'zombie') {
     e.x = range(r, -7, 7);
     e.z = -70;
@@ -437,9 +483,9 @@ export function stepCombat(c: CombatState, dt: number): number {
   }
   stepMissiles(c, dt, hitCar);
   if (c.gunner) gunnerFire(c, dt);
-  if (c.boss && c.bossId != null) {
+  const minion = c.boss ? BOSS_INFO[c.boss].minion : null;
+  if (minion && c.bossId != null) {
     c.minionTimer -= dt;
-    const minion = BOSS_INFO[c.boss].minion;
     const count = c.enemies.filter((e) => e.type === minion && e.hp > 0).length;
     if (c.minionTimer <= 0 && c.enemies.some((e) => e.id === c.bossId)) {
       c.minionTimer = minion === 'zombie' ? range(c.rng, 3, 5) : range(c.rng, 7, 10);
@@ -474,6 +520,8 @@ function kill(c: CombatState, e: Enemy, byPlayer: boolean): void {
     // The rest of the gang scatters.
     for (const o of c.enemies) if (o !== e && o.hp > 0) o.z = 999;
   }
+  // The pizza driver's pizzas are yours: a meal on the road fixes you up.
+  if (e.type === 'pizza') c.heal += 30;
 }
 
 /** How long an enemy flashes before it attacks. */
@@ -553,10 +601,38 @@ export function missileAt(m: Missile): { x: number; y: number; z: number } {
  */
 function stepBoss(c: CombatState, e: Enemy, type: BossKind, dt: number, stunned: boolean, hitCar: (d: number, from: EnemyType) => void): void {
   e.z += Math.sign(e.holdZ - e.z) * Math.min(Math.abs(e.holdZ - e.z), 18 * dt);
-  const follow = type === 'brute' ? 1.2 : type === 'warrig' ? 2.2 : 1.6;
-  const wantX = type === 'mothership' ? c.carX * 0.5 + Math.sin(c.time * 0.5) * 4 : c.carX;
+  const follow = { brute: 1.2, warrig: 2.2, mothership: 1.6, hermit: 7, pizza: 2.6 }[type];
+  let wantX = type === 'mothership' ? c.carX * 0.5 + Math.sin(c.time * 0.5) * 4 : c.carX;
+  if (type === 'hermit') {
+    // Hops from one roadside to the other every so often (a jump arc on the way).
+    e.hopTimer = (e.hopTimer ?? 6) - dt;
+    if (e.hopTimer <= 0 && !e.charging) {
+      e.hopTimer = range(c.rng, 6, 9);
+      e.holdX = -e.holdX;
+    }
+    wantX = e.holdX;
+    const across = Math.abs(e.x - e.holdX);
+    e.y = across > 0.2 ? Math.sin(Math.min(1, across / 11) * Math.PI) * 3 : 0;
+  }
+  if (type === 'pizza') {
+    // Swerves from one side of the car to the other.
+    if (Math.sin(c.time * 0.35 + e.id) * e.holdX < 0) e.holdX = -e.holdX;
+    wantX = Math.max(-5, Math.min(5, c.carX + e.holdX));
+  }
   e.x += Math.sign(wantX - e.x) * Math.min(Math.abs(wantX - e.x), follow * dt);
   if (type === 'mothership') e.y = 14 + Math.sin(c.time * 1.2) * 0.8;
+  const thrower = THROWING_BOSSES[type];
+  if (thrower && !stunned && !e.charging && Math.abs(e.z - e.holdZ) < 3 && e.y < 0.5) {
+    // Small throws between big attacks, each with a wind-up flash first.
+    e.throwTimer = (e.throwTimer ?? 2) - dt;
+    if (e.throwTimer <= WINDUP && e.throwTimer + dt > WINDUP) c.events.push({ kind: 'windup', enemy: e.id });
+    if (e.throwTimer <= 0) {
+      e.throwTimer = range(c.rng, ...thrower.every);
+      const m: Missile = { id: c.nextId++, from: type, x0: e.x, y0: 2.2, z0: e.z, tx: c.carX, t: 0, dur: thrower.dur, dmg: thrower.dmg };
+      c.missiles.push(m);
+      c.events.push({ kind: 'throw', missile: m.id });
+    }
+  }
   if (Math.abs(e.z - e.holdZ) > 3 || stunned) {
     if (stunned) e.charging = false;
     return;

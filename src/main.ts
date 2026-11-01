@@ -45,7 +45,7 @@ import { mpg, swipeAction } from './game/driving';
 import { installButton } from './ui/install';
 import { narrateUi, narrator } from './audio/narrator';
 import { choiceIcon, kidChoices, kidMode, oneLine } from './game/kidMode';
-import { eventScenes, playEventScene, sceneKindFor, type SceneKind } from './scenes/eventScene';
+import { BOSS_SCENES, eventScenes, playEventScene, sceneKindFor, type SceneKind } from './scenes/eventScene';
 import { DoubleTap, isSwipe, type Press } from './game/gestures';
 import { RAGE_HOSTILE, RAGE_MAX, rageOf } from './game/rage';
 import { clockText, hourOf, isNight, nightDanger, weatherAt, WEATHER_INFO, type Weather } from './game/time';
@@ -423,7 +423,8 @@ function previewRoute(route: RouteData, note?: string, back: () => void = showSe
     : null;
   const go = () => {
     const career = loadCareer();
-    const g = newGame(route, s.seed, difficulty, ride, { upgrades: career.upgrades, threat: threatFor(career, kidMode.on) });
+    const g = newGame(route, s.seed, difficulty, ride, { upgrades: career.upgrades, threat: threatFor(career, kidMode.on), lastBoss: career.lastBoss });
+    saveCareer({ ...career, lastBoss: g.halfBoss });
     startTrip(g);
     void streets?.then((names) => {
       if (!names || state !== g) return;
@@ -1330,7 +1331,7 @@ function showBossIntro(boss: BossKind): void {
       h(
         'div',
         { class: 'card' },
-        h('div', { class: 'boss-icon' }, boss === 'brute' ? '🧟' : boss === 'warrig' ? '🚚' : '🐱'),
+        BOSS_SCENES.includes(boss) ? eventPicture(BOSS_INFO[boss].icon, boss as SceneKind) : h('div', { class: 'boss-icon' }, BOSS_INFO[boss].icon),
         h('h2', {}, ENEMY_STATS[boss].name),
         h('p', {}, info.intro),
         h('p', { class: 'muted' }, `No running from this one. Ammo: ${s.inv.bullets} bullets, ${s.inv.shells} shells, ${s.inv.catnip} catnip.`),
@@ -1538,6 +1539,9 @@ function endCombat(c: CombatState, outcome: 'cleared' | 'escaped' | 'wrecked', s
   }
   s.log.push(`${c.title} ${outcome === 'cleared' ? 'Wiped them out' : 'Got away'}.`);
   if (c.boss) s.bossesBeaten++;
+  // Food from the fight (the pizza driver's pizzas) fixes you up.
+  const ate = Math.min(c.heal, maxHealth(s) - s.health);
+  if (ate > 0) s.health += ate;
   let patched = 0;
   if (s.crew.includes('mechanic')) {
     patched = Math.min(8, maxHealth(s) - s.health);
@@ -1554,6 +1558,7 @@ function endCombat(c: CombatState, outcome: 'cleared' | 'escaped' | 'wrecked', s
         h('h2', {}, c.boss ? `${ENEMY_STATS[c.boss].name} is down!` : outcome === 'cleared' ? 'Wiped them out!' : 'You got away!'),
         h('p', {}, `${c.kills} taken down. Car at ${Math.round(s.health)}%.`),
         found.length > 0 && h('p', {}, `Picked up ${found.join(', ')}.`),
+        c.heal > 0 && h('p', {}, `🍕 Free pizza! You eat on the road and feel great${ate > 0 ? `: +${Math.round(ate)} condition` : ''}.`),
         patched > 0 && h('p', {}, `🧰 Your mechanic patches ${Math.round(patched)} damage.`),
         h(
           'button',
@@ -1671,6 +1676,10 @@ registerServiceWorker();
     const overlay = h('div', { class: 'modal scene-test' }, card);
     ui().append(overlay);
     return overlay;
+  },
+  /** Shows a boss's intro card (its button starts the fight). */
+  bossIntro(boss: BossKind) {
+    showBossIntro(boss);
   },
   /** Starts a fight on the spot; `horde` forces (true) or blocks (false) a zombie horde. */
   fight(theme?: EnemyType, horde?: boolean) {

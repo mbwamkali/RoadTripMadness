@@ -25,6 +25,7 @@ import { castShadows, disposeTree, makeLaneTexture, makeRide, makeRoadTexture, t
 import { modelGeometry, modelMaterial, modelMesh, modelsWanted, treeModelsWanted, type ModelName } from './models';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { sampleBrute, sampleCatship, sampleMothership, sampleOutlaw, sampleWarRig } from './samples';
+import { pizzaGeometryParts, sampleHermit, samplePizzaCar, simpleHermit, simplePizzaCar } from './bossModels';
 
 export interface CombatCallbacks {
   onCarHit(dmg: number): void;
@@ -57,8 +58,8 @@ export class CombatScene implements GameScene {
   private meshes = new Map<number, THREE.Group>();
   /** Horde zombies: one shared zombie drawn many times. */
   private horde: THREE.InstancedMesh | null = null;
-  private missiles = new Map<number, THREE.Mesh>();
-  private junk = new THREE.MeshLambertMaterial({ color: 0x7a6a55 });
+  private missiles = new Map<number, THREE.Object3D>();
+  private junk = Object.assign(new THREE.MeshLambertMaterial({ color: 0x7a6a55 }), { userData: { shared: true } });
   /** A red glow over the car when it gets hit. */
   private hitGlow = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.8, 4.8), new THREE.MeshBasicMaterial({ color: 0xff2020, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
   private hitFlash = 0;
@@ -290,7 +291,7 @@ export class CombatScene implements GameScene {
         case 'slam': {
           const g = this.meshes.get(ev.enemy);
           const at = new THREE.Vector3(ev.x, 0.5, 0);
-          const color = this.combat.boss === 'mothership' ? 0xff40ff : this.combat.boss === 'warrig' ? 0xffa030 : 0x8fbf5a;
+          const color = ({ mothership: 0xff40ff, warrig: 0xffa030, hermit: 0xb08a5a, pizza: 0xffc040 } as Record<string, number>)[this.combat.boss ?? ''] ?? 0x8fbf5a;
           if (g && this.combat.boss !== 'brute') this.addLine(g.position.clone().setY(g.position.y + 1), at, color, 0.4);
           this.addBurst(at, color, 24);
           this.addRing(color, ev.x);
@@ -398,18 +399,23 @@ export class CombatScene implements GameScene {
       live.add(ms.id);
       let mesh = this.missiles.get(ms.id);
       if (!mesh) {
-        mesh = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.6), this.junk);
+        if (ms.from === 'pizza') {
+          // A spinning pizza, big enough to see coming.
+          mesh = new THREE.Group();
+          pizzaGeometryParts(mesh, 0.55);
+        } else mesh = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.6), this.junk);
         this.missiles.set(ms.id, mesh);
         this.scene.add(mesh);
       }
       const p = missileAt(ms);
       mesh.position.set(p.x, p.y, p.z);
-      mesh.rotation.set(ms.t * 9, ms.t * 6, 0);
+      if (ms.from === 'pizza') mesh.rotation.set(0.5, ms.t * 14, 0);
+      else mesh.rotation.set(ms.t * 9, ms.t * 6, 0);
     }
     for (const [id, mesh] of this.missiles) {
       if (live.has(id)) continue;
       this.scene.remove(mesh);
-      mesh.geometry.dispose();
+      disposeTree(mesh);
       this.missiles.delete(id);
     }
   }
@@ -550,7 +556,7 @@ export class CombatScene implements GameScene {
       this.horde.dispose();
       this.scene.remove(this.horde);
     }
-    for (const mesh of this.missiles.values()) mesh.geometry.dispose();
+    for (const mesh of this.missiles.values()) disposeTree(mesh);
     this.junk.dispose();
     for (const g of this.meshes.values()) disposeTree(g);
     for (const f of this.fx) disposeTree(f.obj);
@@ -600,6 +606,14 @@ const SAMPLE_ENEMIES: Partial<Record<EnemyType, { build: () => THREE.Group; hitR
   mothership: { build: sampleMothership, hitRadius: 8, barY: 9.6 },
   brute: { build: sampleBrute, hitRadius: 1.3, barY: 2.9 },
   warrig: { build: sampleWarRig, hitRadius: 3.6, barY: 5 },
+  hermit: { build: sampleHermit, hitRadius: 1.2, barY: 2.9 },
+  pizza: { build: samplePizzaCar, hitRadius: 2.4, barY: 3.6 },
+};
+
+/** Low graphics versions of the newer bosses (the older ones are built inline below). */
+const SIMPLE_BOSSES: Partial<Record<EnemyType, { build: () => THREE.Group; hitRadius: number; barY: number }>> = {
+  hermit: { build: simpleHermit, hitRadius: 1.2, barY: 2.9 },
+  pizza: { build: simplePizzaCar, hitRadius: 2.4, barY: 3.4 },
 };
 
 export function buildEnemy(type: EnemyType): THREE.Group {
@@ -616,7 +630,7 @@ export function buildEnemy(type: EnemyType): THREE.Group {
   };
   let hitRadius = 1.4;
   let barY = 2.6;
-  const sample = modelsWanted() ? SAMPLE_ENEMIES[type] : undefined;
+  const sample = (modelsWanted() ? SAMPLE_ENEMIES[type] : undefined) ?? SIMPLE_BOSSES[type];
   if (sample) {
     // Detailed models built in code (Medium and High); Low keeps the boxes below.
     const s = sample.build();
@@ -760,7 +774,7 @@ export function buildEnemy(type: EnemyType): THREE.Group {
     barY = 1.9;
   }
   const hitbox = new THREE.Mesh(new THREE.SphereGeometry(hitRadius, 8, 6), new THREE.MeshBasicMaterial({ visible: false }));
-  hitbox.position.y = type === 'catship' || type === 'mothership' ? 0.2 : type === 'warrig' ? 1.8 : 1.3;
+  hitbox.position.y = type === 'catship' || type === 'mothership' ? 0.2 : type === 'warrig' ? 1.8 : type === 'pizza' ? 1.4 : 1.3;
   hitbox.name = 'hitbox';
   g.add(hitbox);
   const hp = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 0.2), new THREE.MeshBasicMaterial({ color: 0xff3030, depthTest: false }));
@@ -776,13 +790,13 @@ export function buildEnemy(type: EnemyType): THREE.Group {
   target.visible = false;
   g.add(target);
   if (type === 'outlaw') g.rotation.y = Math.PI;
-  if (type === 'warrig') {
+  if (type === 'warrig' || type === 'pizza') {
     // Drives away from the car, rear facing us.
     g.rotation.y = Math.PI;
     hp.rotation.y = Math.PI;
   }
   // A bit larger than life so they read well on a phone screen.
-  const scale: Record<EnemyType, number> = { zombie: 1.35, outlaw: 1.35, catship: 1.1, brute: 4.2, warrig: 1.1, mothership: 1 };
+  const scale: Record<EnemyType, number> = { zombie: 1.35, outlaw: 1.35, catship: 1.1, brute: 4.2, warrig: 1.1, mothership: 1, hermit: 1.9, pizza: 1.15 };
   g.scale.setScalar(scale[type]);
   return g;
 }
@@ -806,6 +820,24 @@ function animateEnemy(g: THREE.Group, e: Enemy, t: number): void {
         if (arm) arm.rotation.x = e.charging ? -1.4 : 0;
       }
     }
+  } else if (e.type === 'hermit') {
+    // Hops about, flails, and raises his arms to throw (both for the big one).
+    const legL = body.getObjectByName('legL');
+    const legR = body.getObjectByName('legR');
+    const hop = e.y > 0.1 ? 0.8 : Math.sin(t * 5 + e.id) * 0.3;
+    if (legL && legR) {
+      legL.rotation.x = hop;
+      legR.rotation.x = -hop;
+    }
+    body.rotation.z = Math.sin(t * 4) * 0.1;
+    const throwing = (e.throwTimer ?? 9) < 0.6;
+    const armL = body.getObjectByName('armL');
+    const armR = body.getObjectByName('armR');
+    if (armL) armL.rotation.x = e.charging ? -2.6 : Math.sin(t * 7) * 0.4;
+    if (armR) armR.rotation.x = e.charging || throwing ? -2.6 : Math.sin(t * 7 + 1) * 0.4;
+  } else if (e.type === 'pizza') {
+    body.rotation.z = Math.sin(t * 2.4) * 0.05;
+    body.position.y = Math.abs(Math.sin(t * 9)) * 0.06;
   } else if (e.type === 'outlaw') {
     body.rotation.z = Math.sin(t * 2 + e.id) * 0.08;
   } else if (e.type === 'warrig') {

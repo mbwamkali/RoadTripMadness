@@ -8,7 +8,7 @@ import { fuelEfficiency, MAX_LEVEL, maxHealthFor, noUpgrades, tankFor, upgradeCo
 import { generateStops, type PlaceKind, type Stop } from './stops';
 import { hashString, makeRng, range, rangeInt, type Rng } from './rng';
 import { DIFFICULTIES, type Difficulty } from './difficulty';
-import type { BossKind } from './combat';
+import { HALF_BOSSES, type BossKind } from './combat';
 import { rideOf, type Ride } from './rides';
 
 export type AmmoKind = 'bullets' | 'shells' | 'catnip';
@@ -53,6 +53,8 @@ export interface GameState {
   bikeUsed?: boolean;
   /** Road rage, 0 to 100: rises when you shoot traffic, cools as you drive (see rage.ts). */
   rage?: number;
+  /** The boss waiting halfway, drawn from the pool when the trip starts (older saves: by seed). */
+  halfBoss?: BossKind;
   /** Threat level carried over from earlier wins (see career.ts): tougher, bigger fights. */
   threat?: number;
   /** 0: halfway boss to come, 1: final boss to come, 2: both done. */
@@ -84,7 +86,7 @@ export function newGame(
   seed = Date.now() & 0xffffffff,
   difficulty: Difficulty = 'normal',
   ride: Ride = 'car',
-  carry?: { upgrades: Upgrades; threat: number },
+  carry?: { upgrades: Upgrades; threat: number; lastBoss?: BossKind },
 ): GameState {
   const path = pathFromRoute(route);
   const rng = makeRng(seed);
@@ -118,6 +120,7 @@ export function newGame(
     difficulty,
     ...(ride !== 'car' ? { ride } : {}),
     ...(carry?.threat ? { threat: carry.threat } : {}),
+    halfBoss: pickHalfBoss(seed, carry?.lastBoss),
     bossStage: 0,
     bossesBeaten: 0,
     kills: 0,
@@ -140,7 +143,13 @@ export function bossPoints(pathLength: number): [number, number] {
 /** Which boss waits at each point. The finale is always the Cat Queen. */
 export function bossFor(s: GameState, stage: number): BossKind {
   if (stage >= 1) return 'mothership';
-  return makeRng(s.seed ^ 0xb055)() < 0.5 ? 'brute' : 'warrig';
+  return s.halfBoss ?? (makeRng(s.seed ^ 0xb055)() < 0.5 ? 'brute' : 'warrig');
+}
+
+/** The halfway boss for a new trip: any from the pool but the one met last trip. */
+export function pickHalfBoss(seed: number, last?: BossKind, pool: BossKind[] = HALF_BOSSES): BossKind {
+  const options = pool.length > 1 ? pool.filter((b) => b !== last) : pool;
+  return options[Math.floor(makeRng(seed ^ 0xb055)() * options.length) % options.length];
 }
 
 /** Advances the car. Returns what happened so the caller can react. */

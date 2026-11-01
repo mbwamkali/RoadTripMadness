@@ -5,6 +5,7 @@
  * A lost trip changes nothing. Saved on the device only.
  */
 
+import { BOSSES, type BossKind } from './combat';
 import { MAX_LEVEL, noUpgrades, UPGRADES, type UpgradeKind, type Upgrades } from './upgrades';
 
 const KEY = 'rtm-career';
@@ -16,6 +17,8 @@ export interface Career {
   threat: number;
   /** Trips finished. */
   wins: number;
+  /** The halfway boss of the last trip started, so the next one is different. */
+  lastBoss?: BossKind;
 }
 
 export const freshCareer = (): Career => ({ upgrades: noUpgrades(), threat: 0, wins: 0 });
@@ -29,6 +32,7 @@ function clean(c: Partial<Career> | null): Career {
   }
   out.threat = Math.max(0, Math.floor(Number(c.threat) || 0));
   out.wins = Math.max(0, Math.floor(Number(c.wins) || 0));
+  if (c.lastBoss && BOSSES.includes(c.lastBoss)) out.lastBoss = c.lastBoss;
   return out;
 }
 
@@ -60,7 +64,7 @@ export function afterTrip(c: Career, won: boolean, upgrades: Upgrades, kid: bool
   const kept = { ...c.upgrades };
   for (const k of Object.keys(kept) as UpgradeKind[]) kept[k] = Math.max(kept[k], upgrades[k] ?? 0);
   const threat = kid ? Math.min(c.threat + 1, Math.max(c.threat, KID_THREAT_CAP)) : c.threat + 1;
-  return { upgrades: kept, threat, wins: c.wins + 1 };
+  return { ...c, upgrades: kept, threat, wins: c.wins + 1 };
 }
 
 /** How much tougher enemies are at a threat level. */

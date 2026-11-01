@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { disposeTree, makeRide } from './common';
 import { modelsWanted } from './models';
 import { sampleCatship, sampleOutlaw, sampleWreck } from './samples';
+import { pizzaGeometryParts, sampleHermit, samplePizzaCar, simpleHermit, simplePizzaCar } from './bossModels';
 import { kidMode } from '../game/kidMode';
 import type { Upgrades } from '../game/upgrades';
 
@@ -13,7 +14,10 @@ import type { Upgrades } from '../game/upgrades';
  * graphics the people, saucers and wrecks are simple shapes.
  */
 
-export type SceneKind = 'flat' | 'help' | 'dog' | 'loot' | 'trade' | 'beam' | 'roadblock' | 'bridge' | 'fuel';
+export type SceneKind = 'flat' | 'help' | 'dog' | 'loot' | 'trade' | 'beam' | 'roadblock' | 'bridge' | 'fuel' | BossScene;
+/** Boss intros with their own scene (the older bosses show just their icon). */
+export type BossScene = 'hermit' | 'pizza';
+export const BOSS_SCENES: readonly string[] = ['hermit', 'pizza'] satisfies BossScene[];
 
 /** The scene for each road event (src/game/events.ts ids), plus 'bike' for running out of gas. */
 export function sceneKindFor(eventId: string): SceneKind {
@@ -302,6 +306,61 @@ function stage(kind: SceneKind, ride: 'car' | 'motorcycle' | 'truck', up?: Upgra
         });
         // A sudden stop at the edge: the car rocks forward.
         car.rotation.z = t > stopAt ? Math.sin((t - stopAt) * 10) * 0.05 * Math.max(0, 1 - (t - stopAt)) : 0;
+      });
+      break;
+    }
+    case 'hermit': {
+      // He leaps out of the bushes by the road and starts hurling junk.
+      stopX = -3;
+      const bush = new THREE.Group();
+      for (let i = 0; i < 5; i++) bush.add(mesh(new THREE.IcosahedronGeometry(0.7 + (i % 2) * 0.2, 0), lam(0x3f6f35), 2 + i * 0.5, 0.5, 3.4 + (i % 2) * 0.4));
+      scene.add(bush);
+      const him = modelsWanted() ? sampleHermit() : simpleHermit();
+      him.scale.setScalar(1.15);
+      him.rotation.y = -Math.PI / 2 - 0.5;
+      scene.add(him);
+      const junk = [0, 1, 2].map((i) => {
+        const j = mesh(new THREE.BoxGeometry(0.4, 0.35, 0.5), lam([0x8a8a90, 0x7a5a3a, 0xf2f2f2][i]));
+        scene.add(j);
+        return j;
+      });
+      props.push((t) => {
+        const leap = Math.min(1, Math.max(0, (t - 1.2) / 0.6));
+        him.position.set(3 - leap * 0.8, Math.sin(leap * Math.PI) * 1.6, 3.6 - leap * 1.4);
+        him.visible = t > 1.0;
+        const armR = him.getObjectByName('armR');
+        if (armR) armR.rotation.x = -2.4 + Math.sin(t * 9) * 0.6;
+        junk.forEach((j, i) => {
+          const p = (t - 2.0 - i * 0.55) / 0.7;
+          j.visible = p > 0 && p < 1;
+          j.position.set(2 - (2 - (stopX + 0.6 * (i - 1))) * p, 2 + Math.sin(p * Math.PI) * 1.5 - p * 1.6, 2.2 - 2.2 * p);
+          j.rotation.set(p * 8, p * 5, 0);
+        });
+      });
+      break;
+    }
+    case 'pizza': {
+      // The pizza car roars up behind you, throwing pizzas.
+      stopX = 4;
+      const pc = modelsWanted() ? samplePizzaCar() : simplePizzaCar();
+      pc.rotation.y = Math.PI / 2;
+      pc.scale.multiplyScalar(0.8);
+      scene.add(pc);
+      const pies = [0, 1, 2].map(() => {
+        const g = new THREE.Group();
+        pizzaGeometryParts(g, 0.4);
+        scene.add(g);
+        return g;
+      });
+      props.push((t) => {
+        pc.position.set(-16 + Math.min(1, t / 2.2) * 13, Math.abs(Math.sin(t * 9)) * 0.05, -0.3);
+        pies.forEach((g, i) => {
+          const p = (t - 1.6 - i * 0.6) / 0.8;
+          g.visible = p > 0 && p < 1;
+          const from = pc.position.x + 1;
+          g.position.set(from + (car.position.x - from) * p, 2 + Math.sin(p * Math.PI) * 1.2, -0.3 + p * 0.3);
+          g.rotation.set(0.5, p * 12, 0);
+        });
       });
       break;
     }
