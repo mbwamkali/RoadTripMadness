@@ -766,10 +766,15 @@ export class DriveScene implements GameScene {
     for (const k of Object.keys(this.geos)) inst[k] = [];
     const buildingColors: THREE.Color[] = [];
     const stopsHere = this.state.stops.filter((s) => s.at > from - 200 && s.at < to + 200);
-    const marksHere = this.state.landmarks.filter((l) => l.at > from - 120 && l.at < to + 120 && l.kind !== 'mountains' && l.kind !== 'peak');
+    const marksHere = this.state.landmarks.filter((l) => l.at > from - 120 && l.at < to + 120 && l.kind !== 'mountains' && l.kind !== 'peak' && l.kind !== 'mesa');
     const clear = (d: number, side: number) =>
-      marksHere.some((l) => (l.kind === 'river' ? Math.abs(l.at - d) < 45 : Math.abs(l.at - d) < 30 && l.side === side));
+      marksHere.some((l) => (l.kind === 'river' ? Math.abs(l.at - d) < 45 : Math.abs(l.at - d) < (WIDE_SIGHTS.has(l.kind) ? 75 : 30) && l.side === side));
     const total = this.path.length;
+    // Every town sign, real or made up, starts a town: a few blocks for a small
+    // town, a bigger, taller spread for a city of 50,000+.
+    const towns = this.state.landmarks
+      .filter((l) => l.kind === 'citysign' && !/^Leaving |^Welcome to /.test(l.name) && l.at > from - 900 && l.at < to + 300)
+      .map((l) => ({ mid: l.at + (l.big ? 380 : 170), radius: l.big ? 620 : 240, big: !!l.big }));
 
     for (let d = from; d < to; d += 8) {
       const p = this.path.pointAt(d);
@@ -780,7 +785,9 @@ export class DriveScene implements GameScene {
         d < 1500 ? 1 - d / 1500 : 0,
         d > total - 1500 ? 1 - (total - d) / 1500 : 0,
         ...stopsHere.filter((s) => s.kind === 'town' || s.kind === 'mall').map((s) => Math.max(0, 1 - Math.abs(s.at - d) / 260)),
+        ...towns.map((t) => Math.max(0, 1 - Math.abs(t.mid - d) / t.radius)),
       );
+      const city = towns.some((t) => t.big && Math.abs(t.mid - d) < t.radius * 0.6);
       const wide = this.widen(d);
       if (Math.round(d) % 48 < 8 && !clear(d, 1)) placeAt(inst.pole, p, right, 7.5 + wide, 0, 1);
       // Reflector posts along the shoulders of bigger roads.
@@ -798,7 +805,7 @@ export class DriveScene implements GameScene {
         if (r < urban * 0.6) {
           const off = side * (12 + wide + rng() * 20);
           const w = 6 + rng() * 10;
-          const h = 4 + rng() * (urban > 0.6 ? 18 : 6);
+          const h = 4 + rng() * (city && urban > 0.5 ? 34 : urban > 0.6 ? 18 : 6);
           placeAt(inst.building, p, right, off, rng() * Math.PI, w, h, 6 + rng() * 8);
           buildingColors.push(new THREE.Color().setHSL(0.08 + rng() * 0.1, 0.25, 0.55 + rng() * 0.25));
         } else {
@@ -998,6 +1005,9 @@ export class DriveScene implements GameScene {
 const tmpM = new THREE.Matrix4();
 const tmpQ = new THREE.Quaternion();
 const tmpE = new THREE.Euler();
+
+/** Sights that spread along the road and need the buildings and trees kept clear. */
+const WIDE_SIGHTS = new Set<Landmark['kind']>(['grain', 'farmstead', 'ghosttown']);
 
 function pickPlant(weights: Partial<Record<PlantKind, number>>, r: number): PlantKind {
   const entries = Object.entries(weights) as [PlantKind, number][];

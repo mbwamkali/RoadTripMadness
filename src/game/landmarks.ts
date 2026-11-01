@@ -2,6 +2,7 @@ import { makeProjection, type LatLng, type Path, type Vec2 } from '../geo/geo';
 import type { RouteData } from '../geo/route';
 import type { Stop } from './stops';
 import { hashString, makeRng, pick, range, type Rng } from './rng';
+import { biomeAtDistance, biomeSpans, type BiomeId, type BiomeSpan } from './biomes';
 
 /**
  * Things to look at along the road. Real ones come from OpenStreetMap; the
@@ -23,7 +24,12 @@ export type LandmarkKind =
   | 'windmill'
   | 'billboard'
   | 'giant'
-  | 'mountains';
+  | 'mountains'
+  | 'farmstead'
+  | 'grain'
+  | 'lookout'
+  | 'mesa'
+  | 'ghosttown';
 
 export interface Landmark {
   /** Distance along the game path. */
@@ -63,6 +69,11 @@ export const LANDMARK_TITLES: Record<LandmarkKind, string> = {
   billboard: 'Billboard',
   giant: 'Roadside attraction',
   mountains: 'Mountains',
+  farmstead: 'Farm',
+  grain: 'Grain elevator',
+  lookout: 'Fire lookout',
+  mesa: 'Butte',
+  ghosttown: 'Ghost town',
 };
 
 export const LANDMARK_ICONS: Record<LandmarkKind, string> = {
@@ -82,10 +93,15 @@ export const LANDMARK_ICONS: Record<LandmarkKind, string> = {
   billboard: '🪧',
   giant: '🤠',
   mountains: '🏔️',
+  farmstead: '🚜',
+  grain: '🌾',
+  lookout: '🔥',
+  mesa: '🏜️',
+  ghosttown: '👻',
 };
 
 /** Kinds that are big enough to announce in the HUD as you pass. */
-export const ANNOUNCED: ReadonlySet<LandmarkKind> = new Set(['river', 'peak', 'monument', 'tower', 'lighthouse', 'castle', 'attraction', 'viewpoint', 'citysign', 'stateline', 'giant']);
+export const ANNOUNCED: ReadonlySet<LandmarkKind> = new Set(['river', 'peak', 'monument', 'tower', 'lighthouse', 'castle', 'attraction', 'viewpoint', 'citysign', 'stateline', 'giant', 'grain', 'lookout', 'mesa', 'ghosttown']);
 
 // ------------------------------------------------------------ real map features
 
@@ -288,6 +304,10 @@ function thin(list: Landmark[], length: number): Landmark[] {
 
 // ------------------------------------------------------------ made-up sights
 
+const BUTTES = ['Coffin Butte', 'Red Table Mesa', 'Smokestack Rock', 'Buzzard Roost', 'Anvil Butte', 'Sentinel Mesa', 'Blackjack Mesa', 'Castle Butte'];
+const GHOST_TOWNS = ['Cutthroat Gulch', 'Last Chance', 'Busted Flats', 'Tin Cup', 'Bitter Wells', 'Hangtown', 'Silverbell', 'Dry Diggings'];
+const CO_OPS = ['Farmers Co-op', 'Prairie Grain Co.', 'Harvest Gold Co-op', 'County Elevator', 'Golden Belt Grain', 'Plains Co-op'];
+const LOOKOUTS = ['Bald Knob Lookout', 'Eagle Peak Lookout', 'Smokey Ridge Lookout', 'Hogback Lookout', 'Sheep Mountain Lookout', 'Lone Pine Lookout'];
 const CREEKS = ['Rattlesnake Creek', 'Muddy Fork', 'Coyote Wash', 'Silver Run', 'Bone Creek', 'Old Mill River', 'Crooked Creek', 'Dead Horse Creek', 'Blue Hole River', 'Lost Dog Creek'];
 const GIANTS = [
   "World's Largest Fork",
@@ -347,15 +367,26 @@ export function fillLandmarks(route: RouteData, pathLength: number, stops: Stop[
     all.push(sign);
   }
 
+  // With little real map data (offline, or a quiet stretch of map), made-up
+  // sights come closer together so the road never feels empty.
+  const realSights = real.filter((l) => l.kind !== 'citysign' && l.kind !== 'roadsign' && l.kind !== 'stateline').length;
+  const sparse = realSights / Math.max(1, pathLength / 1000) < 0.4;
+  const [gapMin, gapMax] = sparse ? [320, 560] : [450, 800];
+  let spans: BiomeSpan[] | null = null;
+  try {
+    spans = route.points?.length ? biomeSpans(route) : null;
+  } catch {
+    spans = null;
+  }
   let d = range(rng, 300, 600);
   let made = 0;
   while (d < pathLength - 300) {
     if (!near(d, 260) && !stops.some((s) => Math.abs(s.at - d) < 120)) {
-      const kind = pickSight(rng, made);
+      const kind = pickSight(rng, made, spans ? biomeAtDistance(spans, d) : null);
       all.push(makeSight(rng, kind, d));
       made++;
     }
-    d += range(rng, 450, 800);
+    d += range(rng, gapMin, gapMax);
   }
   // Distant mountain ranges every so often, for a sense of scale.
   for (let m = range(rng, 800, 2000); m < pathLength; m += range(rng, 2500, 5000)) {
@@ -420,8 +451,26 @@ export function roadAt(route: RouteData, at: number): string {
   return name;
 }
 
-function pickSight(rng: Rng, n: number): LandmarkKind {
+/** Made-up sights that suit the land: buttes and ghost towns in the desert, grain elevators on the plains, fire lookouts in the woods. */
+const SIGHTS_BY_BIOME: Partial<Record<BiomeId, [LandmarkKind, number][]>> = {
+  desert: [['mesa', 3], ['ghosttown', 2], ['giant', 2], ['billboard', 2], ['windmill', 1]],
+  sagebrush: [['mesa', 2], ['ghosttown', 2], ['windmill', 2], ['billboard', 1], ['giant', 1]],
+  prairie: [['grain', 3], ['farmstead', 2], ['windmill', 2], ['watertower', 2], ['billboard', 1]],
+  farmland: [['farmstead', 3], ['grain', 3], ['watertower', 2], ['billboard', 1], ['giant', 1]],
+  forest: [['lookout', 2], ['farmstead', 1], ['watertower', 1], ['viewpoint', 2], ['billboard', 1]],
+  pinewoods: [['lookout', 3], ['viewpoint', 2], ['giant', 1], ['billboard', 1]],
+  mountains: [['lookout', 3], ['viewpoint', 3], ['ghosttown', 1]],
+  tundra: [['lookout', 2], ['viewpoint', 2], ['ghosttown', 1]],
+};
+
+function pickSight(rng: Rng, n: number, biome: BiomeId | null = null): LandmarkKind {
   if (n % 4 === 2) return 'river';
+  const table = biome && SIGHTS_BY_BIOME[biome];
+  if (table && rng() < 0.75) {
+    const total = table.reduce((a, [, w]) => a + w, 0);
+    let r = rng() * total;
+    for (const [k, w] of table) if ((r -= w) < 0) return k;
+  }
   const r = rng();
   if (r < 0.25) return 'billboard';
   if (r < 0.45) return 'watertower';
@@ -450,6 +499,16 @@ function makeSight(rng: Rng, kind: LandmarkKind, at: number): Landmark {
       return { at, side, offset: range(rng, 25, 40), kind, name: fresh(rng, GIANTS), real: false };
     case 'viewpoint':
       return { at, side, offset: 14, kind, name: 'Scenic overlook', real: false };
+    case 'mesa':
+      return { at, side, offset: range(rng, 160, 320), kind, name: fresh(rng, BUTTES), real: false };
+    case 'ghosttown':
+      return { at, side, offset: range(rng, 22, 34), kind, name: fresh(rng, GHOST_TOWNS), real: false };
+    case 'grain':
+      return { at, side, offset: range(rng, 30, 55), kind, name: fresh(rng, CO_OPS), real: false };
+    case 'lookout':
+      return { at, side, offset: range(rng, 35, 70), kind, name: fresh(rng, LOOKOUTS), real: false };
+    case 'farmstead':
+      return { at, side, offset: range(rng, 35, 70), kind, name: '', real: false };
     default:
       return { at, side, offset: range(rng, 30, 70), kind, name: '', real: false };
   }

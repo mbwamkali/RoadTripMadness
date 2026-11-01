@@ -4,6 +4,7 @@ import { classAt, isDivided, roadSegments } from './roads';
 import { Path } from '../geo/geo';
 import { interstateNumber, latLngAt, stateMap } from '../geo/states';
 import { roadAt } from './landmarks';
+import { biomeAtDistance, biomeSpans, type BiomeId } from './biomes';
 
 export type StopKind = 'town' | 'gas' | 'truckstop' | 'farm' | 'mall' | 'base';
 export type PlaceKind = 'pumps' | 'garage' | 'grocery' | 'hardware' | 'gunshop' | 'pharmacy' | 'police' | 'junkyard' | 'barn' | 'motel';
@@ -149,7 +150,48 @@ export function generateStops(route: RouteData, pathLength: number, seed: number
       if (exit !== null) s.exit = exit;
     }
   }
+  nameStreets(route, out, segments, rng);
   return out;
+}
+
+const TOWN_STREETS = ['Main St', '1st Ave', 'Oak St', 'Elm St', 'Center St', 'Railroad Ave', 'Church St', 'Mill St', 'Depot St', 'Park Ave'];
+const EXIT_STREETS = ['Airport Rd', 'Frontage Rd', 'Industrial Blvd', 'Business Loop', 'Commerce Dr', 'County Rd #'];
+const COUNTRY_STREETS: Partial<Record<BiomeId, string[]>> = {
+  desert: ['Mesa Rd', 'Arroyo Rd', 'Old Mine Rd', 'Cactus Flat Rd', 'Dry Wash Rd'],
+  sagebrush: ['Sage Flat Rd', 'Old Stage Rd', 'Ranch Rd #', 'Coyote Rd'],
+  prairie: ['County Rd #', 'Section Line Rd', 'Grange Rd', 'Prairie View Rd'],
+  farmland: ['County Rd #', 'Silo Rd', 'Township Rd #', 'Cornfield Ln', 'Grange Rd'],
+  forest: ['Hollow Rd', 'Cedar Ln', 'Mill Creek Rd', 'Old Church Rd'],
+  pinewoods: ['Pine Ridge Rd', 'Logging Rd', 'Forest Rd #', 'Bear Creek Rd'],
+  mountains: ['Forest Rd #', 'Pass Rd', 'Mine Rd', 'Switchback Rd'],
+  coastal: ['Shore Rd', 'Bay Rd', 'Marsh Ln', 'Harbor Rd'],
+  subtropical: ['Palmetto Rd', 'Bayou Rd', 'Citrus Ln', 'Gator Rd'],
+  tundra: ['Spruce Rd', 'Trapline Rd', 'Lake Rd'],
+};
+
+/**
+ * Cross streets for turn-offs that the map doesn't name (offline, or a gap in
+ * the data): Main Street in town, Frontage Road at an interstate exit, and
+ * roads that suit the land out in the country. A real name from the map
+ * replaces these when one is found.
+ */
+function nameStreets(route: RouteData, stops: Stop[], segments: ReturnType<typeof roadSegments>, rng: Rng): void {
+  let spans: ReturnType<typeof biomeSpans> | null = null;
+  try {
+    spans = route.points?.length ? biomeSpans(route) : null;
+  } catch {
+    spans = null;
+  }
+  const used = new Set<string>();
+  for (const s of stops) {
+    if (s.street) continue;
+    const exit = isDivided(classAt(segments, s.at));
+    const list = s.kind === 'town' || s.kind === 'mall' ? TOWN_STREETS : exit ? EXIT_STREETS : (spans && COUNTRY_STREETS[biomeAtDistance(spans, s.at)]) || COUNTRY_STREETS.prairie!;
+    const left = list.filter((n) => !used.has(n));
+    const name = pick(rng, left.length ? left : list).replace('#', String(1 + Math.floor(rng() * 40)));
+    used.add(name);
+    s.street = name;
+  }
 }
 
 function pickKind(rng: Rng): StopKind {

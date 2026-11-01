@@ -157,6 +157,130 @@ function buildMountains(rng: () => number): THREE.Object3D {
   return g;
 }
 
+/** A flat-topped desert butte in layered red rock, set far back from the road. */
+function buildMesa(rng: () => number): THREE.Object3D {
+  const g = new THREE.Group();
+  const h = range(rng, 45, 90);
+  const r = range(rng, 60, 110);
+  const layers = [0xb5603c, 0xc8794a, 0xa8553a, 0xd28e5c];
+  let y = 0;
+  for (let i = 0; i < 4; i++) {
+    const lh = h / 4;
+    const rr = r * (1 - i * 0.06);
+    g.add(mesh(new THREE.CylinderGeometry(rr * 0.97, rr, lh, 9), mat(layers[i], { flatShading: true }), 0, y + lh / 2, 0));
+    y += lh;
+  }
+  // A talus slope round the bottom.
+  g.add(mesh(new THREE.CylinderGeometry(r, r * 1.35, h * 0.25, 9), mat(0xb87a55, { flatShading: true }), 0, h * 0.12, 0));
+  g.scale.set(1, 1, range(rng, 0.5, 0.9));
+  return g;
+}
+
+/** A few leaning, sun-bleached shacks and a false-front saloon. */
+function buildGhostTown(rng: () => number): THREE.Object3D {
+  const g = new THREE.Group();
+  const wood = [0x8a7356, 0x6e5a43, 0x9c8669, 0x5d4c3a];
+  for (let i = 0; i < 5; i++) {
+    const w = range(rng, 5, 8);
+    const h = range(rng, 3.5, 5);
+    const d = range(rng, 5, 7);
+    const shack = new THREE.Group();
+    const color = wood[Math.floor(rng() * wood.length)];
+    shack.add(mesh(new THREE.BoxGeometry(w, h, d), mat(color), 0, h / 2, 0));
+    if (i === 2) {
+      // The saloon's tall false front.
+      shack.add(mesh(new THREE.BoxGeometry(w + 1, 3, 0.3), mat(color), 0, h + 1.2, d / 2));
+    } else {
+      const roof = mesh(new THREE.BoxGeometry(w + 0.6, 0.3, d * 0.62), mat(0x4a3d30), 0, h + 0.8, d * 0.2);
+      roof.rotation.x = -0.5;
+      shack.add(roof);
+      const roof2 = roof.clone();
+      roof2.position.z = -d * 0.2;
+      roof2.rotation.x = 0.5;
+      shack.add(roof2);
+    }
+    shack.add(mesh(new THREE.BoxGeometry(1.2, 2.2, 0.1), mat(0x2a221a), 0, 1.1, d / 2 + 0.03));
+    shack.position.set((i - 2) * 10 + range(rng, -1, 1), 0, range(rng, -4, 4));
+    shack.rotation.z = range(rng, -0.06, 0.06);
+    shack.rotation.y = range(rng, -0.15, 0.15);
+    g.add(shack);
+  }
+  // Tumbleweeds.
+  for (let i = 0; i < 4; i++) g.add(mesh(new THREE.IcosahedronGeometry(0.6, 0), mat(0x9c8a5a, { wireframe: true }), range(rng, -20, 20), 0.6, range(rng, 6, 12)));
+  return g;
+}
+
+/** A row of concrete grain silos with a tall head house. */
+function buildGrainElevator(rng: () => number): THREE.Object3D {
+  const g = new THREE.Group();
+  const concrete = mat(0xd9d4c8);
+  const n = 3 + Math.floor(rng() * 3);
+  for (let i = 0; i < n; i++) g.add(mesh(new THREE.CylinderGeometry(3, 3, 26, 14), concrete, (i - (n - 1) / 2) * 6.2, 13, 0));
+  const head = (n / 2) * 6.2 + 3;
+  g.add(mesh(new THREE.BoxGeometry(6, 36, 7), concrete, head, 18, 0));
+  g.add(mesh(new THREE.BoxGeometry(6.4, 4, 7.4), mat(0x9a9a92), head, 38, 0));
+  g.add(mesh(new THREE.BoxGeometry(n * 6.2, 2, 6.8), mat(0xb8b2a4), 0, 27, 0));
+  // A rail siding with a few hopper cars.
+  for (let i = 0; i < 3; i++) g.add(mesh(new THREE.BoxGeometry(12, 3.4, 3), mat(i % 2 ? 0x7a3a28 : 0x4a5a6a), (i - 1) * 13, 2.2, 7));
+  return g;
+}
+
+/** A forest fire lookout: a cabin with wraparound windows up on a steel tower. */
+function buildLookout(): THREE.Object3D {
+  const g = new THREE.Group();
+  const steel = mat(0x7d8288);
+  for (const [x, z] of [
+    [-2.5, -2.5],
+    [2.5, -2.5],
+    [-2.5, 2.5],
+    [2.5, 2.5],
+  ]) {
+    const leg = mesh(new THREE.CylinderGeometry(0.2, 0.25, 24, 5), steel, x * 0.8, 12, z * 0.8);
+    leg.rotation.set(z * 0.012, 0, -x * 0.012);
+    g.add(leg);
+  }
+  for (const y of [6, 12, 18]) g.add(mesh(new THREE.BoxGeometry(4.6, 0.2, 4.6), steel, 0, y, 0));
+  g.add(mesh(new THREE.BoxGeometry(5, 0.4, 5), mat(0x6b5440), 0, 24.2, 0));
+  g.add(mesh(new THREE.BoxGeometry(4, 1.2, 4), mat(0xeae4d6), 0, 25, 0));
+  g.add(mesh(new THREE.BoxGeometry(4.02, 1.3, 4.02), mat(0x8fc6e8, { emissive: 0x223344 }), 0, 26.2, 0));
+  g.add(mesh(new THREE.ConeGeometry(3.6, 1.6, 4), mat(0x3f5f3a), 0, 27.6, 0).rotateY(Math.PI / 4));
+  return g;
+}
+
+/** A red barn with a white-trimmed gambrel roof, a silo and a farmhouse. */
+function buildFarmstead(rng: () => number): THREE.Object3D {
+  const g = new THREE.Group();
+  const red = mat(0xa8322a);
+  g.add(mesh(new THREE.BoxGeometry(12, 7, 16), red, 0, 3.5, 0));
+  // Gambrel roof from two pairs of slopes.
+  const roofMat = mat(0x4a4a4e);
+  for (const [x, y, rot, w] of [
+    [-4.4, 8.3, 0.95, 4.2],
+    [4.4, 8.3, -0.95, 4.2],
+    [-1.8, 10.4, 0.35, 4.2],
+    [1.8, 10.4, -0.35, 4.2],
+  ]) {
+    const slope = mesh(new THREE.BoxGeometry(w, 0.3, 16.4), roofMat, x, y, 0);
+    slope.rotation.z = rot;
+    g.add(slope);
+  }
+  g.add(mesh(new THREE.BoxGeometry(5, 5, 0.1), mat(0xf2f2f2), 0, 2.5, 8.03));
+  g.add(mesh(new THREE.BoxGeometry(4.6, 4.6, 0.12), red, 0, 2.5, 8.05));
+  g.add(mesh(new THREE.CylinderGeometry(2.6, 2.6, 16, 12), mat(0x9aa4ad), 9, 8, -3));
+  g.add(mesh(new THREE.SphereGeometry(2.6, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2), mat(0x9aa4ad), 9, 16, -3));
+  // Farmhouse off to the side.
+  const house = new THREE.Group();
+  house.add(mesh(new THREE.BoxGeometry(8, 5, 7), mat(rng() < 0.5 ? 0xf0ead8 : 0xd8c9a4), 0, 2.5, 0));
+  const r1 = mesh(new THREE.BoxGeometry(8.4, 0.3, 4.6), mat(0x5b3b33), 0, 6.1, 1.7);
+  r1.rotation.x = -0.6;
+  const r2 = mesh(new THREE.BoxGeometry(8.4, 0.3, 4.6), mat(0x5b3b33), 0, 6.1, -1.7);
+  r2.rotation.x = 0.6;
+  house.add(r1, r2);
+  house.position.set(-18, 0, 4);
+  g.add(house);
+  return g;
+}
+
 function buildMonument(): THREE.Object3D {
   const g = new THREE.Group();
   const stone = mat(0xe8e2d4);
@@ -554,7 +678,7 @@ function poiSign(l: Landmark, path: Path, edge = ROAD_HALF): THREE.Object3D {
 /** Builds a landmark, positioned and turned to face the road. */
 export function buildLandmark(l: Landmark, path: Path, edgeAt: (d: number) => number = () => ROAD_HALF): THREE.Object3D {
   if (l.kind === 'river') return buildRiver(l, path, edgeAt(l.at));
-  const wide = l.kind === 'peak' || l.kind === 'mountains' ? 0 : edgeAt(l.at) - ROAD_HALF;
+  const wide = l.kind === 'peak' || l.kind === 'mountains' || l.kind === 'mesa' ? 0 : edgeAt(l.at) - ROAD_HALF;
   const rng = makeRng(hashString(`${l.kind}${l.name}${Math.round(l.at)}`));
   const builders: Partial<Record<Landmark['kind'], () => THREE.Object3D>> = {
     peak: () => buildPeak(rng),
@@ -572,6 +696,11 @@ export function buildLandmark(l: Landmark, path: Path, edgeAt: (d: number) => nu
     citysign: () => buildCitySign(l),
     stateline: () => buildStateSign(l),
     roadsign: () => buildRoadSign(l),
+    mesa: () => buildMesa(rng),
+    ghosttown: () => buildGhostTown(rng),
+    grain: () => buildGrainElevator(rng),
+    lookout: buildLookout,
+    farmstead: () => buildFarmstead(rng),
   };
   const model = (builders[l.kind] ?? buildMonument)();
   const { p, fwd, right } = frame(path, l.at);
@@ -582,7 +711,7 @@ export function buildLandmark(l: Landmark, path: Path, edgeAt: (d: number) => nu
   const face = l.kind === 'billboard' || l.kind === 'citysign' || l.kind === 'stateline' || l.kind === 'roadsign' ? toRoad.multiplyScalar(0.35).addScaledVector(fwd, -1).normalize() : toRoad;
   model.rotation.y = Math.atan2(face.x, face.z);
   out.add(model);
-  if (l.kind !== 'citysign' && l.kind !== 'stateline' && l.kind !== 'roadsign' && l.kind !== 'billboard' && l.kind !== 'mountains' && l.kind !== 'watertower' && l.kind !== 'windmill') {
+  if (l.kind !== 'citysign' && l.kind !== 'stateline' && l.kind !== 'roadsign' && l.kind !== 'billboard' && l.kind !== 'mountains' && l.kind !== 'watertower' && l.kind !== 'windmill' && l.kind !== 'farmstead') {
     out.add(poiSign(l, path, edgeAt(Math.max(0, l.at - 70))));
   }
   return out;
