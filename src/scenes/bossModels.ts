@@ -208,3 +208,84 @@ export function simpleSweeper(): THREE.Group {
   }
   return g;
 }
+
+/** Crazy Cat Lady Karen on her pink mobility scooter, piled with cats. Faces +z (toward the car). */
+export function sampleKaren(): THREE.Group {
+  const g = new THREE.Group();
+  const pink = lam(0xf27ab0);
+  const skin = lam(0xf0c8a8);
+  const cardigan = lam(0x8a5ac8);
+  const hair = lam(0xf2d27a);
+  // The scooter: a low deck, three wheels, a tiller with a basket, a seat.
+  add(g, box(1.3, 0.25, 2.2), pink, [0, 0.45, 0]);
+  for (const [x, z] of [[-0.6, -0.8], [0.6, -0.8]] as const) wheel(g, 0.3, 0.2, [x, 0.3, z]);
+  wheel(g, 0.3, 0.2, [0, 0.3, 0.9]);
+  add(g, cyl(0.05, 0.05, 1.1, 6), lam(0xcfcfcf), [0, 1.0, 0.85], [-0.3, 0, 0]);
+  add(g, box(0.9, 0.08, 0.1), lam(0x2a2a30), [0, 1.5, 0.7]);
+  add(g, box(0.8, 0.45, 0.5), lam(0xc9a060), [0, 1.2, 1.15]); // basket
+  add(g, box(0.8, 0.5, 0.15), pink, [0, 1.1, -0.65]); // seat back
+  add(g, box(0.8, 0.15, 0.6), pink, [0, 0.75, -0.35]);
+  // Karen: legs forward, cardigan, pearls, the big blonde bob, sunglasses on her head.
+  for (const s of [-1, 1]) {
+    add(g, capsule(0.1, 0.4), lam(0x3a4a7a), [s * 0.17, 0.85, 0.0], [Math.PI / 2 - 0.3, 0, 0]);
+    add(g, box(0.16, 0.12, 0.26), lam(0xf2f2f2), [s * 0.17, 0.62, 0.35]);
+  }
+  add(g, cyl(0.28, 0.34, 0.75, 8), cardigan, [0, 1.25, -0.35]);
+  for (let i = 0; i < 7; i++) add(g, ball(0.035, 5, 4), lam(0xf8f4ec), [Math.cos(i * 0.45 - 1.35) * 0.18, 1.58 - Math.sin(i * 0.45) * 0.06, -0.2 + Math.sin(i * 0.45 - 1.35) * 0.05 + 0.1]);
+  add(g, ball(0.22, 8, 6), skin, [0, 1.85, -0.33]);
+  add(g, ball(0.3, 8, 6).scale(1.2, 0.9, 1.05), hair, [0, 1.95, -0.4]);
+  add(g, box(0.5, 0.12, 0.25), hair, [0.12, 2.12, -0.3], [0, 0, -0.35]); // the swoop
+  for (const s of [-1, 1]) {
+    add(g, ball(0.035, 5, 4), glow(0x101010), [s * 0.08, 1.88, -0.13]);
+    add(g, box(0.1, 0.03, 0.03), lam(0x6a4a2a), [s * 0.08, 1.95, -0.12], [0, 0, s * 0.4]); // angry brows
+    add(g, box(0.14, 0.06, 0.04), lam(0x1d1d22), [s * 0.08, 2.1, -0.18]); // sunglasses up top
+  }
+  add(g, box(0.12, 0.03, 0.03), lam(0xc0304a), [0, 1.77, -0.12]); // frown
+  // Arms: the right one raised to throw (named for the wind-up).
+  for (const s of [-1, 1]) {
+    const arm = new THREE.Group();
+    arm.name = s < 0 ? 'armL' : 'armR';
+    arm.position.set(s * 0.34, 1.5, -0.35);
+    g.add(arm);
+    add(arm, capsule(0.08, 0.45), cardigan, [s * 0.04, -0.28, 0.12], [0.6, 0, s * 0.15]);
+    add(arm, ball(0.07, 6, 4), skin, [s * 0.05, -0.5, 0.35]);
+  }
+  // Cats everywhere: in the basket, on her lap, on her shoulder, on the back.
+  const cats: [number, number, number, number, number][] = [
+    [0.2, 1.4, 1.15, 0xff9a3c, 0], [-0.2, 1.4, 1.2, 0x3a3a3a, Math.PI / 6],
+    [0, 1.25, 0.05, 0xf2f2f2, 0], [0.4, 1.95, -0.35, 0xb0b0b0, -0.4],
+    [-0.45, 1.45, -0.85, 0xff9a3c, Math.PI], [0.4, 1.45, -0.85, 0x6a4a2a, Math.PI],
+  ];
+  for (const [x, y, z, fur, ry] of cats) {
+    const c = angryCat(fur);
+    c.scale.setScalar(0.55);
+    c.position.set(x, y, z);
+    c.rotation.y = ry;
+    g.add(c);
+  }
+  return g;
+}
+
+/** Low graphics: Karen and her scooter as boxes, with box cats. */
+export function simpleKaren(): THREE.Group {
+  const g = new THREE.Group();
+  add(g, box(1.3, 0.4, 2.2), lam(0xf27ab0), [0, 0.4, 0]);
+  add(g, box(0.7, 0.8, 0.5), lam(0x8a5ac8), [0, 1.2, -0.3]);
+  add(g, box(0.4, 0.4, 0.4), lam(0xf0c8a8), [0, 1.8, -0.3]);
+  add(g, box(0.6, 0.35, 0.55), lam(0xf2d27a), [0, 2.05, -0.35]);
+  add(g, box(0.2, 0.6, 0.2), lam(0x8a5ac8), [-0.45, 1.3, -0.2], [0, 0, 0], 'armL');
+  add(g, box(0.2, 0.6, 0.2), lam(0x8a5ac8), [0.45, 1.3, -0.2], [0, 0, 0], 'armR');
+  for (const [x, z, fur] of [[0, 1.0, 0xff9a3c], [-0.45, -0.9, 0x3a3a3a], [0.45, -0.9, 0xf2f2f2]] as const) {
+    add(g, box(0.4, 0.4, 0.4), lam(fur), [x, 0.85, z]);
+    for (const s of [-1, 1]) add(g, cone(0.08, 0.2, 4), lam(fur), [x + s * 0.12, 1.15, z]);
+  }
+  return g;
+}
+
+/** A thrown cat for Low graphics: an orange box with ears. */
+export function simpleCat(): THREE.Group {
+  const g = new THREE.Group();
+  add(g, box(0.5, 0.4, 0.6), lam(0xff9a3c));
+  for (const s of [-1, 1]) add(g, cone(0.1, 0.25, 4), lam(0xff9a3c), [s * 0.15, 0.3, 0.2]);
+  return g;
+}

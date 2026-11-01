@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { disposeTree, makeRide } from './common';
 import { modelsWanted } from './models';
 import { sampleCatship, sampleOutlaw, sampleWreck } from './samples';
-import { pizzaGeometryParts, sampleHermit, samplePizzaCar, sampleSweeper, simpleHermit, simplePizzaCar, simpleSweeper } from './bossModels';
+import { angryCat, pizzaGeometryParts, sampleHermit, sampleKaren, samplePizzaCar, sampleSweeper, simpleCat, simpleHermit, simpleKaren, simplePizzaCar, simpleSweeper } from './bossModels';
 import { kidMode } from '../game/kidMode';
 import type { Upgrades } from '../game/upgrades';
 
@@ -16,8 +16,8 @@ import type { Upgrades } from '../game/upgrades';
 
 export type SceneKind = 'flat' | 'help' | 'dog' | 'loot' | 'trade' | 'beam' | 'roadblock' | 'bridge' | 'fuel' | BossScene;
 /** Boss intros with their own scene (the older bosses show just their icon). */
-export type BossScene = 'hermit' | 'pizza' | 'sweeper';
-export const BOSS_SCENES: readonly string[] = ['hermit', 'pizza', 'sweeper'] satisfies BossScene[];
+export type BossScene = 'hermit' | 'pizza' | 'sweeper' | 'karen';
+export const BOSS_SCENES: readonly string[] = ['hermit', 'pizza', 'sweeper', 'karen'] satisfies BossScene[];
 
 /** The scene for each road event (src/game/events.ts ids), plus 'bike' for running out of gas. */
 export function sceneKindFor(eventId: string): SceneKind {
@@ -389,6 +389,40 @@ function stage(kind: SceneKind, ride: 'car' | 'motorcycle' | 'truck', up?: Upgra
           const to = stopX + (i % 2 ? 1.2 : -1.6);
           b.position.set(from + (to - from) * p, 3 + Math.sin(p * Math.PI) * 1.4 - p * 2.8, (i % 2 ? 1 : -1) * p * 1.2);
           b.rotation.set(p * 6, p * 4, 0);
+        });
+      });
+      break;
+    }
+    case 'karen': {
+      // Karen rolls out on her scooter, shakes her fist, and throws cats.
+      stopX = -3.5;
+      const k = modelsWanted() ? sampleKaren() : simpleKaren();
+      k.rotation.y = -Math.PI / 2 + 0.4; // facing the car, a little toward us
+      k.scale.setScalar(1.3);
+      scene.add(k);
+      const fur = [0xff9a3c, 0x3a3a3a, 0xf2f2f2];
+      const cats = fur.map((f) => {
+        const c = modelsWanted() ? angryCat(f) : simpleCat();
+        c.scale.setScalar(0.8);
+        scene.add(c);
+        return c;
+      });
+      props.push((t) => {
+        k.position.set(9 - Math.min(1, t / 1.6) * 5, 0, 1.2);
+        const armR = k.getObjectByName('armR');
+        if (armR) armR.rotation.x = -1.5 + Math.sin(t * 8) * 1.1;
+        const armL = k.getObjectByName('armL');
+        if (armL) armL.rotation.x = -0.8 + Math.sin(t * 12) * 0.3;
+        k.traverse((o) => {
+          if (o.name === 'tail') o.rotation.y = Math.sin(t * 8 + o.id) * 0.6;
+        });
+        cats.forEach((c, i) => {
+          const p = (t - 1.6 - i * 0.6) / 0.8;
+          c.visible = p > 0 && p < 1.4;
+          const q = Math.min(1, p);
+          const to = stopX + (i - 1) * 1.4;
+          c.position.set(k.position.x + (to - k.position.x) * q, 2.2 + Math.sin(q * Math.PI) * 1.6 - q * 2.2, 1.2 - q * 0.6 + Math.max(0, p - 1) * 6);
+          c.rotation.set(0, p * 10, 0);
         });
       });
       break;

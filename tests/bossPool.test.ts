@@ -118,3 +118,18 @@ describe('the street sweeper', () => {
     expect(c.loot.catnip).toBe(2);
   });
 });
+
+describe('Crazy Cat Lady Karen', () => {
+  it('is in the halfway pool and throws cats', () => {
+    expect(HALF_BOSSES).toContain('karen');
+    const c = createCombat({ seed: 8, progress: 0.5, boss: 'karen' });
+    let cats = 0;
+    run(c, 20, (c) => {
+      cats += c.events.filter((ev) => ev.kind === 'throw').length;
+      c.events.length = 0;
+    });
+    expect(cats).toBeGreaterThanOrEqual(4);
+    expect(c.missiles.every((m) => m.from === 'karen')).toBe(true);
+    expect(BOSS_INFO.karen.minion).toBeNull();
+  });
+});

@@ -25,7 +25,7 @@ import { castShadows, disposeTree, makeLaneTexture, makeRide, makeRoadTexture, t
 import { modelGeometry, modelMaterial, modelMesh, modelsWanted, treeModelsWanted, type ModelName } from './models';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { sampleBrute, sampleCatship, sampleMothership, sampleOutlaw, sampleWarRig } from './samples';
-import { angryCat, pizzaGeometryParts, sampleHermit, samplePizzaCar, sampleSweeper, simpleHermit, simplePizzaCar, simpleSweeper } from './bossModels';
+import { angryCat, pizzaGeometryParts, sampleHermit, sampleKaren, samplePizzaCar, sampleSweeper, simpleCat, simpleHermit, simpleKaren, simplePizzaCar, simpleSweeper } from './bossModels';
 
 export interface CombatCallbacks {
   onCarHit(dmg: number): void;
@@ -412,7 +412,11 @@ export class CombatScene implements GameScene {
       live.add(ms.id);
       let mesh = this.missiles.get(ms.id);
       if (!mesh) {
-        if (ms.from === 'sweeper') {
+        if (ms.from === 'karen') {
+          // A flying cat, legs out.
+          mesh = modelsWanted() ? angryCat([0xff9a3c, 0x3a3a3a, 0xf2f2f2, 0xb0b0b0][ms.id % 4]) : simpleCat();
+          mesh.scale.setScalar(1.1);
+        } else if (ms.from === 'sweeper') {
           // A bulging trash bag.
           mesh = new THREE.Mesh(new THREE.SphereGeometry(0.4, 7, 5).scale(1, 1.2, 1), this.trash);
         } else if (ms.from === 'pizza') {
@@ -631,6 +635,7 @@ const SAMPLE_ENEMIES: Partial<Record<EnemyType, { build: () => THREE.Group; hitR
   hermit: { build: sampleHermit, hitRadius: 1.2, barY: 2.9 },
   pizza: { build: samplePizzaCar, hitRadius: 2.4, barY: 3.6 },
   sweeper: { build: sampleSweeper, hitRadius: 3.0, barY: 4.8 },
+  karen: { build: sampleKaren, hitRadius: 1.4, barY: 2.7 },
 };
 
 /** Low graphics versions of the newer bosses (the older ones are built inline below). */
@@ -638,6 +643,7 @@ const SIMPLE_BOSSES: Partial<Record<EnemyType, { build: () => THREE.Group; hitRa
   hermit: { build: simpleHermit, hitRadius: 1.2, barY: 2.9 },
   pizza: { build: simplePizzaCar, hitRadius: 2.4, barY: 3.4 },
   sweeper: { build: simpleSweeper, hitRadius: 3.0, barY: 4.8 },
+  karen: { build: simpleKaren, hitRadius: 1.4, barY: 2.7 },
 };
 
 export function buildEnemy(type: EnemyType): THREE.Group {
@@ -820,7 +826,7 @@ export function buildEnemy(type: EnemyType): THREE.Group {
     hp.rotation.y = Math.PI;
   }
   // A bit larger than life so they read well on a phone screen.
-  const scale: Record<EnemyType, number> = { zombie: 1.35, outlaw: 1.35, catship: 1.1, brute: 4.2, warrig: 1.1, mothership: 1, hermit: 1.9, pizza: 1.15, sweeper: 1.3 };
+  const scale: Record<EnemyType, number> = { zombie: 1.35, outlaw: 1.35, catship: 1.1, brute: 4.2, warrig: 1.1, mothership: 1, hermit: 1.9, pizza: 1.15, sweeper: 1.3, karen: 2.0 };
   g.scale.setScalar(scale[type]);
   return g;
 }
@@ -859,6 +865,17 @@ function animateEnemy(g: THREE.Group, e: Enemy, t: number): void {
     const armR = body.getObjectByName('armR');
     if (armL) armL.rotation.x = e.charging ? -2.6 : Math.sin(t * 7) * 0.4;
     if (armR) armR.rotation.x = e.charging || throwing ? -2.6 : Math.sin(t * 7 + 1) * 0.4;
+  } else if (e.type === 'karen') {
+    body.rotation.z = Math.sin(t * 2.2) * 0.04;
+    const throwing = (e.throwTimer ?? 9) < 0.6;
+    const armL = body.getObjectByName('armL');
+    const armR = body.getObjectByName('armR');
+    // Shakes her fist, raises an arm to throw, and both for the big one.
+    if (armL) armL.rotation.x = e.charging ? -2.6 : Math.sin(t * 9) * 0.3 - 0.4;
+    if (armR) armR.rotation.x = e.charging || throwing ? -2.6 : 0;
+    body.traverse((o) => {
+      if (o.name === 'tail') o.rotation.y = Math.sin(t * 8 + o.id) * 0.6;
+    });
   } else if (e.type === 'sweeper') {
     body.rotation.z = Math.sin(t * 2) * 0.02;
     body.traverse((o) => {

@@ -8,17 +8,19 @@ import { makeRng, range, type Rng } from './rng';
  * x is across the road (lanes at about -2.5 .. 2.5), y is height.
  */
 
-export type BossKind = 'brute' | 'warrig' | 'mothership' | 'hermit' | 'pizza' | 'sweeper';
+export type BossKind = 'brute' | 'warrig' | 'mothership' | 'hermit' | 'pizza' | 'sweeper' | 'karen';
 export type EnemyType = 'zombie' | 'outlaw' | 'catship' | BossKind;
-export const BOSSES: BossKind[] = ['brute', 'warrig', 'mothership', 'hermit', 'pizza', 'sweeper'];
+export const BOSSES: BossKind[] = ['brute', 'warrig', 'mothership', 'hermit', 'pizza', 'sweeper', 'karen'];
 /** The halfway boss is drawn from this pool (the Cat Queen always waits at the end). */
-export const HALF_BOSSES: BossKind[] = ['brute', 'warrig', 'hermit', 'pizza', 'sweeper'];
+export const HALF_BOSSES: BossKind[] = ['brute', 'warrig', 'hermit', 'pizza', 'sweeper', 'karen'];
 /** Bosses that throw things at the car between their big attacks. */
 const THROWING_BOSSES: Partial<Record<BossKind, { every: [number, number]; dmg: number; dur: number; spread?: number }>> = {
   hermit: { every: [1.8, 2.6], dmg: 5, dur: 1.1 },
   pizza: { every: [1.3, 1.9], dmg: 4, dur: 0.9 },
   // The sweeper sprays two trash bags at once: one at the car, one a lane over.
   sweeper: { every: [1.6, 2.4], dmg: 4, dur: 1.0, spread: 2.4 },
+  // Karen throws her cats (they land on their feet and run off if they miss).
+  karen: { every: [1.4, 2.0], dmg: 4, dur: 1.1 },
 };
 export const isBoss = (t: EnemyType): t is BossKind => (BOSSES as EnemyType[]).includes(t);
 export type WeaponKind = AmmoKind | 'rocks';
@@ -145,6 +147,7 @@ export const ENEMY_STATS: Record<EnemyType, { hp: number; name: string }> = {
   hermit: { hp: 40, name: 'The Crazy Hermit' },
   pizza: { hp: 42, name: 'The Angry Pizza Driver' },
   sweeper: { hp: 50, name: 'The Street Sweeper' },
+  karen: { hp: 46, name: 'Crazy Cat Lady Karen' },
 };
 
 export const BOSS_INFO: Record<BossKind, { title: string; intro: string; minion: EnemyType | null; slamDamage: number; icon: string }> = {
@@ -189,6 +192,13 @@ export const BOSS_INFO: Record<BossKind, { title: string; intro: string; minion:
     minion: null,
     slamDamage: 14,
     icon: '🧹',
+  },
+  karen: {
+    title: 'BOSS: Crazy Cat Lady Karen',
+    intro: 'A lady on a pink scooter blocks the road, with cats piled all over her. "These are MY roads and MY cats!" She throws cats at you! Dodge the cats and the red lane.',
+    minion: null,
+    slamDamage: 14,
+    icon: '👵',
   },
 };
 
@@ -346,7 +356,7 @@ function spawn(c: CombatState, type: EnemyType, horde = false): Enemy {
     e.x = 0;
     e.y = type === 'mothership' ? 14 : 0;
     e.z = -90;
-    e.holdZ = { brute: -20, warrig: -16, hermit: -18, pizza: -10, sweeper: -15, mothership: -34 }[type];
+    e.holdZ = { brute: -20, warrig: -16, hermit: -18, pizza: -10, sweeper: -15, karen: -16, mothership: -34 }[type];
     e.timer = 4;
     if (type === 'hermit') {
       // Leaps out from the roadside and stays off the road, hopping from side to side.
@@ -618,7 +628,7 @@ export function missileAt(m: Missile): { x: number; y: number; z: number } {
  */
 function stepBoss(c: CombatState, e: Enemy, type: BossKind, dt: number, stunned: boolean, hitCar: (d: number, from: EnemyType) => void): void {
   e.z += Math.sign(e.holdZ - e.z) * Math.min(Math.abs(e.holdZ - e.z), 18 * dt);
-  const follow = { brute: 1.2, warrig: 2.2, mothership: 1.6, hermit: 7, pizza: 2.6, sweeper: 1.8 }[type];
+  const follow = { brute: 1.2, warrig: 2.2, mothership: 1.6, hermit: 7, pizza: 2.6, sweeper: 1.8, karen: 1.5 }[type];
   let wantX = type === 'mothership' ? c.carX * 0.5 + Math.sin(c.time * 0.5) * 4 : c.carX;
   if (type === 'hermit') {
     // Hops from one roadside to the other every so often (a jump arc on the way).

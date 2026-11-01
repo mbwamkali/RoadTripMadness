@@ -55,6 +55,8 @@ export interface GameState {
   rage?: number;
   /** The boss waiting halfway, drawn from the pool when the trip starts (older saves: by seed). */
   halfBoss?: BossKind;
+  /** Karen was beaten this trip: the Cat Queen comes for her (the story ties them together). */
+  karenBeaten?: boolean;
   /** Threat level carried over from earlier wins (see career.ts): tougher, bigger fights. */
   threat?: number;
   /** 0: halfway boss to come, 1: final boss to come, 2: both done. */

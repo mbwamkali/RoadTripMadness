@@ -1318,6 +1318,14 @@ function showUpgrades(s: GameState, say: (r: ActionResult) => void): void {
 
 // --------------------------------------------------------------- combat
 
+/** The story that ties Karen to the alien cats and sets up the Cat Queen. */
+const KAREN_STORY = {
+  reveal:
+    '📡 Her scooter tips over and out rolls a tin-can antenna. Karen has been calling the alien cats from space! "My babies! Come home to Mommy!"',
+  tease: '👑 Far above, a purple light blinks. Someone up there heard her. Keep driving...',
+  queen: '👑 Karen\'s call reached space. The Cat Queen has come to take her kittens home, and you are in the way!',
+};
+
 function showBossIntro(boss: BossKind): void {
   const s = state!;
   sound.stopMusic();
@@ -1333,6 +1341,7 @@ function showBossIntro(boss: BossKind): void {
         { class: 'card' },
         BOSS_SCENES.includes(boss) ? eventPicture(BOSS_INFO[boss].icon, boss as SceneKind) : h('div', { class: 'boss-icon' }, BOSS_INFO[boss].icon),
         h('h2', {}, ENEMY_STATS[boss].name),
+        boss === 'mothership' && s.karenBeaten && h('p', { class: 'story' }, KAREN_STORY.queen),
         h('p', {}, info.intro),
         h('p', { class: 'muted' }, `No running from this one. Ammo: ${s.inv.bullets} bullets, ${s.inv.shells} shells, ${s.inv.catnip} catnip.`),
         h('button', { class: 'btn primary', onclick: () => startCombat(false, undefined, undefined, boss) }, 'Bring it on'),
@@ -1539,6 +1548,7 @@ function endCombat(c: CombatState, outcome: 'cleared' | 'escaped' | 'wrecked', s
   }
   s.log.push(`${c.title} ${outcome === 'cleared' ? 'Wiped them out' : 'Got away'}.`);
   if (c.boss) s.bossesBeaten++;
+  if (c.boss === 'karen') s.karenBeaten = true;
   // Food from the fight (the pizza driver's pizzas) fixes you up.
   const ate = Math.min(c.heal, maxHealth(s) - s.health);
   if (ate > 0) s.health += ate;
@@ -1558,6 +1568,8 @@ function endCombat(c: CombatState, outcome: 'cleared' | 'escaped' | 'wrecked', s
         h('h2', {}, c.boss ? `${ENEMY_STATS[c.boss].name} is down!` : outcome === 'cleared' ? 'Wiped them out!' : 'You got away!'),
         h('p', {}, `${c.kills} taken down. Car at ${Math.round(s.health)}%.`),
         found.length > 0 && h('p', {}, `Picked up ${found.join(', ')}.`),
+        c.boss === 'karen' && h('p', { class: 'story' }, KAREN_STORY.reveal),
+        c.boss === 'karen' && h('p', { class: 'story' }, KAREN_STORY.tease),
         c.heal > 0 && h('p', {}, `🍕 Free pizza! You eat on the road and feel great${ate > 0 ? `: +${Math.round(ate)} condition` : ''}.`),
         patched > 0 && h('p', {}, `🧰 Your mechanic patches ${Math.round(patched)} damage.`),
         h(

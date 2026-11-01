@@ -1437,3 +1437,12 @@ body.kid .shoot-row .btn.shoot {
   bottom: 80px;
   border-radius: 38px;
 }
+
+/* Story beats (Karen and the Cat Queen): a purple panel so they stand out from the rules text. */
+.card p.story {
+  background: rgba(138, 90, 200, 0.18);
+  border-left: 4px solid #b98aff;
+  border-radius: 8px;
+  padding: 8px 10px;
+  text-align: left;
+}
