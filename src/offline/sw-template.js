@@ -29,6 +29,15 @@ self.addEventListener('fetch', (event) => {
   // saves the trips it plans itself, and falls back to the offline atlas.
   if (req.method !== 'GET' || url.origin !== self.location.origin) return;
 
+  // Road files (data/osm/) live in their own cache that survives app updates,
+  // since the backbone alone is about 10 MB. The index is network first; the
+  // other files carry the road build date (?v=...) and are cache first, and a
+  // new build's index clears out files from older builds.
+  if (url.pathname.includes('/data/osm/')) {
+    event.respondWith(roadFile(req, url));
+    return;
+  }
+
   if (req.mode === 'navigate') {
     // Network first for the page, so updates arrive; the cached copy when offline.
     event.respondWith(
@@ -58,3 +67,33 @@ self.addEventListener('fetch', (event) => {
     ),
   );
 });
+
+const ROADS = 'roads-osm';
+
+async function roadFile(req, url) {
+  const cache = await caches.open(ROADS);
+  if (url.pathname.endsWith('/index.json')) {
+    try {
+      const res = await fetch(req, { cache: 'no-cache' });
+      if (res.ok) {
+        const index = await res.clone().json();
+        await cache.put(req, res.clone());
+        const v = encodeURIComponent(index.built);
+        for (const old of await cache.keys()) {
+          const p = new URL(old.url).searchParams.get('v');
+          if (p !== null && p !== v && p !== index.built) await cache.delete(old);
+        }
+      }
+      return res;
+    } catch (e) {
+      const hit = await cache.match(req, { ignoreSearch: true });
+      if (hit) return hit;
+      throw e;
+    }
+  }
+  const hit = await cache.match(req);
+  if (hit) return hit;
+  const res = await fetch(req);
+  if (res.ok && url.searchParams.has('v')) await cache.put(req, res.clone());
+  return res;
+}

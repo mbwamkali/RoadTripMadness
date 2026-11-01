@@ -378,7 +378,7 @@ export function nearRoute<T extends LatLng>(
   return out;
 }
 
-class MinHeap {
+export class MinHeap {
   private ids: number[] = [];
   private keys: number[] = [];
   get size(): number {

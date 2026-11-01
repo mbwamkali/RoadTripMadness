@@ -1,7 +1,7 @@
 import type { BossKind } from '../game/combat';
 import * as THREE from 'three';
 import type { Path, Vec2 } from '../geo/geo';
-import { CRUISE_SPEED } from '../geo/route';
+import { CRUISE_SPEED, postedLimit } from '../geo/route';
 import { advance, damage, upcomingStop, type GameState } from '../game/state';
 import { clampLane, defaultLane, laneCenter, oncoming, Traffic, type Vehicle, type VehicleKind } from '../game/traffic';
 import { Obstacles, ramObstacle, shootObstacle, SHOOT_RANGE, type Obstacle, type ObstacleKind } from '../game/obstacles';
@@ -273,9 +273,10 @@ export class DriveScene implements GameScene {
     return this.edge(d) - ROAD_HALF;
   }
 
-  /** The usual speed limit where the car is, in mph. */
+  /** The speed limit where the car is, in mph: the posted one from OpenStreetMap when known, else the usual one for the road. */
   speedLimit(d = this.state.distance): number {
-    return SPEED[classAt(this.segments, d)].mph;
+    const posted = postedLimit(this.state.route, d);
+    return posted || SPEED[classAt(this.segments, d)].mph;
   }
 
   private laneAt(d: number): number {

@@ -145,7 +145,13 @@ function showTitle(): void {
       h('button', { class: 'btn', onclick: () => previewRoute(buildRouteData(demoRawRoute(Date.now() % 1000)), undefined, showTitle) }, 'Quick demo trip (made-up map)'),
       h('button', { class: 'btn ghost', onclick: showScores }, '🏆 High scores'),
       isOffline() && h('div', { class: 'offline-badge' }, 'Offline: classic, saved and atlas trips still work'),
-      h('p', { class: 'fine' }, 'Maps © OpenStreetMap contributors. Routing by OSRM. Offline atlas from Natural Earth.'),
+      h(
+        'p',
+        { class: 'fine' },
+        'Maps © ',
+        h('a', { href: 'https://www.openstreetmap.org/copyright', target: '_blank', rel: 'noopener' }, 'OpenStreetMap'),
+        ' contributors (ODbL). Offline atlas from Natural Earth.',
+      ),
     ),
   );
 }

@@ -4,38 +4,66 @@ import { fetchRoute } from '../geo/osrm';
 import { fetchMapFeatures } from '../geo/overpass';
 import type { RawRoute } from '../geo/route';
 import { loadAtlas } from './atlas';
+import { loadRoadNet } from './roadNet';
 import { tripCache } from './tripCache';
 
 /**
- * Online-first planning with offline fallbacks:
- *  1. Ask OSRM for the fastest route, and save it for later.
- *  2. Offline (or OSRM unreachable): reuse a saved trip between the same places.
- *  3. Otherwise plan it on the device with the bundled road atlas.
+ * Trip planning, best first:
+ *  1. Our own road files from OpenStreetMap (data/osm/), routed on the device.
+ *     They are cached after first use, so this also works offline.
+ *  2. The public OSRM server, if the road files can't be loaded (for example
+ *     in local development before a road build). Add ?router=osrm to the page
+ *     address to use it first, for comparing routes.
+ *  3. A saved trip between the same places.
+ *  4. The bundled Natural Earth highway atlas.
  */
 
-export type PlannedVia = 'online' | 'saved' | 'atlas';
+export type PlannedVia = 'roads' | 'online' | 'saved' | 'atlas';
 
 export const isOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
+
+const preferOsrm = () => typeof location !== 'undefined' && new URLSearchParams(location.search).get('router') === 'osrm';
+
+/** Landmarks for a planned route: the live OpenStreetMap lookup when online, plus the atlas's sights when that finds none. */
+async function addFeatures(raw: RawRoute, progress: (message: string) => void): Promise<void> {
+  if (!isOffline()) {
+    progress('Scouting landmarks along the way…');
+    raw.features = await fetchMapFeatures(raw.coords);
+  }
+  // Gas stations alone don't make a trip interesting; borrow the atlas's sights if the lookup found none.
+  if (!raw.features?.some((f) => f.kind !== 'fuel')) raw.features = [...(raw.features ?? []), ...(await atlasFeatures(raw))];
+}
 
 export async function planTrip(
   from: Place,
   to: Place,
   progress: (message: string) => void = () => {},
 ): Promise<{ raw: RawRoute; via: PlannedVia; note?: string }> {
-  let onlineError: Error | null = null;
-  if (!isOffline()) {
+  const problems: string[] = [];
+  const own = async () => {
+    const net = await loadRoadNet([from, to], progress);
+    progress('Finding the fastest route…');
+    const raw = net.planTrip(from, to, from.label, to.label);
+    await addFeatures(raw, progress);
+    tripCache.save(raw, { start: from, end: to });
+    return { raw, via: 'roads' as const };
+  };
+  const osrm = async () => {
+    const raw = await fetchRoute(from, to, from.label, to.label);
+    await addFeatures(raw, progress);
+    tripCache.save(raw, { start: from, end: to });
+    return { raw, via: 'online' as const };
+  };
+  const order = preferOsrm() ? [osrm, own] : [own, osrm];
+  for (const plan of order) {
+    if (plan === osrm && isOffline()) continue;
     try {
-      const raw = await fetchRoute(from, to, from.label, to.label);
-      progress('Scouting landmarks along the way…');
-      raw.features = await fetchMapFeatures(raw.coords);
-      // Gas stations alone don't make a trip interesting; borrow the atlas's sights if the lookup found none.
-      if (!raw.features.some((f) => f.kind !== 'fuel')) raw.features = [...raw.features, ...(await atlasFeatures(raw))];
-      tripCache.save(raw, { start: from, end: to });
-      return { raw, via: 'online' };
+      return await plan();
     } catch (e) {
-      onlineError = e as Error;
-      // A real "no route" answer from the server is final; anything else is a connection problem.
-      if (/no driving route/i.test(onlineError.message)) throw onlineError;
+      const msg = (e as Error).message;
+      // A real "no route" answer is final; anything else means try the next way.
+      if (/no driving route/i.test(msg)) throw e;
+      problems.push(msg);
     }
   }
   const saved = tripCache.find(from, to, from.label, to.label);
@@ -46,7 +74,7 @@ export async function planTrip(
     tripCache.save(raw, { start: from, end: to });
     return { raw, via: 'atlas', note: 'Planned offline with the built-in highway atlas. The road follows the major highways.' };
   } catch (e) {
-    throw new Error(onlineError ? `${onlineError.message} The offline atlas couldn't help either: ${(e as Error).message}` : (e as Error).message);
+    throw new Error([...problems, `The offline atlas couldn't help either: ${(e as Error).message}`].join(' '));
   }
 }
 

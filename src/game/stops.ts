@@ -1,4 +1,4 @@
-import type { RouteData } from '../geo/route';
+import { realExitNear, type RouteData } from '../geo/route';
 import { hashString, makeRng, pick, type Rng } from './rng';
 import { classAt, isDivided, roadSegments } from './roads';
 import { Path } from '../geo/geo';
@@ -20,7 +20,8 @@ export interface Stop {
   /** A real gas station from the map. */
   real?: boolean;
   /** Interstate exit number (miles from where the interstate enters the state). */
-  exit?: number;
+  /** Exit number on the sign: the real one from OpenStreetMap when known ("52A"), else an estimate. */
+  exit?: number | string;
   /** The real street at the turn-off, when looked up. */
   street?: string;
 }
@@ -144,6 +145,11 @@ export function generateStops(route: RouteData, pathLength: number, seed: number
   if (map && route.points?.length) {
     const path = new Path(route.points.map(([x, y]) => ({ x, y })));
     for (const s of out) {
+      const real = realExitNear(route, s.at);
+      if (real) {
+        s.exit = real.ref;
+        continue;
+      }
       const n = interstateNumber(roadAt(route, s.at));
       if (n === null || !isDivided(classAt(segments, s.at))) continue;
       const exit = map.exitNumber(latLngAt(route, path, s.at), n);

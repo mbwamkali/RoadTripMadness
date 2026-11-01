@@ -18,7 +18,7 @@ export interface RouteStep {
  * projected to meters and then scaled so every trip takes a playable amount of time.
  */
 export interface RouteData {
-  source: 'osrm' | 'demo' | 'offline' | 'curated';
+  source: 'osrm' | 'osm' | 'demo' | 'offline' | 'curated';
   startLabel: string;
   endLabel: string;
   start: LatLng;
@@ -36,6 +36,10 @@ export interface RouteData {
   fuel?: FuelStation[];
   /** Where the route enters each US state (first entry: the starting state). */
   states?: StateLine[];
+  /** Real motorway exits the route passes, from OpenStreetMap (own-routing trips only). */
+  exits?: { at: number; ref: string; name: string }[];
+  /** Posted speed limits where they change along the route, in mph; 0 = not known from here on. */
+  limits?: { at: number; mph: number }[];
 }
 
 /** Cruise speed of the car in game units per second. */
@@ -67,6 +71,10 @@ export interface RawRoute {
   attribution: string;
   /** Sights near the route from OpenStreetMap (see geo/overpass.ts). Optional; offline trips can skip it. */
   features?: MapFeature[];
+  /** Motorway exits passed on the way (own-routing trips): exit number and destination. */
+  exits?: { location: LatLng; ref: string; name: string }[];
+  /** Posted speed limits where they change, in km/h; 0 = not known from here on. */
+  limits?: { location: LatLng; kmh: number }[];
 }
 
 /** Converts a real-world route into game geometry: project, scale, smooth and resample. */
@@ -97,6 +105,10 @@ export function buildRouteData(raw: RawRoute): RouteData {
     };
   });
   steps.sort((a, b) => a.at - b.at);
+  const at = (p: LatLng) => {
+    const local = proj.toLocal(p);
+    return path.nearestDistance({ x: local.x / scale, y: local.y / scale });
+  };
 
   const data: RouteData = {
     source: raw.source,
@@ -111,6 +123,12 @@ export function buildRouteData(raw: RawRoute): RouteData {
     steps,
     attribution: raw.attribution,
   };
+  if (raw.exits?.length) data.exits = raw.exits.map((e) => ({ at: at(e.location), ref: e.ref, name: e.name })).sort((a, b) => a.at - b.at);
+  if (raw.limits?.length) {
+    data.limits = raw.limits
+      .map((l) => ({ at: at(l.location), mph: l.kmh > 0 ? Math.round(l.kmh / 1.609344 / 5) * 5 : 0 }))
+      .sort((a, b) => a.at - b.at);
+  }
   if (raw.features?.length) {
     const path = pathFromRoute(data);
     data.landmarks = placeFeatures(data, path, raw.features);
@@ -136,4 +154,28 @@ export function pathFromRoute(route: RouteData): Path {
 /** Real kilometers travelled at a given game distance. */
 export function realKmAt(route: RouteData, gameDistance: number): number {
   return (gameDistance * route.scale) / 1000;
+}
+
+/** The posted speed limit (mph) in force at a game distance, or 0 when the route doesn't know it. */
+export function postedLimit(route: RouteData, gameDistance: number): number {
+  const list = route.limits;
+  if (!list?.length || gameDistance < list[0].at) return 0;
+  let lo = 0, hi = list.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (list[mid].at <= gameDistance) lo = mid;
+    else hi = mid - 1;
+  }
+  return list[lo].mph;
+}
+
+/** The real exit closest to a game distance, if one is within about 2 km (real). */
+export function realExitNear(route: RouteData, gameDistance: number, withinMeters = 2_000): { at: number; ref: string; name: string } | null {
+  let best: { at: number; ref: string; name: string } | null = null;
+  const within = withinMeters / route.scale;
+  for (const e of route.exits ?? []) {
+    const d = Math.abs(e.at - gameDistance);
+    if (d <= within && (!best || d < Math.abs(best.at - gameDistance))) best = e;
+  }
+  return best;
 }

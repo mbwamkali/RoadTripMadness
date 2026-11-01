@@ -78,9 +78,9 @@ node scripts/build-atlas.mjs data-src/ne public/data/atlas-us.json
 node scripts/bake-routes.mjs                          # needs router.project-osrm.org
 ```
 
-### Road files from OpenStreetMap (own routing, in progress)
+### Road files from OpenStreetMap (own routing)
 
-To stop depending on the public OSRM server, the game is getting its own road network: highways down to US and state routes, built from OpenStreetMap into static files and routed on the phone. Phase 1 builds the files; the router comes next. See the "Own routing plan" doc in the project.
+The game plans trips with its own road network instead of the public OSRM server: highways down to US and state routes, built from OpenStreetMap into static files and routed on the phone (`src/offline/roadNet.ts`, A* over the backbone plus the tiles around the start and end). Trips get real exit numbers and posted speed limits from the same data. `src/offline/planner.ts` tries, in order: the road files, OSRM (only if the road files can't load, or first with `?router=osrm` in the page address, for comparing), a saved trip, and the Natural Earth atlas. The service worker keeps road files in their own cache (`roads-osm`) that survives app updates; a new road build replaces them. See the "Own routing plan" doc in the project.
 
 - `.github/workflows/osm-roads.yml` runs monthly (or by hand from the Actions tab). It runs `scripts/fetch-osm-roads.sh` (state-by-state OpenStreetMap extracts, filtered with osmium) and `scripts/build-osm-roads.py`, and stores the result on the `osm-roads` release as `osm-roads.tar.gz`.
 - The Pages deploy unpacks that release into `data/osm/` on the site: `index.json`, `backbone.json` (interstates and major highways), `tiles/<x>_<y>.json` (US and state routes per 2° square), `towns.json` and `LICENSE-ODbL.txt`. They are copied in after the build so the service worker doesn't precache them all.
