@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import './style.css';
 import type { Path } from './geo/geo';
 import { currentPosition, type Place } from './geo/geocode';
-import { LANDMARK_ICONS, LANDMARK_TITLES, type Landmark } from './game/landmarks';
+import { LANDMARK_ICONS, LANDMARK_TITLES, roadAt, type Landmark } from './game/landmarks';
 import { demoRawRoute } from './geo/demoRoute';
 import { buildRouteData, pathFromRoute, realKmAt, type RawRoute, type RouteData } from './geo/route';
 import { isOffline, planTrip, searchAnywhere } from './offline/planner';
@@ -520,7 +520,8 @@ function showDriveHud(): void {
     const left = realKmAt(s.route, p.length - s.distance);
     const hour = hourOf(s);
     const wx = weatherAt(s);
-    progressText.textContent = `${isNight(hour) ? '🌙' : '☀️'} ${clockText(hour)} · ${wx === 'clear' ? '' : `${WEATHER_INFO[wx].icon} ${WEATHER_INFO[wx].name} · `}${fmtKm(left)} to ${s.route.endLabel.split(',')[0]}`;
+    const road = roadAt(s.route, s.distance);
+    progressText.textContent = `${isNight(hour) ? '🌙' : '☀️'} ${clockText(hour)} · ${wx === 'clear' ? '' : `${WEATHER_INFO[wx].icon} ${WEATHER_INFO[wx].name} · `}${road ? `${road} · ` : ''}${fmtKm(left)} to ${s.route.endLabel.split(',')[0]}`;
     if (frameCount++ % 10 === 0) map.draw(s.distance, s.passed);
   };
   hudTick();

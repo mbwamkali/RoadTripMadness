@@ -12,9 +12,52 @@ export function decimate(coords: LatLng[], max: number): LatLng[] {
   return out;
 }
 
+/**
+ * Simplifies a polyline so it stays within `tolerance` metres of the real
+ * road (Douglas-Peucker), using at most `max` points. Keeps "around" queries
+ * accurate on long, winding routes where even spacing would cut corners.
+ */
+export function simplify(coords: LatLng[], max = 300, tolerance = 250): LatLng[] {
+  if (coords.length <= 2) return coords.slice();
+  const lat0 = coords[0].lat;
+  const kx = 111_320 * Math.cos((lat0 * Math.PI) / 180);
+  const pts = coords.map((c) => ({ x: c.lng * kx, y: c.lat * 110_540 }));
+  let tol = tolerance;
+  for (;;) {
+    const keep = new Uint8Array(pts.length);
+    keep[0] = keep[pts.length - 1] = 1;
+    const stack: [number, number][] = [[0, pts.length - 1]];
+    while (stack.length) {
+      const [a, b] = stack.pop()!;
+      const A = pts[a];
+      const B = pts[b];
+      const dx = B.x - A.x;
+      const dy = B.y - A.y;
+      const len2 = dx * dx + dy * dy || 1;
+      let worst = -1;
+      let worstD = tol;
+      for (let i = a + 1; i < b; i++) {
+        const t = Math.max(0, Math.min(1, ((pts[i].x - A.x) * dx + (pts[i].y - A.y) * dy) / len2));
+        const d = Math.hypot(pts[i].x - (A.x + t * dx), pts[i].y - (A.y + t * dy));
+        if (d > worstD) {
+          worstD = d;
+          worst = i;
+        }
+      }
+      if (worst > 0) {
+        keep[worst] = 1;
+        stack.push([a, worst], [worst, b]);
+      }
+    }
+    const out = coords.filter((_, i) => keep[i]);
+    if (out.length <= max) return out;
+    tol *= 1.6;
+  }
+}
+
 /** One query for everything worth seeing near the route line. */
 export function buildOverpassQuery(coords: LatLng[]): string {
-  const line = decimate(coords, 90)
+  const line = simplify(coords)
     .map((c) => `${c.lat.toFixed(5)},${c.lng.toFixed(5)}`)
     .join(',');
   const near = (r: number) => `(around:${r},${line})`;
@@ -26,6 +69,7 @@ export function buildOverpassQuery(coords: LatLng[]): string {
   nwr["historic"~"^(monument|memorial|castle|fort|ruins|battlefield)$"]["name"]${near(2500)};
   nwr["man_made"~"^(tower|lighthouse|water_tower|windmill)$"]["name"]${near(2500)};
   node["place"~"^(city|town)$"]["name"]${near(3000)};
+  node["place"="village"]["name"]${near(1200)};
 );
 out geom 700;`;
 }

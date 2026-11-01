@@ -17,6 +17,7 @@ export type LandmarkKind =
   | 'attraction'
   | 'viewpoint'
   | 'citysign'
+  | 'roadsign'
   | 'watertower'
   | 'windmill'
   | 'billboard'
@@ -36,6 +37,8 @@ export interface Landmark {
   real: boolean;
   /** Rivers: angle between the river and the road, in radians. */
   angle?: number;
+  /** Road signs: which way the route goes there. */
+  arrow?: 'left' | 'right' | 'straight';
 }
 
 export const LANDMARK_TITLES: Record<LandmarkKind, string> = {
@@ -48,6 +51,7 @@ export const LANDMARK_TITLES: Record<LandmarkKind, string> = {
   attraction: 'Attraction',
   viewpoint: 'Scenic view',
   citysign: 'Town',
+  roadsign: 'Road sign',
   watertower: 'Water tower',
   windmill: 'Windmill',
   billboard: 'Billboard',
@@ -65,6 +69,7 @@ export const LANDMARK_ICONS: Record<LandmarkKind, string> = {
   attraction: '⭐',
   viewpoint: '📷',
   citysign: '🏙️',
+  roadsign: '🛣️',
   watertower: '💧',
   windmill: '🌬️',
   billboard: '🪧',
@@ -261,9 +266,17 @@ export function fillLandmarks(route: RouteData, pathLength: number, stops: Stop[
   all.push({ at: 60, side: -1, offset: 9, kind: 'citysign', name: `Leaving ${route.startLabel.split(',')[0]}`, real: true });
   all.push({ at: pathLength - 160, side: 1, offset: 9, kind: 'citysign', name: `Welcome to ${route.endLabel.split(',')[0]}`, real: true });
   for (const s of stops) {
+    // Real towns already have their own sign from the map data.
+    if (all.some((l) => l.kind === 'citysign' && l.name === s.name && Math.abs(l.at - s.at) < 600)) continue;
     if (s.kind === 'town' || s.kind === 'mall') {
       all.push({ at: s.at - 220, side: s.side === 'right' ? 1 : -1, offset: 9, kind: 'citysign', name: `${s.name}`, real: false });
     }
+  }
+
+  // Road signs go where they won't hide behind a town sign.
+  for (const sign of roadSigns(route, pathLength)) {
+    while (all.some((l) => (l.kind === 'citysign' || l.kind === 'billboard') && Math.abs(l.at - sign.at) < 60)) sign.at -= 60;
+    all.push(sign);
   }
 
   let d = range(rng, 300, 600);
@@ -281,6 +294,62 @@ export function fillLandmarks(route: RouteData, pathLength: number, stops: Stop[
     all.push({ at: m, side: rng() < 0.5 ? -1 : 1, offset: range(rng, 600, 900), kind: 'mountains', name: '', real: false });
   }
   return all.sort((a, b) => a.at - b.at);
+}
+
+/**
+ * Green signs where the real route changes road ("Left onto Main Street",
+ * "I 40"), so you can follow the actual roads you're driving on.
+ */
+const REF = /\b(I|US|SR|[A-Z]{2})[- ]?\d{1,3}[A-Z]?(?: (?:Bus|Hist|Alt|Byp|Spur|Loop))?\b/;
+
+/**
+ * Tidies a routing road name for a sign: "Officer David Haynes Memorial
+ * Highway I 44; MO 43" becomes "I 44", "Stevenson Expressway I 55" stays.
+ */
+export function signName(raw: string): string {
+  const name = raw.replace(/\s+/g, ' ').trim();
+  const m = name.match(REF);
+  if (!m) return name;
+  const ref = m[0].replace(/ (Bus|Hist|Alt|Byp|Spur|Loop)$/, ' $1');
+  const text = name
+    .slice(0, m.index)
+    .replace(/[;,]\s*$/, '')
+    .trim();
+  if (!text || text.length > 22 || /memorial|trail|veterans/i.test(text)) return ref;
+  return `${text} ${ref}`;
+}
+
+export function roadSigns(route: RouteData, pathLength: number): Landmark[] {
+  const out: Landmark[] = [];
+  let last = '';
+  for (const st of route.steps) {
+    if (st.type === 'town' || st.type === 'arrive' || st.type === 'depart') {
+      if (st.type === 'depart' && st.name) last = signName(st.name);
+      continue;
+    }
+    const name = signName(st.name);
+    if (!name || name === last) continue;
+    last = name;
+    const at = st.at - 40;
+    if (at < 150 || at > pathLength - 250) continue;
+    // In cities the turns come thick and fast; keep only signs you can read.
+    if (out.length && at - out[out.length - 1].at < 260) out.pop();
+    const m = st.modifier ?? '';
+    const arrow = m.includes('left') ? 'left' : m.includes('right') ? 'right' : 'straight';
+    out.push({ at, side: 1, offset: 9, kind: 'roadsign', name, real: true, arrow });
+  }
+  // Dropping crowded signs can leave the same road twice in a row.
+  return out.filter((l, i) => i === 0 || l.name !== out[i - 1].name);
+}
+
+/** The real road the car is on at a distance, from the routing steps. */
+export function roadAt(route: RouteData, at: number): string {
+  let name = '';
+  for (const st of route.steps) {
+    if (st.at > at) break;
+    if (st.name && st.type !== 'town' && st.type !== 'arrive') name = signName(st.name);
+  }
+  return name;
 }
 
 function pickSight(rng: Rng, n: number): LandmarkKind {

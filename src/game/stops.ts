@@ -32,6 +32,16 @@ const PLACES_BY_KIND: Record<StopKind, PlaceKind[][]> = {
   base: [['police', 'junkyard', 'gunshop']],
 };
 
+/** Name endings for stops on the edge of a real town. */
+const OUTSKIRTS: Record<StopKind, string[]> = {
+  town: ['Junction', 'Crossing', 'Heights'],
+  gas: ['Gas & Go', 'Fuel Stop', 'Quik Fill'],
+  truckstop: ['Travel Plaza', 'Truck Stop', 'Truck Center'],
+  farm: ['Farm', 'Ranch', 'Feed & Seed'],
+  mall: ['Plaza', 'Shopping Center', 'Outlet Mall'],
+  base: ['Armory', 'National Guard Post', 'Army Depot'],
+};
+
 const MADE_UP_NAMES = ['Dry Creek', 'Pinecone', 'Hollow Rock', 'Bitterroot', 'Red Mesa', 'Junction City', 'Cold Spring', 'Antler', 'Saltlick', 'Fort Sorrow', 'Buzzard Hill', 'Lonesome'];
 
 /** Kinds that sell fuel, so we can guarantee the player is never stranded by bad luck. */
@@ -47,23 +57,46 @@ export function generateStops(route: RouteData, pathLength: number, seed: number
   const count = Math.max(6, Math.min(14, Math.round(pathLength / 2600)));
   const spacing = pathLength / (count + 1);
 
-  const realTurns = route.steps.filter((s) => s.modifier && /left|right/.test(s.modifier) && s.name);
+  // Real towns along the road: from the map data, or from offline-atlas town steps.
+  const towns: { at: number; name: string; side?: 'left' | 'right' }[] = [
+    ...(route.landmarks ?? []).filter((l) => l.kind === 'citysign' && l.real).map((l) => ({ at: l.at, name: l.name })),
+    ...route.steps
+      .filter((st) => st.type === 'town' && st.name)
+      .map((st) => ({ at: st.at, name: st.name, side: st.modifier?.includes('left') ? ('left' as const) : ('right' as const) })),
+  ].filter((t) => t.at > 400 && t.at < pathLength - 600);
+  const realTurns = route.steps.filter((s) => s.type !== 'town' && s.modifier && /left|right/.test(s.modifier));
+  const usedTowns = new Set<string>();
   const stops: Stop[] = [];
   for (let i = 1; i <= count; i++) {
     const ideal = i * spacing;
-    // Snap to a real turn if one is near the ideal spot.
-    const near = realTurns.find((t) => Math.abs(t.at - ideal) < spacing * 0.3);
-    const at = near ? near.at : ideal + (rng() - 0.5) * spacing * 0.3;
-    const side: Stop['side'] = near?.modifier?.includes('left') ? 'left' : near?.modifier?.includes('right') ? 'right' : rng() < 0.5 ? 'left' : 'right';
-    const kind = i % 3 === 1 ? pick(rng, ['gas', 'truckstop', 'town'] as const) : pickKind(rng);
+    // Prefer a real town near the ideal spot, then a real turn, then anywhere.
+    const town = towns
+      .filter((t) => !usedTowns.has(t.name) && Math.abs(t.at - ideal) < spacing * 0.35)
+      .sort((a, b) => Math.abs(a.at - ideal) - Math.abs(b.at - ideal))[0];
+    const turn = town ? undefined : realTurns.find((t) => Math.abs(t.at - ideal) < spacing * 0.3);
+    // A town's turn-off comes just before its sign.
+    const at = town ? town.at + 60 : turn ? turn.at : ideal + (rng() - 0.5) * spacing * 0.3;
+    const dir = town?.side ?? turn?.modifier;
+    const side: Stop['side'] = dir?.includes('left') ? 'left' : dir?.includes('right') ? 'right' : rng() < 0.5 ? 'left' : 'right';
+    const fuel = i % 3 === 1;
+    let kind: StopKind = fuel ? pick(rng, ['gas', 'truckstop', 'town'] as const) : pickKind(rng);
+    if (town && kind !== 'gas' && kind !== 'truckstop') kind = 'town';
     const places = pick(rng, PLACES_BY_KIND[kind]).slice();
-    if (i % 3 === 1 && !places.includes('pumps')) places.unshift('pumps');
+    if (fuel && !places.includes('pumps')) places.unshift('pumps');
+    let name: string;
+    if (town && kind === 'town') name = town.name;
+    else {
+      // Out-of-town stops borrow the nearest real town's name, the way real ones do.
+      const nearby = towns.filter((t) => Math.abs(t.at - at) < spacing).sort((a, b) => Math.abs(a.at - at) - Math.abs(b.at - at))[0];
+      name = nearby ? `${nearby.name} ${pick(rng, OUTSKIRTS[kind])}` : pick(rng, MADE_UP_NAMES);
+    }
+    if (town) usedTowns.add(town.name);
     stops.push({
       id: `stop-${i}`,
       at: Math.max(400, Math.min(pathLength - 600, at)),
       side,
       kind,
-      name: near?.name || pick(rng, MADE_UP_NAMES),
+      name,
       places,
     });
   }

@@ -423,6 +423,114 @@ function buildCitySign(l: Landmark): THREE.Object3D {
   return g;
 }
 
+/** Finds a route number in a road name: "I 40", "US 66", "SR 99". */
+export function routeShield(name: string): { kind: 'I' | 'US' | 'state'; num: string } | null {
+  const m = name.match(/\b(I|US|SR|[A-Z]{2})[- ]?(\d{1,3}[A-Z]?)\b/);
+  if (!m) return null;
+  return { kind: m[1] === 'I' ? 'I' : m[1] === 'US' ? 'US' : 'state', num: m[2] };
+}
+
+function drawShield(g: CanvasRenderingContext2D, kind: 'I' | 'US' | 'state', num: string, cx: number, cy: number, r: number): void {
+  g.save();
+  g.lineWidth = 6;
+  if (kind === 'I') {
+    g.beginPath();
+    g.moveTo(cx - r, cy - r * 0.8);
+    g.quadraticCurveTo(cx, cy - r * 1.1, cx + r, cy - r * 0.8);
+    g.quadraticCurveTo(cx + r * 1.05, cy + r * 0.4, cx, cy + r);
+    g.quadraticCurveTo(cx - r * 1.05, cy + r * 0.4, cx - r, cy - r * 0.8);
+    g.fillStyle = '#1d4fa8';
+    g.fill();
+    g.strokeStyle = '#fff';
+    g.stroke();
+    g.fillStyle = '#c8202f';
+    g.fillRect(cx - r * 0.9, cy - r * 0.85, r * 1.8, r * 0.38);
+    g.fillStyle = '#fff';
+  } else if (kind === 'US') {
+    g.beginPath();
+    g.moveTo(cx - r * 0.9, cy - r);
+    g.lineTo(cx + r * 0.9, cy - r);
+    g.quadraticCurveTo(cx + r, cy + r * 0.3, cx, cy + r);
+    g.quadraticCurveTo(cx - r, cy + r * 0.3, cx - r * 0.9, cy - r);
+    g.fillStyle = '#fff';
+    g.fill();
+    g.strokeStyle = '#111';
+    g.stroke();
+    g.fillStyle = '#111';
+  } else {
+    g.beginPath();
+    g.ellipse(cx, cy, r, r * 0.85, 0, 0, Math.PI * 2);
+    g.fillStyle = '#fff';
+    g.fill();
+    g.strokeStyle = '#111';
+    g.stroke();
+    g.fillStyle = '#111';
+  }
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.font = `900 ${num.length > 2 ? r * 0.75 : r}px system-ui, sans-serif`;
+  g.fillText(num, cx, cy + (kind === 'I' ? r * 0.18 : 0));
+  g.restore();
+}
+
+/** Green guide sign: an arrow for the turn, a route shield if there is one, and the road name. */
+function roadSignTexture(l: Landmark): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 512;
+  c.height = 256;
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#0f6b3a';
+  g.fillRect(0, 0, 512, 256);
+  g.strokeStyle = '#fff';
+  g.lineWidth = 6;
+  g.strokeRect(10, 10, 492, 236);
+  // Arrow on the left.
+  g.save();
+  g.translate(72, 128);
+  g.rotate(l.arrow === 'left' ? -Math.PI / 2 : l.arrow === 'right' ? Math.PI / 2 : 0);
+  g.fillStyle = '#fff';
+  g.beginPath();
+  g.moveTo(0, -52);
+  g.lineTo(36, -10);
+  g.lineTo(12, -10);
+  g.lineTo(12, 48);
+  g.lineTo(-12, 48);
+  g.lineTo(-12, -10);
+  g.lineTo(-36, -10);
+  g.closePath();
+  g.fill();
+  g.restore();
+  const shield = routeShield(l.name);
+  let text = l.name;
+  let x = 140;
+  if (shield) {
+    drawShield(g, shield.kind, shield.num, 196, 128, 52);
+    text = l.name.replace(/\b(I|US|SR|[A-Z]{2})[- ]?\d{1,3}[A-Z]?\b/, '').trim();
+    x = 266;
+  }
+  g.fillStyle = '#fff';
+  g.textAlign = 'left';
+  g.textBaseline = 'middle';
+  const lines = wrap(text, shield ? 11 : 15).slice(0, 2);
+  const size = lines.length > 1 ? 44 : 52;
+  g.font = `800 ${size}px system-ui, sans-serif`;
+  lines.forEach((t, i) => g.fillText(t, x, 128 + (i - (lines.length - 1) / 2) * (size + 6), 512 - x - 24));
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.userData.chunkOwned = true;
+  return tex;
+}
+
+function buildRoadSign(l: Landmark): THREE.Object3D {
+  const g = new THREE.Group();
+  const post = mat(0x8a8f96);
+  g.add(mesh(new THREE.BoxGeometry(0.3, 5.5, 0.3), post, -3, 2.75, 0));
+  g.add(mesh(new THREE.BoxGeometry(0.3, 5.5, 0.3), post, 3, 2.75, 0));
+  g.add(mesh(new THREE.PlaneGeometry(7.2, 3.6), basic(0xffffff, { map: roadSignTexture(l), side: THREE.DoubleSide }), 0, 5.4, 0.18));
+  g.scale.setScalar(1.4);
+  return g;
+}
+
 /** Brown "point of interest" sign that announces a landmark ahead. */
 function poiSign(l: Landmark, path: Path): THREE.Object3D {
   const f = frame(path, Math.max(0, l.at - 70));
@@ -450,6 +558,7 @@ export function buildLandmark(l: Landmark, path: Path): THREE.Object3D {
     billboard: () => buildBillboard(l, rng),
     giant: () => buildGiant(l),
     citysign: () => buildCitySign(l),
+    roadsign: () => buildRoadSign(l),
   };
   const model = (builders[l.kind] ?? buildMonument)();
   const { p, fwd, right } = frame(path, l.at);
@@ -457,10 +566,10 @@ export function buildLandmark(l: Landmark, path: Path): THREE.Object3D {
   model.position.copy(to3(p)).addScaledVector(right, l.side * l.offset);
   // Face the road; signs and billboards also angle toward oncoming traffic.
   const toRoad = right.clone().multiplyScalar(-l.side);
-  const face = l.kind === 'billboard' || l.kind === 'citysign' ? toRoad.multiplyScalar(0.35).addScaledVector(fwd, -1).normalize() : toRoad;
+  const face = l.kind === 'billboard' || l.kind === 'citysign' || l.kind === 'roadsign' ? toRoad.multiplyScalar(0.35).addScaledVector(fwd, -1).normalize() : toRoad;
   model.rotation.y = Math.atan2(face.x, face.z);
   out.add(model);
-  if (l.kind !== 'citysign' && l.kind !== 'billboard' && l.kind !== 'mountains' && l.kind !== 'watertower' && l.kind !== 'windmill') {
+  if (l.kind !== 'citysign' && l.kind !== 'roadsign' && l.kind !== 'billboard' && l.kind !== 'mountains' && l.kind !== 'watertower' && l.kind !== 'windmill') {
     out.add(poiSign(l, path));
   }
   return out;
