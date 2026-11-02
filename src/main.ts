@@ -70,6 +70,10 @@ import type { Bloom } from './scenes/bloom';
 
 const canvas = document.getElementById('view') as HTMLCanvasElement;
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+// If the phone ever drops the road view's WebGL context (low memory, too many
+// contexts), ask for it back instead of leaving a white screen; three.js
+// re-uploads everything once it is restored.
+canvas.addEventListener('webglcontextlost', (e) => e.preventDefault());
 let bloom: Bloom | null = null;
 
 /** Applies the graphics quality to the renderer (scenes read it when they're built). */
@@ -1305,7 +1309,10 @@ function showStop(stop: Stop): void {
     if (r.ambush) sound.bad();
     else if (r.ok) sound.coin();
     if (r.ambush) {
-      setTimeout(() => startCombat(true, stop), 700);
+      setTimeout(() => {
+        if (map instanceof TownScene) map.dispose();
+        startCombat(true, stop);
+      }, 700);
       return;
     }
     refresh();
@@ -1374,6 +1381,7 @@ function showStop(stop: Stop): void {
     {
       class: 'btn primary back-road',
       onclick: () => {
+        if (map instanceof TownScene) map.dispose();
         saveGame(s);
         showDriveHud();
         drive!.resume();

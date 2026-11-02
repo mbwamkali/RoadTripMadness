@@ -450,5 +450,9 @@ export class TownScene {
     this.canvas.removeEventListener('pointerdown', this.onTap);
     disposeTree(this.scene);
     this.renderer.dispose();
+    // dispose() alone keeps the WebGL context alive. Phones allow only a few at
+    // once and drop the oldest (the main road view) when a new one is made, which
+    // turned the road white after a few town visits. Hand it back now.
+    this.renderer.forceContextLoss();
   }
 }

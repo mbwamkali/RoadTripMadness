@@ -368,6 +368,8 @@ export function openScavengeScene(root: HTMLElement, o: ScavengeSceneOptions): (
     canvas.removeEventListener('pointerdown', onTap);
     disposeTree(scene);
     renderer.dispose();
+    // Free the WebGL context too, or enough searches push out the main road view's.
+    renderer.forceContextLoss();
     wrap.remove();
   }
   return () => {
