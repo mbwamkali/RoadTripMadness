@@ -485,7 +485,7 @@ def main():
     index = {
         'version': 2, 'built': built, 'source': args.source, 'attribution': ATTRIBUTION, 'license': 'ODbL-1.0',
         'licenseFile': 'LICENSE-ODbL.txt', 'q': Q, 'tileDeg': TILE_DEG,
-        'backbone': {'file': 'backbone.json', 'gzipBytes': sizes['backbone.json'][1], 'km': round(backbone.meters / 1000)},
+        'backbone': {'file': 'backbone.json', 'gzipBytes': sizes['backbone.json'][1], 'rawBytes': sizes['backbone.json'][0], 'km': round(backbone.meters / 1000)},
         'towns': {'file': 'towns.json', 'count': len(r.towns)},
         'tiles': tile_list,
         'features': feature_list,

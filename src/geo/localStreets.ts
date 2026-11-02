@@ -1,5 +1,5 @@
 import { haversineMeters, type LatLng } from './geo';
-import { overpassJson, type OsmElement } from './overpass';
+import { OVERPASS_URL, type OsmElement } from './overpass';
 import { nodeKey, type RoadFile } from '../offline/roadNet';
 
 /**
@@ -35,23 +35,35 @@ const CLASS_OF: Record<string, number> = {
 
 /** Side streets this close to the start or end are fetched. */
 export const MINOR_RADIUS_M = 2_000;
-/** Bigger roads reach further, so the streets connect to the highway map. */
-export const MAJOR_RADIUS_M = 6_000;
-/** How long the trip planner waits for the lookup before using the straight link. */
-export const LOCAL_TIMEOUT_MS = 12_000;
+/** Secondary and tertiary roads reach further, so the side streets connect to the highway map. */
+export const MIDDLE_RADIUS_M = 4_000;
+/**
+ * Trunk and primary roads are in the highway map already, but only with
+ * nodes at their own junctions; a local copy gives the junctions where
+ * smaller streets meet them part way along. Motorways only meet streets at
+ * ramps, whose ends are in the highway map, so they aren't fetched.
+ */
+export const MAJOR_RADIUS_M = 3_000;
+/** How long trip planning waits for the street lookup before going without it (the player can skip sooner). */
+export const LOCAL_TIMEOUT_MS = 20_000;
 
 const OPEN = '[access!~"^(private|no)$"][area!="yes"]';
 
-/** One Overpass query for the streets around every given point. */
-export function buildLocalStreetsQuery(points: LatLng[]): string {
-  const parts = points.flatMap((p) => {
-    const at = `${p.lat.toFixed(5)},${p.lng.toFixed(5)}`;
-    return [
-      `way(around:${MINOR_RADIUS_M},${at})[highway~"^(unclassified|residential|living_street)$"]${OPEN};`,
-      `way(around:${MAJOR_RADIUS_M},${at})[highway~"^(motorway|trunk|primary|secondary|tertiary)(_link)?$"]${OPEN};`,
-    ];
-  });
-  return `[out:json][timeout:25];\n(\n${parts.join('\n')}\n);\nout body qt;\n>;\nout skel qt;`;
+/**
+ * The Overpass query for the streets around one place. `out geom` puts each
+ * way's points inline, which is about a third smaller than listing the
+ * nodes separately; streets are matched to each other and to the highway
+ * map by their coordinates, so node ids aren't needed.
+ */
+export function buildLocalStreetsQuery(p: LatLng): string {
+  const at = `${p.lat.toFixed(5)},${p.lng.toFixed(5)}`;
+  return `[out:json][timeout:25];
+(
+way(around:${MINOR_RADIUS_M},${at})[highway~"^(unclassified|residential|living_street)$"]${OPEN};
+way(around:${MIDDLE_RADIUS_M},${at})[highway~"^(secondary|tertiary)(_link)?$"]${OPEN};
+way(around:${MAJOR_RADIUS_M},${at})[highway~"^(trunk|primary)(_link)?$"]${OPEN};
+);
+out geom qt;`;
 }
 
 /** Python's round(): halves go to the even number. Matches scripts/build-osm-roads.py so shared nodes line up. */
@@ -83,14 +95,17 @@ interface Way {
   name: string;
   speed: number;
   lanes: number;
-  nodes: number[];
+  /** Points in 1/q degrees; their coordinate keys identify them. */
+  pts: [number, number][];
 }
 
+type OverpassWay = OsmElement & { id: number; nodes?: number[] };
+
 /**
- * Turns an Overpass answer (ways with tags, then their nodes) into a road
- * file. Ways are split where they meet, like the build script does. Parts
- * that never reach a node in `joinKeys` (the highway map's nodes) are dropped,
- * so a route can't start somewhere it can't leave.
+ * Turns an Overpass answer into a road file. Takes ways with inline
+ * geometry (`out geom`) or ways followed by their nodes. Ways are split
+ * where they meet, like the build script does. With `joinWith`, parts that
+ * never reach one of its nodes are dropped (see keepJoined).
  */
 export function localStreetsFile(
   json: { elements?: OsmElement[] },
@@ -99,94 +114,61 @@ export function localStreetsFile(
   joinWith: RoadFile[] | null = null,
 ): RoadFile {
   const where = new Map<number, [number, number]>();
-  const ways: Way[] = [];
-  for (const e of (json.elements ?? []) as (OsmElement & { id: number; nodes?: number[] })[]) {
+  for (const e of (json.elements ?? []) as OverpassWay[])
     if (e.type === 'node' && e.lat !== undefined && e.lon !== undefined) where.set(e.id, [pyRound(e.lon * q), pyRound(e.lat * q)]);
-    if (e.type !== 'way' || !e.nodes || e.nodes.length < 2) continue;
+  const ways: Way[] = [];
+  for (const e of (json.elements ?? []) as OverpassWay[]) {
+    if (e.type !== 'way') continue;
     const t = e.tags ?? {};
     const cls = CLASS_OF[t.highway];
     if (cls === undefined) continue;
-    let nodes = e.nodes;
-    if (t.oneway === '-1') nodes = nodes.slice().reverse();
+    // A point the answer left out (null in the geometry, or a missing node) splits the way there.
+    const raw: ([number, number] | null)[] = e.geometry
+      ? e.geometry.map((g) => (g ? [pyRound(g.lon * q), pyRound(g.lat * q)] : null))
+      : (e.nodes ?? []).map((id) => where.get(id) ?? null);
+    if (t.oneway === '-1') raw.reverse();
     const oneway =
       ['yes', '1', 'true', '-1'].includes(t.oneway) ||
       ((t.highway === 'motorway' || t.highway === 'motorway_link') && t.oneway !== 'no') ||
       t.junction === 'roundabout' ||
       t.junction === 'circular';
-    ways.push({ cls, oneway, ref: t.ref ?? '', name: t.name ?? '', speed: parseSpeed(t.maxspeed), lanes: parseLanes(t.lanes), nodes });
+    const base = { cls, oneway, ref: t.ref ?? '', name: t.name ?? '', speed: parseSpeed(t.maxspeed), lanes: parseLanes(t.lanes) };
+    let run: [number, number][] = [];
+    for (const p of [...raw, null]) {
+      if (p) run.push(p);
+      else {
+        if (run.length > 1) ways.push({ ...base, pts: run });
+        run = [];
+      }
+    }
   }
 
-  // A way is split at any node it shares with another way (or itself), and at its ends.
+  // A way is split at any point it shares with another way (or itself), and at its ends.
+  const key = (p: [number, number]) => nodeKey(p[0], p[1]);
   const uses = new Map<number, number>();
-  for (const w of ways) w.nodes.forEach((n, i) => uses.set(n, (uses.get(n) ?? 0) + (i === 0 || i === w.nodes.length - 1 ? 2 : 1)));
-
-  interface Piece {
-    w: Way;
-    pts: [number, number][];
-    a: number;
-    b: number;
-  }
-  const pieces: Piece[] = [];
+  for (const w of ways) w.pts.forEach((p, i) => uses.set(key(p), (uses.get(key(p)) ?? 0) + (i === 0 || i === w.pts.length - 1 ? 2 : 1)));
+  const pieces: { w: Way; pts: [number, number][] }[] = [];
   for (const w of ways) {
-    let cur: [number, number][] = [];
-    let start = -1;
-    for (let i = 0; i < w.nodes.length; i++) {
-      const id = w.nodes[i];
-      const p = where.get(id);
-      if (!p) {
-        // A node the answer left out: end this piece here.
-        if (cur.length > 1) pieces.push({ w, pts: cur, a: start, b: w.nodes[i - 1] });
-        cur = [];
-        continue;
-      }
-      if (!cur.length) start = id;
-      cur.push(p);
-      if (cur.length > 1 && (uses.get(id) ?? 0) > 1) {
-        pieces.push({ w, pts: cur, a: start, b: id });
-        cur = [p];
-        start = id;
+    let cur: [number, number][] = [w.pts[0]];
+    for (let i = 1; i < w.pts.length; i++) {
+      cur.push(w.pts[i]);
+      if (i < w.pts.length - 1 && (uses.get(key(w.pts[i])) ?? 0) > 1) {
+        pieces.push({ w, pts: cur });
+        cur = [w.pts[i]];
       }
     }
-    if (cur.length > 1) pieces.push({ w, pts: cur, a: start, b: w.nodes[w.nodes.length - 1] });
-  }
-
-  // Keep only the parts connected to the highway map (when we know it).
-  const keyOf = (id: number) => nodeKey(...where.get(id)!);
-  let keep = pieces;
-  if (joinWith) {
-    const local = new Set<number>();
-    for (const p of pieces) local.add(keyOf(p.a)).add(keyOf(p.b));
-    const joinKeys = new Set<number>();
-    for (const f of joinWith)
-      for (let i = 0; i < f.nodes.length; i += 2) {
-        const k = nodeKey(f.nodes[i], f.nodes[i + 1]);
-        if (local.has(k)) joinKeys.add(k);
-      }
-    const parent = new Map<number, number>();
-    const find = (x: number): number => {
-      let r = x;
-      while (parent.has(r) && parent.get(r) !== r) r = parent.get(r)!;
-      parent.set(x, r);
-      return r;
-    };
-    for (const p of pieces) {
-      if (!parent.has(p.a)) parent.set(p.a, p.a);
-      if (!parent.has(p.b)) parent.set(p.b, p.b);
-      parent.set(find(p.a), find(p.b));
-    }
-    const joined = new Set<number>();
-    for (const id of parent.keys()) if (joinKeys.has(keyOf(id))) joined.add(find(id));
-    keep = pieces.filter((p) => joined.has(find(p.a)));
+    if (cur.length > 1) pieces.push({ w, pts: cur });
   }
 
   const nodeIx = new Map<number, number>();
   const nodes: number[] = [];
-  const ix = (id: number) => {
-    let i = nodeIx.get(id);
+  const ix = (p: [number, number]) => {
+    const k = key(p);
+    let i = nodeIx.get(k);
     if (i === undefined) {
       i = nodes.length / 2;
-      nodeIx.set(id, i);
-      nodes.push(...where.get(id)!);
+      nodeIx.set(k, i);
+      nodes.push(p[0], p[1]);
     }
     return i;
   };
@@ -194,22 +176,24 @@ export function localStreetsFile(
   const names: string[] = [];
   const refIx = new Map<string, number>();
   const nameIx = new Map<string, number>();
-  const intern = (s: string, list: string[], map: Map<string, number>) => {
-    let i = map.get(s);
+  const intern = (str: string, list: string[], map: Map<string, number>) => {
+    let i = map.get(str);
     if (i === undefined) {
       i = list.length;
-      map.set(s, i);
-      list.push(s);
+      map.set(str, i);
+      list.push(str);
     }
     return i;
   };
   const edges: RoadFile['edges'] = [];
-  for (const { w, pts, a, b } of keep) {
-    if (a === b && pts.length < 3) continue;
+  for (const { w, pts } of pieces) {
+    const a = pts[0];
+    const b = pts[pts.length - 1];
+    if (key(a) === key(b) && pts.length < 3) continue;
     let meters = 0;
     for (let i = 1; i < pts.length; i++) meters += haversineMeters({ lng: pts[i - 1][0] / q, lat: pts[i - 1][1] / q }, { lng: pts[i][0] / q, lat: pts[i][1] / q });
     const deltas: number[] = [];
-    let [x, y] = pts[0];
+    let [x, y] = a;
     for (const [px, py] of pts.slice(1, -1)) {
       if (px === x && py === y) continue;
       deltas.push(px - x, py - y);
@@ -218,16 +202,168 @@ export function localStreetsFile(
     }
     edges.push([ix(a), ix(b), w.cls, intern(w.ref, refs, refIx), intern(w.name, names, nameIx), Math.round(meters), w.oneway ? 1 : 0, w.speed, w.lanes, deltas]);
   }
-  return { version: 2, kind: 'local', q, attribution, classes: LOCAL_CLASSES, refs, names, nodes, edges };
+  const file: RoadFile = { version: 2, kind: 'local', q, attribution, classes: LOCAL_CLASSES, refs, names, nodes, edges };
+  if (!joinWith) return file;
+  const keys = new Set<number>();
+  for (const f of joinWith) for (let i = 0; i < f.nodes.length; i += 2) keys.add(nodeKey(f.nodes[i], f.nodes[i + 1]));
+  return keepJoined(file, (x, y) => keys.has(nodeKey(x, y))) ?? { ...file, nodes: [], edges: [] };
 }
 
-/** Asks Overpass for the streets around the given points. Null on any failure (no connection, server busy, too slow). */
-export function fetchLocalStreets(points: LatLng[], timeoutMs = LOCAL_TIMEOUT_MS): Promise<{ elements?: OsmElement[] } | null> {
-  return overpassJson(buildLocalStreetsQuery(points), timeoutMs, false);
+/**
+ * Drops the parts of a local street file that never reach the highway map
+ * (`isJoined` says whether a point is one of its nodes), so a route can't
+ * start somewhere it can't leave. Null when nothing is left.
+ */
+export function keepJoined(file: RoadFile, isJoined: (x: number, y: number) => boolean): RoadFile | null {
+  const n = file.nodes.length / 2;
+  const parent = Int32Array.from({ length: n }, (_, i) => i);
+  const find = (x: number): number => {
+    while (parent[x] !== x) x = parent[x] = parent[parent[x]];
+    return x;
+  };
+  for (const e of file.edges) parent[find(e[0])] = find(e[1]);
+  const joined = new Set<number>();
+  for (let i = 0; i < n; i++) if (isJoined(file.nodes[i * 2], file.nodes[i * 2 + 1])) joined.add(find(i));
+  if (!joined.size) return null;
+  const edges = file.edges.filter((e) => joined.has(find(e[0])));
+  return edges.length === file.edges.length ? file : { ...file, edges };
 }
 
-/** The fetched streets as a road file joined to `base`, or null when none of them reach it. */
-export function joinLocalStreets(json: { elements?: OsmElement[] }, base: RoadFile[]): RoadFile | null {
-  const file = localStreetsFile(json, base[0].q, base[0].attribution, base);
-  return file.edges.length ? file : null;
+// ------------------------------------------------------------------ lookup, cache and progress
+
+/** What a street lookup is doing, for the trip planner's progress list. */
+export interface StreetStatus {
+  state: 'cached' | 'waiting' | 'receiving' | 'done' | 'failed';
+  /** Bytes of the answer received so far. */
+  bytes: number;
+  /** When the request went out (ms since epoch). */
+  started: number;
+}
+
+export interface StreetLookup {
+  status: StreetStatus;
+  /** The streets around the place (all of them, not yet joined), or null if the lookup failed. */
+  file: Promise<RoadFile | null>;
+}
+
+const CACHE_NAME = 'rtm-streets-v1';
+const INDEX_KEY = 'rtm-streets-index';
+/** A saved lookup is reused for places within this distance of where it was made. */
+const REUSE_M = 250;
+const MAX_SAVED = 15;
+const MAX_AGE_MS = 60 * 24 * 3600 * 1000;
+
+interface SavedPlace {
+  lat: number;
+  lng: number;
+  url: string;
+  at: number;
+}
+
+function savedIndex(): SavedPlace[] {
+  try {
+    const list = JSON.parse(localStorage.getItem(INDEX_KEY) ?? '[]') as SavedPlace[];
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeIndex(list: SavedPlace[]): void {
+  try {
+    localStorage.setItem(INDEX_KEY, JSON.stringify(list));
+  } catch {
+    /* storage full or blocked: the lookups just aren't remembered */
+  }
+}
+
+/** A saved street file for a place, if one was made close by recently. */
+async function savedStreets(p: LatLng): Promise<RoadFile | null> {
+  if (typeof caches === 'undefined') return null;
+  const hit = savedIndex().find((s) => Date.now() - s.at < MAX_AGE_MS && haversineMeters(s, p) <= REUSE_M);
+  if (!hit) return null;
+  try {
+    const res = await (await caches.open(CACHE_NAME)).match(hit.url);
+    return res ? ((await res.json()) as RoadFile) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Remembers the streets around a place, keeping the most recent MAX_SAVED places. */
+async function saveStreets(p: LatLng, file: RoadFile): Promise<void> {
+  if (typeof caches === 'undefined') return;
+  try {
+    const cache = await caches.open(CACHE_NAME);
+    const url = `${location.origin}/__streets/${p.lat.toFixed(4)}_${p.lng.toFixed(4)}.json`;
+    await cache.put(url, new Response(JSON.stringify(file), { headers: { 'Content-Type': 'application/json' } }));
+    const list = [{ lat: p.lat, lng: p.lng, url, at: Date.now() }, ...savedIndex().filter((s) => s.url !== url)];
+    for (const old of list.splice(MAX_SAVED)) await cache.delete(old.url);
+    writeIndex(list);
+  } catch {
+    /* not remembered; next time it's looked up again */
+  }
+}
+
+/** Runs the Overpass query, reporting bytes as they arrive. Null on any failure. */
+async function fetchStreets(p: LatLng, status: StreetStatus, signal: AbortSignal): Promise<{ elements?: OsmElement[] } | null> {
+  try {
+    const res = await fetch(OVERPASS_URL, { method: 'POST', body: new URLSearchParams({ data: buildLocalStreetsQuery(p) }), signal });
+    if (!res.ok || !res.body) return null;
+    status.state = 'receiving';
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      status.bytes += value.length;
+    }
+    const all = new Uint8Array(status.bytes);
+    let at = 0;
+    for (const c of chunks) {
+      all.set(c, at);
+      at += c.length;
+    }
+    return JSON.parse(new TextDecoder().decode(all)) as { elements?: OsmElement[] };
+  } catch {
+    return null;
+  }
+}
+
+const lookups = new Map<string, StreetLookup>();
+
+/**
+ * The street lookup for a place, started now if it isn't running yet. The
+ * setup screen calls this as soon as a place is picked, so the answer is
+ * often in by the time the player presses Plan. A place looked up before
+ * (within 250 m, in the last 60 days) comes from the device instead.
+ */
+export function lookupStreets(p: LatLng, q: number, attribution: string): StreetLookup {
+  const id = `${p.lat.toFixed(4)},${p.lng.toFixed(4)}`;
+  const running = lookups.get(id);
+  if (running && running.status.state !== 'failed') return running;
+  const status: StreetStatus = { state: 'waiting', bytes: 0, started: Date.now() };
+  const ctrl = new AbortController();
+  const giveUp = setTimeout(() => ctrl.abort(), 90_000);
+  const file = (async () => {
+    const saved = await savedStreets(p);
+    if (saved) {
+      status.state = 'cached';
+      return saved;
+    }
+    const json = await fetchStreets(p, status, ctrl.signal);
+    clearTimeout(giveUp);
+    if (!json) {
+      status.state = 'failed';
+      return null;
+    }
+    const f = localStreetsFile(json, q, attribution);
+    status.state = 'done';
+    if (f.edges.length) void saveStreets(p, f);
+    return f.edges.length ? f : null;
+  })();
+  const lookup = { status, file };
+  lookups.set(id, lookup);
+  return lookup;
 }

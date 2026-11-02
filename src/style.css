@@ -1891,3 +1891,68 @@ body.kid .howto-tip b {
   font-variant-numeric: tabular-nums;
   color: var(--muted);
 }
+
+/* Trip planning steps (setup screen) */
+.plan-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  max-width: 420px;
+  text-align: left;
+}
+.plan-steps li {
+  display: grid;
+  grid-template-columns: 1.4em 1fr;
+  column-gap: 6px;
+  font-size: 0.95em;
+}
+.plan-steps .step-detail {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+}
+.plan-steps .step-bar {
+  grid-column: 2;
+  height: 6px;
+  margin-top: 3px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.15);
+  overflow: hidden;
+}
+.plan-steps .step-bar[hidden] {
+  display: none;
+}
+.plan-steps .step-bar > span {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 0.2s;
+}
+.plan-steps li.pending {
+  opacity: 0.45;
+}
+.plan-steps li.active .step-icon {
+  color: var(--accent);
+  animation: step-pulse 1s ease-in-out infinite;
+}
+.plan-steps li.done .step-icon {
+  color: var(--accent-2);
+}
+.plan-steps li.skipped {
+  opacity: 0.7;
+}
+@keyframes step-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .plan-steps li.active .step-icon {
+    animation: none;
+  }
+}

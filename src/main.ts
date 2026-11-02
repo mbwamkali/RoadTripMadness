@@ -13,7 +13,7 @@ import { addStateLines, buildRouteData, pathFromRoute, realKmAt, type RawRoute, 
 import { latLngAt, loadStateMap } from './geo/states';
 import { overpassStreets } from './geo/streets';
 import { fetchLiveConditions, liveEnabled, setLiveEnabled, type LiveConditions } from './geo/liveWeather';
-import { isOffline, planTrip, searchAnywhere } from './offline/planner';
+import { isOffline, planTrip, prefetchStreets, searchAnywhere, type PlanStep, type StepId } from './offline/planner';
 import { tripCache } from './offline/tripCache';
 import { checkForUpdate, registerServiceWorker } from './offline/registerSw';
 import { buildLabel } from './build';
@@ -312,6 +312,41 @@ function placePicker(label: string, onPick: (p: Place | null) => void, withGps: 
   );
 }
 
+const PLAN_STEPS: [StepId, string][] = [
+  ['map', 'Highway map'],
+  ['streets', 'Local streets'],
+  ['network', 'Building the road network'],
+  ['route', 'Finding the fastest route'],
+  ['landmarks', 'Landmarks along the way'],
+];
+
+/** The list of planning steps, each with its real state and numbers. */
+function planStepsView(): { el: HTMLElement; update: (step: PlanStep) => void } {
+  const rows = new Map<StepId, { row: HTMLElement; icon: HTMLElement; detail: HTMLElement; bar: HTMLElement }>();
+  const el = h(
+    'ol',
+    { class: 'plan-steps', 'aria-live': 'polite' },
+    ...PLAN_STEPS.map(([id, label]) => {
+      const icon = h('span', { class: 'step-icon' }, '○');
+      const detail = h('span', { class: 'step-detail' });
+      const bar = h('span', { class: 'step-bar', hidden: true }, h('span', {}));
+      const row = h('li', { class: 'pending' }, icon, h('span', { class: 'step-label' }, label), detail, bar);
+      rows.set(id, { row, icon, detail, bar });
+      return row;
+    }),
+  );
+  const update = (step: PlanStep) => {
+    const r = rows.get(step.id);
+    if (!r) return;
+    r.row.className = step.state;
+    r.icon.textContent = step.state === 'done' ? '✓' : step.state === 'skipped' ? '–' : '●';
+    r.detail.textContent = step.detail ?? '';
+    r.bar.hidden = step.fraction === undefined;
+    if (step.fraction !== undefined) (r.bar.firstChild as HTMLElement).style.width = `${Math.round(step.fraction * 100)}%`;
+  };
+  return { el, update };
+}
+
 function showSetup(): void {
   clearUi();
   let from: Place | null = null;
@@ -320,22 +355,35 @@ function showSetup(): void {
   const go = h('button', { class: 'btn primary', disabled: true }, 'Plan the route');
   // Shown only while the live landmark lookup runs (when the road build has no landmark files).
   const skipScout = h('button', { class: 'btn small ghost', hidden: true }, 'Skip landmark scouting');
+  // Shown while the trip waits for the local street lookup.
+  const skipStreets = h('button', { class: 'btn small ghost', hidden: true }, 'Skip local streets');
+  let steps: ReturnType<typeof planStepsView> | null = null;
+  const stepsBox = h('div', { class: 'plan-steps-box' });
   const refresh = () => {
     go.disabled = !(from && to);
   };
   go.addEventListener('click', async () => {
     if (!from || !to) return;
     go.disabled = true;
-    go.textContent = 'Finding the fastest road…';
+    go.textContent = 'Planning…';
     err.replaceChildren();
+    steps = planStepsView();
+    stepsBox.replaceChildren(steps.el);
     try {
       const { raw, note } = await planTrip(
         from,
         to,
-        (msg) => (go.textContent = msg),
+        (msg, step) => {
+          go.textContent = msg;
+          if (step) steps?.update(step);
+        },
         (skip) => {
           skipScout.hidden = !skip;
           skipScout.onclick = skip;
+        },
+        (skip) => {
+          skipStreets.hidden = !skip;
+          skipStreets.onclick = skip;
         },
       );
       previewRoute(buildRouteData(raw), note);
@@ -345,6 +393,7 @@ function showSetup(): void {
         h('button', { class: 'btn small', onclick: () => previewRoute(buildRouteData(demoRawRoute())) }, 'Play the offline demo instead'),
       );
       go.textContent = 'Plan the route';
+      stepsBox.replaceChildren();
       refresh();
     }
   });
@@ -353,9 +402,11 @@ function showSetup(): void {
       'div',
       { class: 'screen setup' },
       h('h2', {}, 'Where are you headed?'),
-      placePicker('Start', (p) => ((from = p), refresh()), true),
-      placePicker('Destination', (p) => ((to = p), refresh()), false),
+      placePicker('Start', (p) => ((from = p), p && prefetchStreets(p), refresh()), true),
+      placePicker('Destination', (p) => ((to = p), p && prefetchStreets(p), refresh()), false),
       go,
+      stepsBox,
+      skipStreets,
       skipScout,
       err,
       h('button', { class: 'btn ghost', onclick: showTitle }, '← Back'),

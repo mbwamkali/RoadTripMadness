@@ -1,7 +1,6 @@
 import { haversineMeters, type LatLng } from '../geo/geo';
 import type { RawRoute, RawStep } from '../geo/route';
-import type { OsmElement } from '../geo/overpass';
-import { joinLocalStreets } from '../geo/localStreets';
+import { keepJoined } from '../geo/localStreets';
 import { MinHeap, nearRoute, turnModifier } from './atlas';
 
 /**
@@ -39,7 +38,8 @@ export interface RoadIndex {
   attribution: string;
   q: number;
   tileDeg: number;
-  backbone: { file: string; gzipBytes: number; km: number };
+  /** rawBytes: unpacked size, for download progress (builds from 2026-11-02 on). */
+  backbone: { file: string; gzipBytes: number; rawBytes?: number; km: number };
   towns: { file: string; count: number };
   tiles: [number, number, number][];
   /** Landmark files (src/offline/features.ts) as [x, y, gzipBytes]; missing in builds made before they were added. */
@@ -100,19 +100,39 @@ export class RoadNet {
   /** CSR adjacency over directed moves: from node n, edges adjEdge[adjStart[n] .. adjStart[n+1]). */
   private readonly adjStart: Int32Array;
   private readonly adjEdge: Int32Array;
-  private readonly grid = new Map<number, number[]>();
-  private readonly exitAt = new Map<number, [string, string]>();
+  /** Nearest-node lookup grids: a base network's, shared, plus one for the nodes this network added. */
+  private readonly grids: Map<number, number[]>[];
+  /** Node numbers by coordinate key: a base network's map (shared, never changed), then this network's own. */
+  private readonly idMaps: Map<number, number>[];
+  private readonly exitAt: Map<number, [string, string]>;
   readonly towns: Town[];
 
-  constructor(files: RoadFile[], towns: TownsFile | null = null) {
-    if (!files.length) throw new Error('No road files');
+  /**
+   * Builds a network from road files. With `base`, the new network extends an
+   * already built one (the backbone, say) with more files (tiles, local
+   * streets): the base's node and edge tables are copied and its lookup maps
+   * shared, so only the new files are processed. The base is not changed.
+   */
+  constructor(files: RoadFile[], towns: TownsFile | null = null, base: RoadNet | null = null) {
+    if (!files.length && !base) throw new Error('No road files');
     for (const f of files) if (f.version !== 2) throw new Error('Unsupported road file version');
-    this.files = files;
-    this.q = files[0].q;
-    this.attribution = files[0].attribution;
+    this.files = base ? [...base.files, ...files] : files;
+    this.q = base ? base.q : files[0].q;
+    this.attribution = base ? base.attribution : files[0].attribution;
+    const baseN = base ? base.nodeCount : 0;
+    const baseE = base ? base.edgeCount : 0;
+    const baseF = base ? base.files.length : 0;
 
     // Merge nodes across files by their exact integer coordinates.
     const ids = new Map<number, number>();
+    this.idMaps = base ? [...base.idMaps, ids] : [ids];
+    const lookup = (k: number) => {
+      for (const m of this.idMaps) {
+        const id = m.get(k);
+        if (id !== undefined) return id;
+      }
+      return undefined;
+    };
     const xs: number[] = [];
     const ys: number[] = [];
     const localToGlobal = files.map((f) => {
@@ -121,9 +141,9 @@ export class RoadNet {
         const x = f.nodes[i * 2];
         const y = f.nodes[i * 2 + 1];
         const k = nodeKey(x, y);
-        let id = ids.get(k);
+        let id = lookup(k);
         if (id === undefined) {
-          id = xs.length;
+          id = baseN + xs.length;
           ids.set(k, id);
           xs.push(x);
           ys.push(y);
@@ -132,10 +152,16 @@ export class RoadNet {
       }
       return map;
     });
-    this.nx = Int32Array.from(xs);
-    this.ny = Int32Array.from(ys);
+    this.nx = new Int32Array(baseN + xs.length);
+    this.ny = new Int32Array(baseN + ys.length);
+    if (base) {
+      this.nx.set(base.nx);
+      this.ny.set(base.ny);
+    }
+    this.nx.set(xs, baseN);
+    this.ny.set(ys, baseN);
 
-    let edgeCount = 0;
+    let edgeCount = baseE;
     for (const f of files) edgeCount += f.edges.length;
     this.ea = new Int32Array(edgeCount);
     this.eb = new Int32Array(edgeCount);
@@ -143,14 +169,23 @@ export class RoadNet {
     this.eIx = new Int32Array(edgeCount);
     this.cost = new Float64Array(edgeCount);
     const oneway = (this.oneway = new Uint8Array(edgeCount));
+    this.exitAt = base ? new Map(base.exitAt) : new Map();
+    if (base) {
+      this.ea.set(base.ea);
+      this.eb.set(base.eb);
+      this.eFile.set(base.eFile);
+      this.eIx.set(base.eIx);
+      this.cost.set(base.cost);
+      oneway.set(base.oneway);
+    }
     let maxKmh = DEFAULT_KMH[0];
-    let ei = 0;
+    let ei = baseE;
     files.forEach((f, fi) => {
       const map = localToGlobal[fi];
       f.edges.forEach((e, i) => {
         this.ea[ei] = map[e[0]];
         this.eb[ei] = map[e[1]];
-        this.eFile[ei] = fi;
+        this.eFile[ei] = baseF + fi;
         this.eIx[ei] = i;
         const kmh = e[7] > 0 ? Math.min(e[7], 140) : DEFAULT_KMH[e[2]] ?? 60;
         maxKmh = Math.max(maxKmh, kmh);
@@ -160,10 +195,10 @@ export class RoadNet {
       });
       for (const [n, ref, name] of f.exits ?? []) if (ref) this.exitAt.set(map[n], [ref, name]);
     });
-    this.maxSpeedMs = (maxKmh * PACE) / 3.6;
+    this.maxSpeedMs = Math.max((maxKmh * PACE) / 3.6, base?.maxSpeedMs ?? 0);
 
     // Directed adjacency: a one-way edge can only be driven a→b.
-    const n = xs.length;
+    const n = this.nx.length;
     const deg = new Int32Array(n + 1);
     for (let i = 0; i < edgeCount; i++) {
       deg[this.ea[i] + 1]++;
@@ -178,15 +213,35 @@ export class RoadNet {
       if (!oneway[i]) this.adjEdge[fill[this.eb[i]]++] = i;
     }
 
-    // Only nodes you can drive away from are useful starts; any node can be an end.
-    for (let i = 0; i < n; i++) {
+    // Grid of the new nodes for the nearest-node lookup.
+    const grid = new Map<number, number[]>();
+    this.grids = base ? [...base.grids, grid] : [grid];
+    for (let i = baseN; i < n; i++) {
       const c = this.cellOf(this.nx[i] / this.q, this.ny[i] / this.q);
-      let list = this.grid.get(c);
-      if (!list) this.grid.set(c, (list = []));
+      let list = grid.get(c);
+      if (!list) grid.set(c, (list = []));
       list.push(i);
     }
 
-    this.towns = (towns?.towns ?? []).map(([name, kind, x, y, pop]) => ({ name, city: kind === 0, pop, lng: x / towns!.q, lat: y / towns!.q }));
+    this.towns = towns
+      ? towns.towns.map(([name, kind, x, y, pop]) => ({ name, city: kind === 0, pop, lng: x / towns.q, lat: y / towns.q }))
+      : (base?.towns ?? []);
+  }
+
+  /** Whether a point (in 1/q degrees) is one of this network's nodes. */
+  hasNode(x: number, y: number): boolean {
+    const k = nodeKey(x, y);
+    return this.idMaps.some((m) => m.has(k));
+  }
+
+  /**
+   * This network plus local street files (src/geo/localStreets.ts). Parts of
+   * them that never reach this network are left out. Builds on this network
+   * instead of starting again, so it's quick.
+   */
+  withStreets(files: RoadFile[]): RoadNet {
+    const joined = files.map((f) => keepJoined(f, (x, y) => this.hasNode(x, y))).filter((f): f is RoadFile => !!f);
+    return joined.length ? new RoadNet(joined, null, this) : this;
   }
 
   get nodeCount(): number {
@@ -216,7 +271,7 @@ export class RoadNet {
     const out: { node: number; meters: number }[] = [];
     for (let cx = Math.floor((p.lng - dLng) / CELL_DEG); cx <= Math.floor((p.lng + dLng) / CELL_DEG); cx++) {
       for (let cy = Math.floor((p.lat - dLat) / CELL_DEG); cy <= Math.floor((p.lat + dLat) / CELL_DEG); cy++) {
-        for (const i of this.grid.get(cx * 100_000 + cy) ?? []) {
+        for (const i of this.grids.flatMap((g) => g.get(cx * 100_000 + cy) ?? [])) {
           if (leaving && !this.canLeave(i)) continue;
           const m = haversineMeters(p, this.node(i));
           if (m <= maxMeters) out.push({ node: i, meters: m });
@@ -558,14 +613,35 @@ export function tilesFor(index: RoadIndex, points: LatLng[]): [number, number][]
 
 export const roadsUrl = (path: string) => new URL(`data/osm/${path}`, document.baseURI).href;
 
-export async function getRoadJson<T>(url: string): Promise<T> {
+export async function getRoadJson<T>(url: string, onBytes?: (received: number, total: number | null) => void, total: number | null = null): Promise<T> {
   const r = await fetch(url);
   if (!r.ok) throw new Error(`Road file missing (${r.status}): ${url.split('/').pop()}`);
-  return (await r.json()) as T;
+  if (!onBytes || !r.body) return (await r.json()) as T;
+  // Content-Length is the packed size when the server compresses, so only trust it when it doesn't.
+  const len = Number(r.headers.get('content-length')) || 0;
+  const size = total ?? (len && !r.headers.get('content-encoding') ? len : null);
+  const reader = r.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let got = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    got += value.length;
+    onBytes(got, size);
+  }
+  const all = new Uint8Array(got);
+  let at = 0;
+  for (const c of chunks) {
+    all.set(c, at);
+    at += c.length;
+  }
+  return JSON.parse(new TextDecoder().decode(all)) as T;
 }
 
 let indexLoad: Promise<RoadIndex> | null = null;
-let backboneLoad: Promise<{ built: string; file: RoadFile; towns: TownsFile | null }> | null = null;
+/** The backbone, built into a network once per road build and kept for later trips. */
+let backboneLoad: Promise<{ built: string; net: RoadNet }> | null = null;
 const tileLoads = new Map<string, Promise<RoadFile>>();
 
 /** The road index. Fetched fresh when online (the service worker falls back to its copy offline). */
@@ -579,32 +655,43 @@ export function loadRoadIndex(): Promise<RoadIndex> {
   return indexLoad;
 }
 
+/** Progress while the highway map loads: bytes so far and the total when known, or a short message. */
+export interface MapProgress {
+  received?: number;
+  total?: number | null;
+  message: string;
+}
+
+/** Lets the browser draw a frame (the progress list) before a long piece of work. */
+export const nextFrame = () => new Promise<void>((r) => setTimeout(r, 0));
+
 /**
- * Loads the backbone and the tiles around the given points and builds a road
- * network from them. File URLs carry the build date, so the service worker
- * keeps one copy of each build and a new build replaces it cleanly.
- *
- * `streets` is a running lookup of the local streets around the points
- * (src/geo/localStreets.ts). When it answers, its streets are joined on;
- * when it fails, the network is just the highways.
+ * Loads the highway map for a trip: the backbone (downloaded and built into
+ * a network once, then kept) extended with the tiles around the given
+ * points. File URLs carry the build date, so the service worker keeps one
+ * copy of each build and a new build replaces it cleanly.
  */
-export async function loadRoadNet(
-  points: LatLng[],
-  progress: (message: string) => void = () => {},
-  streets: Promise<{ elements?: OsmElement[] } | null> | null = null,
-): Promise<RoadNet & { localStreets: boolean }> {
+export async function loadHighways(points: LatLng[], progress: (p: MapProgress) => void = () => {}): Promise<RoadNet> {
   const index = await loadRoadIndex();
   const v = encodeURIComponent(index.built);
   if (!backboneLoad || (await backboneLoad.catch(() => null))?.built !== index.built) {
-    progress(`Loading the highway map (${(index.backbone.gzipBytes / 1e6).toFixed(0)} MB the first time)…`);
     tileLoads.clear();
+    const mb = (n: number) => (n / 1e6).toFixed(1);
     backboneLoad = Promise.all([
-      getRoadJson<RoadFile>(roadsUrl(`${index.backbone.file}?v=${v}`)),
+      getRoadJson<RoadFile>(
+        roadsUrl(`${index.backbone.file}?v=${v}`),
+        (got, total) => progress({ received: got, total, message: total ? `${mb(got)} of ${mb(total)} MB` : `${mb(got)} MB` }),
+        index.backbone.rawBytes ?? null,
+      ),
       getRoadJson<TownsFile>(roadsUrl(`${index.towns.file}?v=${v}`)).catch(() => null),
-    ]).then(([file, towns]) => ({ built: index.built, file, towns }));
+    ]).then(async ([file, towns]) => {
+      progress({ message: 'unpacking' });
+      await nextFrame();
+      return { built: index.built, net: new RoadNet([file], towns) };
+    });
     backboneLoad.catch(() => (backboneLoad = null));
   }
-  const { file: backbone, towns } = await backboneLoad;
+  const { net } = await backboneLoad;
   const tiles = await Promise.all(
     tilesFor(index, points).map(([x, y]) => {
       const name = `tiles/${x}_${y}.json`;
@@ -617,14 +704,7 @@ export async function loadRoadNet(
       return load;
     }),
   );
-  const files = [backbone, ...tiles];
-  let local: RoadFile | null = null;
-  if (streets) {
-    progress('Finding the local streets…');
-    const json = await streets.catch(() => null);
-    local = json ? joinLocalStreets(json, files) : null;
-  }
-  return Object.assign(new RoadNet(local ? [...files, local] : files, towns), { localStreets: !!local });
+  return tiles.length ? new RoadNet(tiles, null, net) : net;
 }
 
 /** The point a share t (0..1) of the way along a line. */

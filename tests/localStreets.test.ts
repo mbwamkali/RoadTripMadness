@@ -44,11 +44,33 @@ const answer = {
 } as never;
 
 describe('local streets', () => {
-  it('asks for side streets close by and bigger roads further out, around each point', () => {
-    const q = buildLocalStreetsQuery([{ lat: 41.8, lng: -71.4 }, { lat: 36.1, lng: -115.1 }]);
-    expect(q.match(/around:2000/g)).toHaveLength(2);
-    expect(q.match(/around:6000/g)).toHaveLength(2);
-    expect(q).toContain('out skel qt');
+  it('asks for side streets close by and bigger roads further out, with points inline', () => {
+    const q = buildLocalStreetsQuery({ lat: 41.8, lng: -71.4 });
+    expect(q).toContain('around:2000,41.80000,-71.40000');
+    expect(q).toContain('around:4000');
+    expect(q).toContain('around:3000');
+    expect(q).not.toMatch(/motorway/);
+    expect(q).toContain('out geom qt');
+  });
+
+  it('reads ways with inline points the same as ways with separate nodes', () => {
+    const els = (answer as { elements: { type: string; id: number; nodes?: number[]; lat?: number; lon?: number }[] }).elements;
+    const at = new Map(els.filter((e) => e.type === 'node').map((e) => [e.id, { lat: e.lat!, lon: e.lon! }]));
+    const inline = { elements: els.filter((e) => e.type === 'way').map((e) => ({ ...e, nodes: undefined, geometry: e.nodes!.map((n) => at.get(n)!) })) } as never;
+    expect(localStreetsFile(inline, Q, 'x', [highways])).toEqual(localStreetsFile(answer, Q, 'x', [highways]));
+  });
+
+  it('joins streets onto a built network without rebuilding it', () => {
+    const highwaysNet = new RoadNet([highways]);
+    const all = localStreetsFile(answer, Q, 'x');
+    const net = highwaysNet.withStreets([all]);
+    expect(net.edgeCount).toBe(highwaysNet.edgeCount + 3); // Island Court left out
+    expect(highwaysNet.withStreets([]).edgeCount).toBe(highwaysNet.edgeCount);
+    const home = { lat: 0.1001, lng: 0.2301 };
+    const a = net.planTrip(home, { lat: 0, lng: -0.001 }, 'Home', 'West');
+    const b = new RoadNet([highways, localStreetsFile(answer, Q, 'x', [highways])]).planTrip(home, { lat: 0, lng: -0.001 }, 'Home', 'West');
+    expect(a.coords).toEqual(b.coords);
+    expect(a.realSeconds).toBeCloseTo(b.realSeconds, 6);
   });
 
   it('rounds like the build script so shared junctions line up', () => {
@@ -65,7 +87,7 @@ describe('local streets', () => {
   it('splits streets where they meet and drops streets that never reach a highway', () => {
     const f = localStreetsFile(answer, Q, 'x', [highways]);
     expect(f.kind).toBe('local');
-    expect(f.names).not.toContain('Island Court');
+    expect(f.edges.map((e) => f.names[e[4]])).not.toContain('Island Court');
     // Elm Street splits at Oak Lane: 2 pieces, plus Oak Lane.
     expect(f.edges).toHaveLength(3);
     const oak = f.edges.find((e) => f.names[e[4]] === 'Oak Lane')!;

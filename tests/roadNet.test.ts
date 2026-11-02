@@ -94,6 +94,20 @@ describe('RoadNet', () => {
     expect(last.lng).toBeCloseTo(0.05, 3);
   });
 
+  it('extends a built network with more files and routes the same as building it all at once', () => {
+    const base = new RoadNet([backbone]);
+    const ext = new RoadNet([tile], null, base);
+    expect(ext.nodeCount).toBe(net().nodeCount);
+    expect(ext.edgeCount).toBe(net().edgeCount);
+    expect(base.edgeCount).toBe(3); // unchanged
+    const a = ext.planTrip({ lat: -0.001, lng: 0 }, { lat: 0.101, lng: 0.2 }, 'West', 'North');
+    const b = net().planTrip({ lat: -0.001, lng: 0 }, { lat: 0.101, lng: 0.2 }, 'West', 'North');
+    expect(a.coords).toEqual(b.coords);
+    expect(a.exits).toEqual(b.exits);
+    expect(ext.hasNode(...(p(0.2, 0.1) as [number, number]))).toBe(true);
+    expect(base.hasNode(...(p(0.2, 0.1) as [number, number]))).toBe(false);
+  });
+
   it('fails clearly when a place is far from every road', () => {
     expect(() => net().planTrip({ lat: 10, lng: 10 }, { lat: 0, lng: 0 }, 'Nowhere', 'West')).toThrow(/too far/);
   });
