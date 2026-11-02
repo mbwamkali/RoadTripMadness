@@ -71,7 +71,7 @@ export const SECTIONS: Section[] = [
       { icon: '🪧', title: 'A sign shows up', text: 'When a town is coming, a sign pops up at the bottom.' },
       { icon: '▶️', title: 'Take the exit', text: 'Tap Take the exit once. The blinker goes on and the car turns in by itself.' },
       { icon: '⏩', title: 'Or keep driving', text: 'Tap Keep driving to skip that town.' },
-      { icon: '🏘️', title: 'In town', text: 'Get gas, fix the car, buy ammo and upgrades, or search buildings for supplies. Searching can wake up zombies!' },
+      { icon: '🏘️', title: 'In town', text: 'Tap a building. Get gas, fix the car, or search: tap the boxes! Too much noise wakes zombies.' },
     ],
   },
   {

@@ -30,7 +30,11 @@ import {
   repair,
   repairCost,
   saveGame,
-  search,
+  crateCount,
+  openCrate,
+  scavengeNoise,
+  scavengeSummary,
+  startScavenge,
   tankSize,
   type ActionResult,
   type GameState,
@@ -57,6 +61,8 @@ import { CombatScene } from './scenes/CombatScene';
 import { clearUi, fmtKm, h, ui } from './ui/dom';
 import { Minimap } from './ui/minimap';
 import { PLACE_ICONS, TownMap } from './ui/townMap';
+import { TownScene } from './scenes/townScene';
+import { openScavengeScene } from './scenes/scavengeScene';
 import { gunDamageFor, MAX_LEVEL, ramDamageFor, upgradeCost, UPGRADES, type UpgradeKind } from './game/upgrades';
 import { sound } from './audio/sound';
 import { loadQualityChoice, nextQualityChoice, quality, QUALITY_NAMES, resolveQuality, saveQualityChoice } from './scenes/quality';
@@ -161,6 +167,7 @@ function showTitle(): void {
       h('button', { class: 'btn', onclick: () => showHowToPlay(showTitle) }, '❓ How to play'),
       h('button', { class: 'btn ghost', onclick: showScores }, '🏆 High scores'),
       kidModeButton(),
+      voiceButton(),
       installButton(),
       isOffline() && h('div', { class: 'offline-badge' }, 'Offline: classic, saved and atlas trips still work'),
       buildLine(),
@@ -955,6 +962,74 @@ function narrationButton(): HTMLElement | null {
   );
 }
 
+/** Opens the narrator voice settings: the phone's voices, speed and pitch, with a Test button. */
+function voiceButton(): HTMLElement | null {
+  if (!narrator.available) return null;
+  return h('button', { class: 'btn', onclick: () => showVoiceSettings() }, '🎙️ Narrator voice');
+}
+
+function showVoiceSettings(): void {
+  const sample = () => narrator.say("Hi! I'm your road trip narrator. Watch out for zombies!", true);
+  const select = h('select', { class: 'voice-select', 'aria-label': 'Voice' }) as HTMLSelectElement;
+  const fillVoices = () => {
+    const list = narrator.voices();
+    select.replaceChildren(
+      h('option', { value: '' }, 'Automatic'),
+      ...list.map((v) => h('option', { value: v.voiceURI }, `${v.name} (${v.lang})${v.localService ? '' : ' · online'}`)),
+    );
+    select.value = narrator.voiceId && list.some((v) => v.voiceURI === narrator.voiceId) ? narrator.voiceId : '';
+  };
+  fillVoices();
+  // Some browsers hand over their voices a moment after the page loads.
+  speechSynthesis.addEventListener?.('voiceschanged', fillVoices);
+  select.addEventListener('change', () => {
+    narrator.setVoice(select.value || null);
+    sample();
+  });
+  const slider = (label: string, min: number, max: number, get: () => number, set: (v: number) => void) => {
+    const out = h('span', { class: 'voice-value' }, `${get().toFixed(2)}×`);
+    const input = h('input', { type: 'range', min, max, step: 0.05, value: get(), 'aria-label': label }) as HTMLInputElement;
+    input.addEventListener('input', () => {
+      set(parseFloat(input.value));
+      out.textContent = `${get().toFixed(2)}×`;
+    });
+    input.addEventListener('change', sample);
+    return h('label', { class: 'voice-slider' }, h('span', {}, label), input, out);
+  };
+  const close = () => {
+    speechSynthesis.removeEventListener?.('voiceschanged', fillVoices);
+    overlay.remove();
+  };
+  const overlay = h(
+    'div',
+    { class: 'modal voice-modal' },
+    h(
+      'div',
+      { class: 'card voice-card', 'data-quiet': true },
+      h('h2', {}, '🎙️ Narrator voice'),
+      h('p', { class: 'muted' }, 'Voices come from this phone or tablet. Pick one, then tap Test.'),
+      select,
+      slider('🐢 Speed 🐇', 0.5, 1.5, () => narrator.rate, (v) => narrator.setRate(v)),
+      slider('Pitch', 0.5, 2, () => narrator.pitch, (v) => narrator.setPitch(v)),
+      h('button', { class: 'btn', onclick: sample }, '🔊 Test'),
+      h(
+        'button',
+        {
+          class: 'btn ghost',
+          onclick: () => {
+            narrator.resetVoice();
+            close();
+            showVoiceSettings();
+          },
+        },
+        'Reset to default',
+      ),
+      h('button', { class: 'btn primary', onclick: close }, 'Done'),
+    ),
+  );
+  ui().append(overlay);
+}
+
 /** Opens the pause menu if the car is out on the road and not already paused. */
 function pauseDriving(): void {
   if (drive && active === drive && drive.onRoad && state?.status === 'driving') showPauseMenu();
@@ -1002,6 +1077,7 @@ function showPauseMenu(): void {
         `Sound effects: ${sound.settings.sfx ? 'on' : 'off'}`,
       ),
       narrationButton(),
+      voiceButton(),
       h(
         'button',
         {
@@ -1192,25 +1268,40 @@ const PLACE_BLURBS: Record<PlaceKind, string> = {
   motel: 'Room keys still on the hooks. Guests left in a hurry.',
 };
 
+/** The town on screen, for play tests. */
+let townView: TownScene | TownMap | null = null;
+
 function showStop(stop: Stop): void {
   const s = state!;
   saveGame(s);
   clearUi();
-  const log = h('div', { class: 'log' }, h('p', {}, `You pull into ${stop.name}. The place is quiet. Too quiet.`));
+  const night = isNight(hourOf(s));
+  const kid = kidMode.on;
+  // Medium and High draw the town in 3D with the road's models; Low keeps the flat map.
+  const in3d = modelsWanted() && modelsReady();
+  const log = h('div', { class: 'log' }, h('p', {}, kid ? `You pull into ${stop.name}.` : `You pull into ${stop.name}. The place is quiet. Too quiet.`));
   const invEl = h('div', {});
   const meters = h('div', { class: 'stats' });
   const fuel = bar('fuel', '⛽');
   const hp = bar('hp', '🔧');
-  meters.append(fuel.el, hp.el);
+  meters.append(fuel.el, hp.el, invEl);
+  const noise = h('div', { class: 'noise' }, h('span', {}, '🔊'), h('div', { class: 'track' }, h('span', { class: 'fill' })), h('span', {}, '🧟'));
+  const searchesAt = (p: PlaceKind) => s.searches[`${stop.id}:${p}`] ?? 0;
   const refresh = () => {
     fuel.set(s.inv.fuel, tankSize(s));
     hp.set(s.health, maxHealth(s));
-    invEl.replaceChildren(inventoryLine(s));
-    map.setSearches(Object.fromEntries(stop.places.map((p) => [p, s.searches[`${stop.id}:${p}`] ?? 0])));
-    sheet.replaceChildren(current ? placeCard(current) : h('p', { class: 'muted hint' }, '👆 Tap a building to walk over and look around.'));
+    invEl.replaceChildren(kid ? kidSupplies(s) : inventoryLine(s));
+    map.setSearches(Object.fromEntries(stop.places.map((p) => [p, searchesAt(p)])));
+    // The meter shows how noisy the chosen building already is.
+    const v = current ? Math.min(0.6, searchesAt(current) * 0.25) : 0;
+    (noise.querySelector('.fill') as HTMLElement).style.width = `${Math.round(v * 100)}%`;
+    noise.classList.toggle('warm', v > 0.33 && v <= 0.66);
+    noise.classList.toggle('hot', v > 0.66);
+    noise.hidden = !current;
+    sheet.replaceChildren(current ? placeCard(current) : h('p', { class: 'muted hint' }, kid ? '👆 Tap a building!' : '👆 Tap a building to walk over and look around.'));
   };
   const say = (r: ActionResult) => {
-    log.prepend(h('p', { class: r.ok ? '' : 'muted' }, r.message));
+    log.prepend(h('p', { class: r.ok ? '' : 'muted' }, kid ? oneLine(r.message) : r.message));
     if (r.ambush) sound.bad();
     else if (r.ok) sound.coin();
     if (r.ambush) {
@@ -1219,68 +1310,106 @@ function showStop(stop: Stop): void {
     }
     refresh();
   };
+  /** Search, played: tap crates inside the building (state.ts keeps the same loot and odds). */
+  const scavenge = (place: PlaceKind) => {
+    const sc = startScavenge(s, stop.id, place, crateCount(kid));
+    saveGame(s);
+    sound.click();
+    openScavengeScene(ui(), {
+      place,
+      title: PLACE_TITLES[place],
+      crates: sc.crates.length,
+      kid,
+      night,
+      noise: scavengeNoise(sc),
+      open: (i) => {
+        const r = openCrate(s, sc, i);
+        return { ...r, noise: scavengeNoise(sc) };
+      },
+      done: (ambush) => {
+        saveGame(s);
+        say(scavengeSummary(sc, ambush));
+      },
+      say: (t) => narrator.say(t),
+      sfx: sound,
+    });
+    narrator.say(kid ? 'Tap the boxes!' : `${PLACE_TITLES[place]}. Tap the boxes. Too much noise brings zombies.`);
+  };
   const placeCard = (place: PlaceKind) => {
-    const n = s.searches[`${stop.id}:${place}`] ?? 0;
+    const n = searchesAt(place);
     const actions: HTMLElement[] = [];
+    const big = (icon: string, text: string) => [h('span', { class: 'big-icon' }, icon), text] as const;
     if (place === 'pumps') {
       const want = Math.max(0, Math.floor(tankSize(s) - s.inv.fuel));
-      actions.push(h('button', { class: 'btn small primary', onclick: () => say(buyFuel(s)), disabled: want === 0 }, `Fill up ($${Math.min(want * FUEL_PRICE, Math.floor(s.inv.cash / FUEL_PRICE) * FUEL_PRICE)})`));
+      const price = Math.min(want * FUEL_PRICE, Math.floor(s.inv.cash / FUEL_PRICE) * FUEL_PRICE);
+      actions.push(h('button', { class: 'btn small primary', onclick: () => say(buyFuel(s)), disabled: want === 0 }, ...big('⛽', want === 0 ? 'Tank is full' : kid ? `$${price}` : `Fill up ($${price})`)));
     }
     if (place === 'garage') {
       const cost = repairCost(s);
       actions.push(
-        h('button', { class: 'btn small primary', onclick: () => say(repair(s)), disabled: cost.hp === 0 }, cost.hp ? `Repair (${cost.scrap} scrap or $${cost.cash})` : 'Car is fine'),
-        h('button', { class: 'btn small', onclick: () => showUpgrades(s, say) }, '🔧 Upgrades'),
+        h('button', { class: 'btn small primary', onclick: () => say(repair(s)), disabled: cost.hp === 0 }, ...big('🔧', cost.hp ? (kid ? 'Fix' : `Repair (${cost.scrap} scrap or $${cost.cash})`) : 'Car is fine')),
+        h('button', { class: 'btn small', onclick: () => showUpgrades(s, say) }, ...big('⬆️', 'Upgrades')),
       );
     }
-    actions.push(h('button', { class: 'btn small', onclick: () => say(search(s, stop.id, place)) }, n === 0 ? 'Search' : `Search again (${n === 1 ? 'risky' : 'very risky'})`));
+    actions.push(h('button', { class: `btn small ${actions.length ? '' : 'primary'}`, onclick: () => scavenge(place) }, ...big('🔍', n === 0 ? 'Search' : kid ? 'Again' : 'Search again')));
     return h(
       'div',
       { class: `place ${place}` },
-      h('h3', {}, `${PLACE_ICONS[place]} ${PLACE_TITLES[place]}`),
-      h('p', { class: 'muted' }, PLACE_BLURBS[place]),
+      h('h3', {}, h('span', { class: 'big-icon' }, PLACE_ICONS[place]), ` ${PLACE_TITLES[place]}`),
+      kid || in3d ? '' : h('p', { class: 'muted' }, PLACE_BLURBS[place]),
       h('div', { class: 'row' }, ...actions),
     );
   };
   let current: PlaceKind | null = null;
   const sheet = h('div', { class: 'sheet' });
-  const map = new TownMap(stop, isNight(hourOf(s)), (place) => {
+  const arrive = (place: PlaceKind) => {
     current = place;
     refresh();
-  });
-  ui().append(
-    h(
-      'div',
-      { class: 'screen explore' },
-      h('h2', {}, `${stop.name}`, h('small', {}, ` ${STOP_TITLES[stop.kind]}`)),
-      h(
-        'p',
-        { class: 'muted' },
-        isNight(hourOf(s))
-          ? `🌙 ${clockText(hourOf(s))}. It's dark: you'll find more, but every search takes 45 minutes.`
-          : `☀️ ${clockText(hourOf(s))}. Every search takes 45 minutes.`,
-      ),
-      meters,
-      invEl,
-      map.svg,
-      sheet,
-      log,
-      h(
-        'button',
-        {
-          class: 'btn primary',
-          onclick: () => {
-            saveGame(s);
-            showDriveHud();
-            drive!.resume();
-            sound.startMusic();
-            setScene(drive);
-          },
-        },
-        'Back on the road',
-      ),
-    ),
+    narrator.say(PLACE_TITLES[place]);
+  };
+  const map = in3d ? new TownScene(stop, night, arrive, s.upgrades) : new TownMap(stop, night, arrive);
+  townView = map;
+  const back = h(
+    'button',
+    {
+      class: 'btn primary back-road',
+      onclick: () => {
+        saveGame(s);
+        showDriveHud();
+        drive!.resume();
+        sound.startMusic();
+        setScene(drive);
+      },
+    },
+    '🚗 Back on the road',
   );
+  const clock = night ? `🌙 ${clockText(hourOf(s))}` : `☀️ ${clockText(hourOf(s))}`;
+  if (map instanceof TownScene) {
+    ui().append(
+      h(
+        'div',
+        { class: 'screen explore town3d-screen' },
+        map.el,
+        h('div', { class: 'town3d-top' }, meters, h('div', { class: 'town-chip' }, h('h2', {}, stop.name), h('small', {}, `${clock} · ${STOP_TITLES[stop.kind]}`))),
+        h('div', { class: 'town3d-bottom' }, noise, sheet, log, back),
+      ),
+    );
+  } else {
+    ui().append(
+      h(
+        'div',
+        { class: 'screen explore' },
+        h('h2', {}, `${stop.name}`, h('small', {}, ` ${STOP_TITLES[stop.kind]}`)),
+        h('p', { class: 'muted' }, night ? `${clock}. It's dark: you'll find more, but every search takes 45 minutes.` : `${clock}. Every search takes 45 minutes.`),
+        meters,
+        map.svg,
+        noise,
+        sheet,
+        log,
+        back,
+      ),
+    );
+  }
   refresh();
 }
 
@@ -1724,6 +1853,18 @@ registerServiceWorker(() => {
   /** Shows a boss's intro card (its button starts the fight). */
   bossIntro(boss: BossKind) {
     showBossIntro(boss);
+  },
+  /** Opens a stop's town (index into the trip's stops; the first town by default). */
+  stop(i?: number) {
+    const s = state!;
+    const st = i == null ? s.stops.find((x) => x.places.length >= 4) ?? s.stops[0] : s.stops[i];
+    if (drive) (drive as unknown as { paused: boolean }).paused = true;
+    showStop(st);
+    return st;
+  },
+  /** Walks to a building in the open town, as if it was tapped. */
+  visit(place: PlaceKind) {
+    townView?.walkTo(place);
   },
   /** Starts a fight on the spot; `horde` forces (true) or blocks (false) a zombie horde. */
   fight(theme?: EnemyType, horde?: boolean) {

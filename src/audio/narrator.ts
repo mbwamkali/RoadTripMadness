@@ -38,11 +38,49 @@ let enabled = (() => {
 })();
 let voice: SpeechSynthesisVoice | null = null;
 
+const VOICE_KEY = 'rtm-voice';
+const RATE_KEY = 'rtm-voice-rate';
+const PITCH_KEY = 'rtm-voice-pitch';
+export const DEFAULT_RATE = 0.95;
+export const DEFAULT_PITCH = 1.05;
+const read = (k: string): string | null => {
+  try {
+    return localStorage.getItem(k);
+  } catch {
+    return null;
+  }
+};
+const write = (k: string, v: string | null): void => {
+  try {
+    if (v == null) localStorage.removeItem(k);
+    else localStorage.setItem(k, v);
+  } catch {
+    // Storage blocked: it lasts for this visit.
+  }
+};
+const clamp = (v: number, lo: number, hi: number, d: number) => (Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d);
+/** The chosen voice (its voiceURI), or null for the automatic pick. */
+let chosen: string | null = read(VOICE_KEY);
+let rate = clamp(parseFloat(read(RATE_KEY) ?? ''), 0.5, 1.5, DEFAULT_RATE);
+let pitch = clamp(parseFloat(read(PITCH_KEY) ?? ''), 0.5, 2, DEFAULT_PITCH);
+
+type VoiceLike = Pick<SpeechSynthesisVoice, 'name' | 'lang' | 'localService' | 'voiceURI'>;
+
 /** A clear English voice, preferring one that runs on the device. */
-function pickVoice(): SpeechSynthesisVoice | null {
-  const all = synth()?.getVoices() ?? [];
+export function autoVoice<V extends VoiceLike>(all: V[]): V | null {
   const en = all.filter((v) => /^en(-|_|$)/i.test(v.lang));
   return en.find((v) => v.localService && /en-US/i.test(v.lang)) ?? en.find((v) => v.localService) ?? en[0] ?? all[0] ?? null;
+}
+
+/** Voices for the picker: English first (on-device ones before online ones), then the rest, each by name. */
+export function orderVoices<V extends VoiceLike>(all: V[]): V[] {
+  const rank = (v: V) => (/^en(-|_|$)/i.test(v.lang) ? 0 : 2) + (v.localService ? 0 : 1);
+  return [...all].sort((a, b) => rank(a) - rank(b) || a.lang.localeCompare(b.lang) || a.name.localeCompare(b.name));
+}
+
+function pickVoice(): SpeechSynthesisVoice | null {
+  const all = synth()?.getVoices() ?? [];
+  return (chosen && all.find((v) => v.voiceURI === chosen)) || autoVoice(all);
 }
 synth()?.addEventListener?.('voiceschanged', () => (voice = pickVoice()));
 
@@ -79,9 +117,42 @@ export const narrator = {
     voice = voice ?? pickVoice();
     if (voice) u.voice = voice;
     u.lang = voice?.lang ?? 'en-US';
-    u.rate = 0.95;
-    u.pitch = 1.05;
+    u.rate = rate;
+    u.pitch = pitch;
     s.speak(u);
+  },
+  /** The voices this device offers, in picker order (may be empty until the browser loads them). */
+  voices(): SpeechSynthesisVoice[] {
+    return orderVoices(synth()?.getVoices() ?? []);
+  },
+  /** The chosen voice's voiceURI, or null for automatic. */
+  get voiceId(): string | null {
+    return chosen;
+  },
+  setVoice(id: string | null): void {
+    chosen = id;
+    write(VOICE_KEY, id);
+    voice = pickVoice();
+  },
+  get rate(): number {
+    return rate;
+  },
+  get pitch(): number {
+    return pitch;
+  },
+  setRate(v: number): void {
+    rate = clamp(v, 0.5, 1.5, DEFAULT_RATE);
+    write(RATE_KEY, String(rate));
+  },
+  setPitch(v: number): void {
+    pitch = clamp(v, 0.5, 2, DEFAULT_PITCH);
+    write(PITCH_KEY, String(pitch));
+  },
+  /** Back to the automatic voice at the normal speed and pitch. */
+  resetVoice(): void {
+    this.setVoice(null);
+    this.setRate(DEFAULT_RATE);
+    this.setPitch(DEFAULT_PITCH);
   },
   stop(): void {
     synth()?.cancel();

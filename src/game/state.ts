@@ -325,6 +325,113 @@ export function search(s: GameState, stopId: string, place: PlaceKind): ActionRe
   return { ok: true, message: `Found ${found.join(', ')}.` };
 }
 
+/** Loot names as the result line says them: "12 dollars, 3 bullets". */
+export function lootText(loot: Partial<Inventory>): string {
+  return (Object.entries(loot) as [keyof Inventory, number][])
+    .filter(([, v]) => v > 0)
+    .map(([k, v]) => `${v} ${k === 'cash' ? 'dollars' : k}`)
+    .join(', ');
+}
+
+/** One search, played as a few crates the player taps open. */
+export interface Scavenge {
+  stopId: string;
+  place: PlaceKind;
+  /** What each crate holds; together exactly what one search() would find. */
+  crates: Partial<Inventory>[];
+  opened: boolean[];
+  /** How many crates have been opened. */
+  opens: number;
+  /** The open (1-based) that brings the ambush, or 0 for none. */
+  ambushOn: number;
+  /** How noisy the building already was from earlier searches, 0..1. */
+  startNoise: number;
+  found: Partial<Inventory>;
+  over: boolean;
+}
+
+export const crateCount = (kid: boolean) => (kid ? 3 : 4);
+
+/**
+ * Starts a crate search. Same cost, loot and ambush odds as search(): the
+ * loot roll is identical, split across the crates, and the ambush (if this
+ * search would have drawn one) comes on a random open. Opening every crate
+ * risks exactly what one search does; stopping early risks less and finds less.
+ */
+export function startScavenge(s: GameState, stopId: string, place: PlaceKind, count = 4): Scavenge {
+  const key = `${stopId}:${place}`;
+  const n = s.searches[key] ?? 0;
+  s.searches[key] = n + 1;
+  s.hoursSpent += 0.75;
+  const rng = makeRng(s.seed ^ hashString(`${key}:${n}`));
+  const ambushChance = Math.min(0.75, 0.15 + n * 0.2) - (s.crew.includes('dog') ? 0.1 : 0);
+  const ambush = rng() < ambushChance;
+  const loot = LOOT[place](rng);
+  const factor = (n === 0 ? 1 : n === 1 ? 0.5 : 0.2) * nightLoot(hourOf(s));
+  const crates: Partial<Inventory>[] = Array.from({ length: count }, () => ({}));
+  for (const [k, v] of Object.entries(loot) as [keyof Inventory, number][]) {
+    let amount = Math.floor((v ?? 0) * factor);
+    if (amount <= 0) continue;
+    // Small amounts go in one or two crates so each find is worth a cheer.
+    const parts = Math.max(1, Math.min(count, Math.ceil(amount / 4)));
+    const start = Math.floor(rng() * count);
+    for (let i = 0; i < parts && amount > 0; i++) {
+      const share = i === parts - 1 ? amount : Math.max(1, Math.round(amount / (parts - i)));
+      const c = crates[(start + i) % count];
+      c[k] = (c[k] ?? 0) + share;
+      amount -= share;
+    }
+  }
+  return {
+    stopId,
+    place,
+    crates,
+    opened: crates.map(() => false),
+    opens: 0,
+    ambushOn: ambush ? 1 + Math.floor(rng() * count) : 0,
+    startNoise: Math.min(0.6, n * 0.25),
+    found: {},
+    over: false,
+  };
+}
+
+/** How full the noise meter is, 0..1. Full means the ambush is here. */
+export function scavengeNoise(sc: Scavenge): number {
+  if (sc.ambushOn && sc.opens >= sc.ambushOn) return 1;
+  return Math.min(0.95, sc.startNoise + ((1 - sc.startNoise) * 0.9 * sc.opens) / sc.crates.length);
+}
+
+/** Opens crate i: adds its loot to the car, or springs the ambush. */
+export function openCrate(s: GameState, sc: Scavenge, i: number): { loot: Partial<Inventory>; ambush: boolean } {
+  if (sc.over || sc.opened[i]) return { loot: {}, ambush: false };
+  sc.opened[i] = true;
+  sc.opens++;
+  if (sc.ambushOn && sc.opens >= sc.ambushOn) {
+    sc.over = true;
+    return { loot: {}, ambush: true };
+  }
+  const loot: Partial<Inventory> = {};
+  for (const [k, v] of Object.entries(sc.crates[i]) as [keyof Inventory, number][]) {
+    const before = s.inv[k];
+    s.inv[k] = k === 'fuel' ? Math.min(tankSize(s), before + v) : before + v;
+    const got = Math.round(s.inv[k] - before);
+    if (got > 0) {
+      loot[k] = got;
+      sc.found[k] = (sc.found[k] ?? 0) + got;
+    }
+  }
+  if (sc.opened.every(Boolean)) sc.over = true;
+  return { loot, ambush: false };
+}
+
+/** The line for the stop's log once the player leaves the building. */
+export function scavengeSummary(sc: Scavenge, ambush: boolean): ActionResult {
+  if (ambush) return { ok: true, ambush: true, message: "Something heard you. They're coming!" };
+  const text = lootText(sc.found);
+  if (text) return { ok: true, message: `Found ${text}.` };
+  return { ok: true, message: sc.opens ? 'Picked clean. Nothing useful left here.' : 'You looked around and left.' };
+}
+
 /** Buys the next level of an upgrade, paying scrap first and cash for the rest of the price. */
 export function buyUpgrade(s: GameState, kind: UpgradeKind): ActionResult {
   const level = s.upgrades[kind];

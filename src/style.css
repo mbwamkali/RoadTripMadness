@@ -1570,3 +1570,324 @@ body.kid .howto-tip b {
   font-weight: 700;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
+
+/* ------------------------------------------------------------------ crate search */
+
+.scavenge {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  background: #2a1f18;
+  animation: slideUp 0.2s;
+}
+
+.scavenge canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: manipulation;
+}
+
+.scavenge-title {
+  position: absolute;
+  top: calc(8px + var(--safe-t));
+  left: 0;
+  right: 0;
+  text-align: center;
+  pointer-events: none;
+  text-shadow: 0 2px 0 #2a1404, 0 0 12px rgba(0, 0, 0, 0.6);
+}
+
+.scavenge-title b {
+  display: block;
+  font-size: 30px;
+  font-weight: 900;
+  color: var(--accent-2);
+  letter-spacing: 0.5px;
+}
+
+.scavenge-title small {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.scavenge.ambush .scavenge-title b {
+  color: var(--bad);
+}
+
+.scavenge.ambush::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 90px 30px rgba(255, 0, 0, 0.55);
+}
+
+.scavenge-pops {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.scavenge-pop {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-size: 32px;
+  font-weight: 900;
+  color: #fff;
+  text-shadow: 0 2px 0 #2a1404, 0 0 8px rgba(0, 0, 0, 0.5);
+  animation: popUp 1.4s ease-out forwards;
+}
+
+@keyframes popUp {
+  0% { opacity: 0; margin-top: 10px; }
+  15% { opacity: 1; }
+  75% { opacity: 1; }
+  100% { opacity: 0; margin-top: -40px; }
+}
+
+.scavenge-bottom,
+.explore.town3d-screen > .town3d-bottom {
+  position: absolute;
+  left: calc(10px + var(--safe-l));
+  right: calc(10px + var(--safe-r));
+  bottom: calc(14px + var(--safe-b));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 560px;
+  margin: 0 auto;
+}
+
+.scavenge-tray {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+  min-height: 36px;
+}
+
+.scavenge-tray span {
+  background: var(--panel);
+  border-radius: 12px;
+  padding: 6px 10px;
+  font-weight: 800;
+  font-size: 18px;
+}
+
+.noise {
+  display: grid;
+  grid-template-columns: 28px 1fr 28px;
+  gap: 8px;
+  align-items: center;
+  background: var(--panel);
+  border-radius: 14px;
+  padding: 8px 12px;
+  font-size: 20px;
+}
+
+.noise .track {
+  height: 14px;
+}
+
+.noise .fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 7px;
+  background: var(--good);
+  transition: width 0.3s, background 0.3s;
+}
+
+.noise.warm .fill {
+  background: var(--accent-2);
+}
+
+.noise.hot .fill {
+  background: var(--bad);
+}
+
+.noise.hot {
+  animation: hotPulse 0.8s ease-in-out infinite alternate;
+}
+
+@keyframes hotPulse {
+  to { box-shadow: 0 0 0 3px rgba(255, 77, 77, 0.6); }
+}
+
+.scavenge-run {
+  min-height: 64px;
+  font-size: 20px;
+}
+
+.scavenge-run.pulse {
+  animation: hotPulse 0.7s ease-in-out infinite alternate;
+}
+
+/* ------------------------------------------------------------------ 3D town */
+
+.explore.town3d-screen {
+  padding: 0;
+  background: #1b1410;
+  overflow: hidden;
+  max-width: none;
+}
+
+.explore.town3d-screen > * {
+  width: auto;
+  max-width: none;
+  /* Absolutely placed children of a flex column would otherwise shrink to their content. */
+  align-self: stretch;
+}
+
+.explore.town3d-screen > .town3d {
+  position: absolute;
+  inset: 0;
+}
+
+.town3d canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: manipulation;
+}
+
+.explore.town3d-screen > .town3d-top {
+  position: absolute;
+  top: calc(10px + var(--safe-t));
+  left: calc(10px + var(--safe-l));
+  right: calc(10px + var(--safe-r));
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.town3d-top > * {
+  pointer-events: auto;
+}
+
+.town3d-top .stats {
+  flex: 0 1 230px;
+}
+
+.town-chip {
+  background: var(--panel);
+  border-radius: 14px;
+  padding: 8px 12px;
+  text-align: right;
+  min-width: 0;
+}
+
+.town-chip h2 {
+  margin: 0;
+  font-size: 19px;
+  line-height: 1.15;
+}
+
+.town-chip small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.town3d-bottom .sheet .place,
+.town3d-bottom .sheet .hint {
+  background: var(--panel);
+  border-radius: 16px;
+  margin: 0;
+}
+
+.town3d-bottom .sheet .hint {
+  padding: 12px;
+  font-size: 18px;
+  color: var(--ink);
+}
+
+.town3d-bottom .log {
+  max-height: 52px;
+  background: var(--panel);
+}
+
+.town3d-bottom .log p:not(:first-child) {
+  display: none;
+}
+
+.town3d-bottom .back-road {
+  min-height: 58px;
+  font-size: 19px;
+}
+
+.place .row .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.big-icon {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.place h3 .big-icon {
+  font-size: 28px;
+}
+
+.noise[hidden] {
+  display: none;
+}
+
+.explore.town3d-screen > .town3d-bottom {
+  max-width: 560px;
+}
+
+/* ------------------------------------------------------------------ narrator voice */
+
+.voice-card {
+  text-align: left;
+}
+
+.voice-card h2,
+.voice-card p {
+  text-align: center;
+}
+
+.voice-select {
+  font: inherit;
+  font-size: 16px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.1);
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-radius: 12px;
+  padding: 12px;
+  min-height: 48px;
+  width: 100%;
+}
+
+.voice-select option {
+  color: #1b1410;
+}
+
+.voice-slider {
+  display: grid;
+  grid-template-columns: 96px 1fr 52px;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+}
+
+.voice-slider input {
+  width: 100%;
+  accent-color: var(--accent);
+  min-height: 36px;
+}
+
+.voice-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
