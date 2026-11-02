@@ -228,10 +228,16 @@ export function openScavengeScene(root: HTMLElement, o: ScavengeSceneOptions): (
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     // Portrait phones need to stand further back to see the whole shelf.
-    const back = camera.aspect < 0.7 ? 15 : 11;
+    // Short landscape screens stand back a little more so nothing hides under the buttons.
+    const short = camera.aspect > 1 && h < 520;
+    const back = camera.aspect < 0.7 ? 15 : short ? 14.5 : 11;
     camera.fov = camera.aspect < 0.7 ? 70 : 55;
     camera.position.set(0, 10.5, back);
     camera.lookAt(0, 1.6, -3);
+    // Centre the shelf in the space between the title and the buttons at the bottom.
+    const shift = short ? Math.max(0, (bottom.offsetHeight - head.offsetHeight) / 2) : 0;
+    if (shift > 0) camera.setViewOffset(w, h + 2 * shift, 0, 2 * shift, w, h);
+    else camera.clearViewOffset();
     camera.updateProjectionMatrix();
   };
   resize();

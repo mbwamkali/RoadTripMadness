@@ -6,3 +6,4 @@ test-results
 data-src/
 __pycache__/
 smoke-out/
+layout-out/

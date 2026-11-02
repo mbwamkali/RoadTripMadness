@@ -170,7 +170,7 @@ export function showHowToPlay(back: () => void): void {
       h('p', { class: 'muted' }, narrator.available ? 'Tap any picture to hear it.' : 'Drive, fight and get to the end of the road.'),
       jump,
       ...sections,
-      h('button', { class: 'btn primary', onclick: () => (narrator.stop(), back()) }, '← Back'),
+      h('div', { class: 'actions' }, h('button', { class: 'btn primary', onclick: () => (narrator.stop(), back()) }, '← Back')),
     ),
   );
   if (kidMode.on) narrator.say('How to play. Tap any picture to hear it.');

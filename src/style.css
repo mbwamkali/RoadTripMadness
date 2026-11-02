@@ -147,7 +147,6 @@ body.hurt::after {
 }
 
 .title {
-  justify-content: center;
   text-align: center;
 }
 
@@ -667,9 +666,18 @@ body.hurt::after {
   inset: 0;
   background: rgba(0, 0, 0, 0.55);
   display: flex;
-  align-items: center;
+  /* The card centres itself with auto margins: centred when it fits, and when it
+     doesn't the modal scrolls from the top instead of cutting off both ends. */
+  align-items: flex-start;
   justify-content: center;
-  padding: 20px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: calc(16px + var(--safe-t)) calc(16px + var(--safe-r)) calc(16px + var(--safe-b)) calc(16px + var(--safe-l));
+}
+
+.modal > .card {
+  margin: auto 0;
+  flex: none;
 }
 
 .card {
@@ -689,7 +697,6 @@ body.hurt::after {
 }
 
 .end {
-  justify-content: center;
   text-align: center;
 }
 
@@ -920,8 +927,6 @@ body.hurt::after {
 
 .card.wide {
   width: min(480px, 100%);
-  max-height: 90vh;
-  overflow-y: auto;
 }
 
 .upgrades {
@@ -1955,4 +1960,313 @@ body.kid .howto-tip b {
   .plan-steps li.active .step-icon {
     animation: none;
   }
+}
+
+/* ------------------------------------------------------------------ fit every screen */
+
+/* Centred screens: auto margins centre them when they fit, and when they don't the
+   top stays reachable (justify-content: center would push it off the top). */
+.title > :first-child,
+.end > :first-child {
+  margin-top: auto;
+}
+.title > :last-child,
+.end > :last-child {
+  margin-bottom: auto;
+}
+
+/* The main buttons of a long screen stay pinned to the bottom while the rest scrolls. */
+.screen > .actions {
+  position: sticky;
+  bottom: calc(-24px - var(--safe-b));
+  margin: 0 -20px calc(-24px - var(--safe-b));
+  padding: 14px 20px calc(14px + var(--safe-b));
+  display: flex;
+  gap: 10px;
+  background: linear-gradient(180deg, rgba(27, 20, 16, 0), var(--bg) 14px);
+  z-index: 2;
+}
+.screen > .actions > .btn {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.screen > .actions > .btn.primary {
+  flex-grow: 2;
+}
+.screen > .actions > .btn.ghost {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: var(--ink);
+}
+
+/* Buttons at the bottom of a card. */
+.card-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.card-actions.sticky {
+  position: sticky;
+  bottom: 0;
+  margin: 0 -20px -20px;
+  padding: 12px 20px 20px;
+  background: linear-gradient(180deg, rgba(42, 31, 24, 0), #2a1f18 12px);
+  border-radius: 0 0 18px 18px;
+}
+
+.voice-card .card-actions {
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+.voice-card .card-actions .btn {
+  flex: 1 1 90px;
+}
+.voice-card .card-actions .btn.primary {
+  flex-basis: 100%;
+}
+
+/* Pause menu: a long list of sights scrolls on its own. */
+.pause-card .menu-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pause-card .menu-info p {
+  margin: 0;
+}
+.pause-card .sights {
+  max-height: 150px;
+  overflow-y: auto;
+  margin: 0;
+}
+
+/* Fight buttons squeeze to fit narrow phones instead of falling off the edges. */
+.combat .row > .btn {
+  min-width: 0;
+}
+@media (max-width: 400px) {
+  .btn.steer {
+    width: 52px;
+    flex: none;
+  }
+  .combat .btn.action {
+    white-space: normal;
+    line-height: 1.15;
+    font-size: 14px;
+    padding: 6px 4px;
+  }
+  .combat .row {
+    gap: 6px;
+  }
+}
+
+/* Short screens (small phones, and every phone held sideways). */
+@media (max-height: 640px) {
+  .title h1 {
+    font-size: clamp(34px, 9vh, 60px);
+  }
+  .tag {
+    margin-bottom: 4px;
+  }
+  .modal {
+    padding: calc(8px + var(--safe-t)) calc(10px + var(--safe-r)) calc(8px + var(--safe-b)) calc(10px + var(--safe-l));
+  }
+  .card {
+    padding: 14px;
+    gap: 8px;
+  }
+  .card-actions.sticky {
+    margin: 0 -14px -14px;
+    padding: 10px 14px 14px;
+  }
+  .event-scene {
+    max-height: 30vh;
+    max-height: 30dvh;
+    width: auto;
+    max-width: 100%;
+    margin: 0 auto;
+  }
+  .event-icon.pop {
+    font-size: 56px;
+  }
+  .event-scene {
+    max-height: 24vh;
+    max-height: 24dvh;
+  }
+  .btn.choice {
+    padding: 8px 12px;
+    min-height: 48px;
+  }
+  /* Kid choices: picture beside the words, so three still fit. */
+  .card.event.kid .btn.choice {
+    flex-direction: row;
+    justify-content: center;
+    gap: 12px;
+    min-height: 64px;
+  }
+  .card.event.kid h2 {
+    font-size: 24px;
+  }
+  .pause-card .sights {
+    max-height: 96px;
+  }
+  /* Pause menu buttons in two columns. */
+  .pause-card {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  .pause-card > .menu-info,
+  .pause-card > .btn.primary {
+    grid-column: 1 / -1;
+  }
+  .pause-card > .btn {
+    padding: 10px 8px;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 560px) {
+  /* Title menu: two columns of buttons. */
+  .screen.title {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-content: start;
+    max-width: 760px;
+    gap: 10px;
+  }
+  .screen.title > :not(.btn) {
+    grid-column: 1 / -1;
+  }
+  .screen.title > :first-child,
+  .screen.title > :last-child {
+    margin: 0;
+  }
+  .screen.title > .build-line {
+    margin-top: 4px;
+  }
+  .title h1 {
+    font-size: 40px;
+  }
+  .title h1 span {
+    display: inline-block;
+  }
+
+  /* Event, out-of-gas and boss cards: story on the left, choices on the right. */
+  .card.event,
+  .boss-intro .card {
+    width: min(780px, 100%);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: 16px;
+    align-items: center;
+  }
+  .card.event > *,
+  .boss-intro .card > * {
+    grid-column: 1;
+  }
+  .card.event > .event-body,
+  .boss-intro .card > .btn {
+    grid-column: 2;
+    grid-row: 1 / span 6;
+  }
+  .event-scene {
+    max-height: 42vh;
+    max-height: 42dvh;
+  }
+
+  /* Pause menu: info on the left, buttons on the right. */
+  .pause-card {
+    width: min(720px, 100%);
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 1fr);
+    align-items: start;
+  }
+  .pause-card > .menu-info {
+    grid-column: 1;
+    grid-row: 1 / span 4;
+  }
+  .pause-card > .btn.primary {
+    grid-column: 2 / -1;
+  }
+
+  .voice-card,
+  .card.wide {
+    width: min(640px, 100%);
+  }
+  .voice-card .card-actions .btn.primary {
+    flex-basis: 90px;
+  }
+  .voice-card > p.muted {
+    display: none;
+  }
+
+  /* 3D town: the panel moves to the right so the town stays in view. */
+  .explore.town3d-screen > .town3d-bottom {
+    left: auto;
+    width: min(360px, 46vw);
+    margin: 0;
+    gap: 8px;
+  }
+  .town3d-top .stats {
+    flex-basis: 220px;
+  }
+  .town3d-bottom .back-road {
+    min-height: 50px;
+  }
+  .town3d-bottom .sheet .place {
+    padding: 8px 10px;
+  }
+  .town3d-bottom .sheet .place h3 {
+    margin-bottom: 4px;
+  }
+  .town3d-bottom .log {
+    max-height: 40px;
+    font-size: 13px;
+  }
+  .town3d-bottom .log p {
+    margin: 4px 0;
+  }
+  .town-chip {
+    padding: 6px 10px;
+  }
+  .town-chip h2 {
+    font-size: 16px;
+  }
+  .town-chip small {
+    display: none;
+  }
+
+  /* Crate search: a lower bar so the boxes stay tappable. */
+  .scavenge-bottom {
+    gap: 6px;
+    bottom: calc(8px + var(--safe-b));
+  }
+  .scavenge-tray {
+    min-height: 0;
+  }
+  .scavenge-run {
+    min-height: 54px;
+  }
+
+  /* Kid shoot button: beside the dashboard, clear of the radio and menu buttons. */
+  body.kid .shoot-row .btn.shoot {
+    bottom: 4px;
+  }
+
+  /* Landmark toast: centred between the meters and the map, never on top of them. */
+  .hud .stats {
+    max-width: 32vw;
+  }
+  .landmark-toast {
+    max-width: 34vw;
+  }
+}
+
+/* Flat (Low graphics) town: the map shrinks and "Back on the road" stays on screen. */
+.explore:not(.town3d-screen) .town-map {
+  max-height: 55vh;
+  max-height: 55dvh;
+}
+.explore:not(.town3d-screen) > .back-road {
+  position: sticky;
+  bottom: 0;
+  box-shadow: 0 -6px 18px rgba(27, 20, 16, 0.9);
 }

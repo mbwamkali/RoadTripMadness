@@ -237,7 +237,7 @@ function showScores(): void {
       { class: 'screen scores-screen' },
       h('h2', {}, '🏆 High scores'),
       scoreTable(loadScores()),
-      h('button', { class: 'btn ghost', onclick: showTitle }, '← Back'),
+      h('div', { class: 'actions' }, h('button', { class: 'btn ghost', onclick: showTitle }, '← Back')),
     ),
   );
 }
@@ -544,10 +544,15 @@ function previewRoute(route: RouteData, note?: string, back: () => void = showSe
       h('div', { class: 'rides' }, ...rideBtns),
       rideBlurb,
       careerNote(),
-      h('button', { class: 'btn primary', onclick: go }, 'Hit the road'),
       realMap && liveBtn,
-      h('button', { class: 'btn ghost', onclick: back }, back === showSetup ? '← Pick different places' : '← Back'),
       h('p', { class: 'fine' }, route.attribution, realMap ? ' Weather data by Open-Meteo.com.' : ''),
+      // Pinned to the bottom of the screen so nobody has to scroll to start.
+      h(
+        'div',
+        { class: 'actions' },
+        h('button', { class: 'btn ghost', onclick: back }, '← Back'),
+        h('button', { class: 'btn primary', onclick: go }, 'Hit the road'),
+      ),
     ),
   );
 }
@@ -1066,20 +1071,24 @@ function showVoiceSettings(): void {
       select,
       slider('🐢 Speed 🐇', 0.5, 1.5, () => narrator.rate, (v) => narrator.setRate(v)),
       slider('Pitch', 0.5, 2, () => narrator.pitch, (v) => narrator.setPitch(v)),
-      h('button', { class: 'btn', onclick: sample }, '🔊 Test'),
       h(
-        'button',
-        {
-          class: 'btn ghost',
-          onclick: () => {
-            narrator.resetVoice();
-            close();
-            showVoiceSettings();
+        'div',
+        { class: 'card-actions' },
+        h('button', { class: 'btn', onclick: sample }, '🔊 Test'),
+        h(
+          'button',
+          {
+            class: 'btn ghost',
+            onclick: () => {
+              narrator.resetVoice();
+              close();
+              showVoiceSettings();
+            },
           },
-        },
-        'Reset to default',
+          'Reset',
+        ),
+        h('button', { class: 'btn primary', onclick: close }, 'Done'),
       ),
-      h('button', { class: 'btn primary', onclick: close }, 'Done'),
     ),
   );
   ui().append(overlay);
@@ -1114,11 +1123,15 @@ function showPauseMenu(): void {
     { class: 'modal' },
     h(
       'div',
-      { class: 'card', 'data-quiet': true },
-      h('h2', {}, 'Paused'),
-      h('p', {}, `Encounters survived: ${state!.encounters} · Kills: ${state!.kills}`),
-      h('p', { class: 'fine build' }, buildLabel()),
-      sightsPassed(),
+      { class: 'card pause-card', 'data-quiet': true },
+      h(
+        'div',
+        { class: 'menu-info' },
+        h('h2', {}, 'Paused'),
+        h('p', {}, `Encounters survived: ${state!.encounters} · Kills: ${state!.kills}`),
+        h('p', { class: 'fine build' }, buildLabel()),
+        sightsPassed(),
+      ),
       h('button', { class: 'btn primary', onclick: close }, 'Keep driving'),
       h(
         'button',
@@ -1517,7 +1530,7 @@ function showUpgrades(s: GameState, say: (r: ActionResult) => void): void {
   const overlay = h(
     'div',
     { class: 'modal' },
-    h('div', { class: 'card wide', 'data-quiet': true }, h('h2', {}, 'Garage upgrades'), wallet, list, h('button', { class: 'btn primary', onclick: () => overlay.remove() }, 'Done')),
+    h('div', { class: 'card wide', 'data-quiet': true }, h('h2', {}, 'Garage upgrades'), wallet, list, h('div', { class: 'card-actions sticky' }, h('button', { class: 'btn primary', onclick: () => overlay.remove() }, 'Done'))),
   );
   render();
   ui().append(overlay);
@@ -1858,8 +1871,7 @@ function showEnd(): void {
       ),
       h('h3', {}, '🏆 High scores'),
       scoreTable(list, rank),
-      h('button', { class: 'btn primary', onclick: showSetup }, 'Plan another trip'),
-      h('button', { class: 'btn', onclick: showTitle }, 'Title screen'),
+      h('div', { class: 'actions' }, h('button', { class: 'btn', onclick: showTitle }, 'Title screen'), h('button', { class: 'btn primary', onclick: showSetup }, 'Plan another trip')),
     ),
   );
   state = null;
@@ -1924,6 +1936,25 @@ registerServiceWorker(() => {
   /** Walks to a building in the open town, as if it was tapped. */
   visit(place: PlaceKind) {
     townView?.walkTo(place);
+  },
+  /** Opens overlays straight away, for the layout check (scripts/layout-audit.mjs). */
+  pause() {
+    showPauseMenu();
+  },
+  roadEvent() {
+    if (drive) drive.paused = true;
+    showRoadEvent(rollEvent(state!));
+  },
+  bikeRescue() {
+    if (drive) drive.paused = true;
+    showBikeRescue();
+  },
+  upgrades() {
+    showUpgrades(state!, () => {});
+  },
+  end(won = true) {
+    state!.status = won ? 'won' : 'lost';
+    showEnd();
   },
   /** Starts a fight on the spot; `horde` forces (true) or blocks (false) a zombie horde. */
   fight(theme?: EnemyType, horde?: boolean) {

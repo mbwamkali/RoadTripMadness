@@ -31,8 +31,8 @@ export function showClassics(onPick: (raw: RawRoute) => void, onBack: () => void
       h('p', { class: 'muted' }, 'Real roads, built into the game. These work with no connection.'),
       h('div', { class: 'trip-list' }, ...CURATED_ROUTES.map(card)),
       err,
-      h('button', { class: 'btn ghost', onclick: onBack }, '← Back'),
       h('p', { class: 'fine' }, 'Routes © OpenStreetMap contributors (ODbL), planned with the game\'s own router.'),
+      h('div', { class: 'actions' }, h('button', { class: 'btn ghost', onclick: onBack }, '← Back')),
     ),
   );
 }
@@ -89,7 +89,7 @@ export function showSavedTrips(onPick: (raw: RawRoute) => void, onBack: () => vo
       h('h2', {}, 'Saved trips'),
       h('p', { class: 'muted' }, 'Routes you planned before. They work with no connection.'),
       list,
-      h('button', { class: 'btn ghost', onclick: onBack }, '← Back'),
+      h('div', { class: 'actions' }, h('button', { class: 'btn ghost', onclick: onBack }, '← Back')),
     ),
   );
 }
