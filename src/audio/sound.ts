@@ -268,6 +268,22 @@ class Sound {
     for (const f of [392, 494]) this.tone('square', f, 0.55, 0.12, { attack: 0.02 });
   }
 
+  /** A cow's moo (honked at, or bumped). */
+  moo(at = 0): void {
+    if (!this.ready) return;
+    const t = this.t + at;
+    this.tone('sawtooth', 150, 1, 0.07, { to: 105, attack: 0.18, at: t });
+    this.tone('sine', 300, 0.9, 0.06, { to: 210, attack: 0.18, at: t });
+  }
+
+  /** A giant armadillo's surprised squeak. */
+  squeak(at = 0): void {
+    if (!this.ready) return;
+    const t = this.t + at;
+    this.tone('triangle', 900, 0.14, 0.1, { to: 1500, at: t });
+    this.tone('triangle', 1000, 0.16, 0.08, { to: 1700, at: t + 0.18 });
+  }
+
   boost(): void {
     if (!this.ready) return;
     this.noise(1.2, 'bandpass', 700, 0.5, 0.6);

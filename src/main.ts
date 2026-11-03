@@ -651,6 +651,19 @@ function startTripNow(s: GameState): void {
         setTimeout(showEnd, 900);
       }
     },
+    onAnimals: (kind, count) => {
+      const many = count > 1;
+      if (kind === 'cow') showToast('🐄', many ? 'Cows on the road!' : 'A cow on the road!', 'Slow down, steer around, or honk 📯');
+      else showToast('🦔', many ? 'Giant armadillos!' : 'A giant armadillo!', 'Slow down, steer around, or honk 📯');
+    },
+    onAnimalBump: (kind, cost) => {
+      showToast(kind === 'cow' ? '🐄' : '🦔', kind === 'cow' ? 'Bonk! The cow is OK' : 'Bonk! The armadillo is OK', cost ? `−${cost} car health` : 'The ram plate takes it');
+      if (cost) navigator.vibrate?.(40);
+      if (state?.status === 'lost' && drive) {
+        drive.paused = true;
+        setTimeout(showEnd, 900);
+      }
+    },
     onCrash: (kind, dmg) => {
       const what = { car: 'a car', motorcycle: 'a motorcycle', pickup: 'a pickup', van: 'a van', truck: 'a big rig' }[kind];
       showToast('💥', `You hit ${what}`, `−${dmg} car health`);
@@ -910,6 +923,10 @@ function showDriveHud(): void {
   const shootBtn = pad('🔫', 'Shoot what is ahead', () => shootAhead());
   shootBtn.classList.add('shoot');
   const shootRow = h('div', { class: 'shoot-row' }, shootBtn);
+  // A horn button pops up when animals are crossing ahead (everyone gets it: honking is the fun part).
+  const hornBtn = pad('📯 Honk!', 'Honk at the animals', () => honkAt());
+  hornBtn.classList.add('honk');
+  const hornRow = h('div', { class: 'shoot-row horn-row' }, hornBtn);
   promptEl = h('div', { class: 'prompt' });
   promptFor = null;
   ui().append(
@@ -918,7 +935,7 @@ function showDriveHud(): void {
       { class: 'hud' },
       h('div', { class: 'landmark-toast' }),
       h('div', { class: 'hud-top' }, h('div', { class: 'stats' }, fuel.el, hp.el, rage.el, inv), h('div', { class: 'side' }, map.canvas, h('div', { class: 'row' }, radioBtn, speedBtn, menuBtn))),
-      h('div', { class: 'hud-bottom' }, promptEl, bigShoot && shootRow, dash, controls, progress, progressText),
+      h('div', { class: 'hud-bottom' }, promptEl, hornRow, bigShoot && shootRow, dash, controls, progress, progressText),
     ),
   );
   try {
@@ -962,6 +979,8 @@ function showDriveHud(): void {
       }
       dashMpg.textContent = String(Math.round(mpg(s, drive.throttle)));
       controls.classList.toggle('wrong-side', drive.wrongSide);
+      // The horn steps aside for a turn prompt too, so it never catches a tap meant for the exit.
+      hornRow.classList.toggle('show', !!drive.animalAhead && !promptEl?.classList.contains('show'));
       const t = drive.target;
       // The big shoot button sits just above the stop prompt; it steps aside while a turn is on offer,
       // or it would catch taps meant for "Take the exit".
@@ -989,6 +1008,13 @@ function tapHint(): void {
 
 const OBSTACLE_LABEL: Record<ObstacleKind, string> = { debris: 'Junk', zombie: 'Zombie', wreck: 'Wreck', roadblock: 'Roadblock' };
 const VEHICLE_LABEL: Record<VehicleKind, string> = { car: 'Car', motorcycle: 'Biker', pickup: 'Pickup', van: 'Van', truck: 'Big rig' };
+
+/** Honks the horn on the road: animals ahead hurry out of the way. */
+function honkAt(): void {
+  if (!drive) return;
+  drive.honk();
+  navigator.vibrate?.(30);
+}
 
 /** Fires at whatever is in the road ahead in your lane. */
 function shootAhead(): void {
@@ -1733,7 +1759,9 @@ canvas.addEventListener('pointerup', (e) => {
   }
   if (doubleTap.tap(e.clientX, e.clientY, e.timeStamp)) {
     const t = drive.pick(toNdc(e));
-    if (t) shootAt(t);
+    // Tapping an animal honks at it; animals are never shot.
+    if (t?.type === 'animal') honkAt();
+    else if (t) shootAt(t);
   }
 });
 canvas.addEventListener('pointercancel', () => {

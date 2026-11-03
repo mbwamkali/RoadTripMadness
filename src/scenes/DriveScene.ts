@@ -10,6 +10,8 @@ import { coolRage, HOSTILE_RANGE, hostileShot, rageOf, rollHostile, shootVehicle
 import { clampLane, defaultLane, laneCenter, oncoming, Traffic, type Vehicle, type VehicleKind } from '../game/traffic';
 import { Obstacles, ramObstacle, shootObstacle, SHOOT_RANGE, type Obstacle, type ObstacleKind } from '../game/obstacles';
 import { DIFFICULTIES } from '../game/difficulty';
+import { ANIMALS, Animals, bumpAnimal, type Animal, type AnimalKind } from '../game/animals';
+import { makeAnimal } from './animalModels';
 import { rideOf } from '../game/rides';
 import { STOP_TITLES, type Stop } from '../game/stops';
 import { hashString, makeRng, pick, type Rng } from '../game/rng';
@@ -54,10 +56,16 @@ export interface DriveCallbacks {
   onRam?(kind: ObstacleKind, cost: number): void;
   /** A hostile driver fired at you (damage already taken; 0 = missed). */
   onShotAt?(kind: VehicleKind, damage: number): void;
+  /** Animals are about to cross the road ahead (once per herd). */
+  onAnimals?(kind: AnimalKind, count: number): void;
+  /** Bumped into an animal (cost is car health lost; the animal is fine). */
+  onAnimalBump?(kind: AnimalKind, cost: number): void;
 }
 
 /** What the gun is pointed at: something in the road, or another vehicle. */
 export type ShotTarget = { type: 'obstacle'; o: Obstacle } | { type: 'vehicle'; v: Vehicle };
+/** What a tap picks: something to shoot, or an animal (tapping one honks at it). */
+export type PickTarget = ShotTarget | { type: 'animal'; a: Animal };
 
 /** Shared plant models; trees are a trunk plus a crown so each part gets its own colour. */
 function plantModels(): { geos: Record<string, THREE.BufferGeometry>; mats: Record<string, THREE.Material> } {
@@ -171,6 +179,12 @@ export class DriveScene implements GameScene {
   private crashCooldown = 0;
   private obstacles: Obstacles;
   private obstacleMeshes = new Map<number, THREE.Group>();
+  private animals: Animals;
+  private animalMeshes = new Map<number, THREE.Group>();
+  private announcedHerds = new Set<number>();
+  /** The car's speed last frame (units a second), so animals set off in time. */
+  private speed = 0;
+  private autoHonked = new Set<number>();
   /** Current sideways position of the car (eases between lanes when the road changes). */
   private lane = 2;
   private shoulderMat: THREE.MeshLambertMaterial;
@@ -239,6 +253,22 @@ export class DriveScene implements GameScene {
       urbanAt: (d) => (zones.some((z) => d >= z.from && d <= z.to) ? 1 : 0),
     });
     this.obstacles = new Obstacles(this.segments, path.length, state.seed ^ Math.floor(state.distance), state.distance, DIFFICULTIES[state.difficulty].gap);
+    // Animals cross more often in Texas and the desert; never in towns or on bridges and in tunnels.
+    const animalTowns = state.landmarks.filter((l) => l.kind === 'citysign').map((l) => l.at);
+    const desert = (d: number) => {
+      const b = biomeAtDistance(this.biomes, d);
+      return b === 'desert' || b === 'sagebrush';
+    };
+    this.animals = new Animals(this.segments, path.length, state.seed ^ Math.floor(state.distance), state.distance, {
+      edgeAt: (d) => this.edge(d),
+      desertAt: desert,
+      boost: (d) => (desert(d) || stateMap()?.stateAt(latLngAt(state.route, path, d))?.code === 'TX' ? 2 : 1),
+      blocked: (d) =>
+        !!structureAt(this.structures, d, 60) ||
+        animalTowns.some((t) => d > t - 150 && d < t + 900) ||
+        state.stops.some((st) => Math.abs(st.at - d) < 250) ||
+        zones.some((z) => d >= z.from && d <= z.to),
+    });
     this.roadSpeed = SPEED[classAt(this.segments, state.distance)].factor;
     this.shoulderMat = new THREE.MeshLambertMaterial({ color: groundColorAt(this.biomes, state.distance, 'shoulder'), polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
     // Photo grain on Medium/High (the colours still come from the climate).
@@ -465,6 +495,7 @@ export class DriveScene implements GameScene {
       if (!this.stopping) this.drive(dt);
       this.traffic.step(dt * (this.stopping ? 0.3 : 1), this.state.distance);
       this.obstacles.step(this.state.distance);
+      this.animals.step(dt, this.state.distance, this.stopping ? 0 : this.speed);
       this.trafficAvoidsObstacles();
       if (this.stopping) break;
     }
@@ -472,6 +503,7 @@ export class DriveScene implements GameScene {
     this.placeCar(false, dt);
     this.placeTraffic();
     this.placeObstacles();
+    this.placeAnimals();
   }
 
   private drive(dt: number): void {
@@ -494,7 +526,10 @@ export class DriveScene implements GameScene {
       const v = this.traffic.ahead(s.distance, this.playerLane, brakeRange(this.throttle));
       if (v) speed = Math.min(speed, v.speed * (1 - Math.max(0, 8 - (v.d - s.distance)) * 0.08));
     }
+    if (this.autopilot) speed = this.autopilotAnimals(speed);
     speed = Math.max(0, speed);
+    this.speed = speed;
+    this.announceAnimals();
     let step = speed * dt;
     if (this.pendingTurn && s.distance + step >= this.pendingTurn.at) {
       step = Math.max(0, this.pendingTurn.at - s.distance);
@@ -551,9 +586,59 @@ export class DriveScene implements GameScene {
     this.cb.onTick();
   }
 
+  /** Autopilot slows for animals in its path and honks them along, rather than hitting them. */
+  private autopilotAnimals(speed: number): number {
+    const a = this.animals.inPath(this.state.distance, this.lane, 70);
+    if (!a) return speed;
+    if (!this.autoHonked.has(a.herd)) {
+      this.autoHonked.add(a.herd);
+      this.honk();
+    }
+    const gap = a.d - this.state.distance;
+    return Math.min(speed, CRUISE_SPEED * Math.max(0, (gap - 8) / 70));
+  }
+
+  /** Tells the HUD once per herd that animals are about to cross. */
+  private announceAnimals(): void {
+    const a = this.animals.nearest(this.state.distance, 200);
+    if (!a || this.announcedHerds.has(a.herd)) return;
+    this.announcedHerds.add(a.herd);
+    const count = this.animals.list.filter((x) => x.herd === a.herd).length;
+    this.cb.onAnimals?.(a.kind, count);
+  }
+
+  /** An animal ahead that a honk would move along (for the HUD's horn button). */
+  get animalAhead(): Animal | null {
+    if (this.paused || this.stopping || this.turning) return null;
+    return this.animals.nearest(this.state.distance, 200);
+  }
+
+  /** Honk the horn: animals ahead trot off the road. Returns how many moved. */
+  honk(): number {
+    sound.horn();
+    const n = this.animals.honk(this.state.distance, this.lane);
+    if (n) {
+      const kinds = new Set(this.animals.list.filter((a) => a.mode === 'hurry').map((a) => a.kind));
+      if (kinds.has('cow')) sound.moo(0.5);
+      if (kinds.has('armadillo')) sound.squeak(0.4);
+    }
+    return n;
+  }
+
   /** Hitting another vehicle hurts, knocks it off the road and slows you down. */
   private checkCrash(): void {
     if (this.crashCooldown > 0) return;
+    const animal = this.animals.hit(this.state.distance, this.lane, rideOf(this.state).length);
+    if (animal) {
+      const cost = bumpAnimal(this.state, animal, this.lane);
+      if (animal.kind === 'cow') sound.moo();
+      else sound.squeak();
+      sound.carHit();
+      this.roadSpeed *= 0.6;
+      this.crashCooldown = 0.6;
+      this.cb.onAnimalBump?.(animal.kind, cost);
+      return;
+    }
     const o = this.obstacles.hit(this.state.distance, this.lane, (x) => this.obstacleX(x), rideOf(this.state).length);
     if (o) {
       const cost = ramObstacle(this.state, o);
@@ -630,14 +715,14 @@ export class DriveScene implements GameScene {
    * car or obstacle in range drawn nearest the tap, within a forgiving radius
    * so a small finger still hits a small car.
    */
-  pick(ndc: { x: number; y: number }, radius = 0.16): ShotTarget | null {
+  pick(ndc: { x: number; y: number }, radius = 0.16): PickTarget | null {
     if (this.paused || this.stopping || this.turning) return null;
     const d = this.state.distance;
     const aspect = this.camera.aspect || 1;
     const p = new THREE.Vector3();
-    let best: ShotTarget | null = null;
+    let best: PickTarget | null = null;
     let bestDist = radius;
-    const consider = (m: THREE.Object3D | undefined, t: ShotTarget) => {
+    const consider = (m: THREE.Object3D | undefined, t: PickTarget) => {
       if (!m) return;
       m.getWorldPosition(p);
       p.y += 1;
@@ -650,6 +735,7 @@ export class DriveScene implements GameScene {
       }
     };
     for (const o of this.obstacles.list) if (o.d > d - 2 && o.d - d <= SHOOT_RANGE) consider(this.obstacleMeshes.get(o.id), { type: 'obstacle', o });
+    for (const a of this.animals.list) if (a.d > d - 2 && a.d - d <= SHOOT_RANGE) consider(this.animalMeshes.get(a.id), { type: 'animal', a });
     for (const v of this.traffic.vehicles) {
       const gap = v.d - d;
       if ((gap > -2 && gap <= SHOOT_RANGE) || (v.hostile && Math.abs(gap) < HOSTILE_RANGE)) consider(this.vehicleMeshes.get(v.id), { type: 'vehicle', v });
@@ -697,8 +783,19 @@ export class DriveScene implements GameScene {
     return { kind: v.kind, destroyed: r.destroyed, scrap: r.scrap, vehicle: true };
   }
 
-  /** Traffic swerves round obstacles (or pulls off the road on a one-lane road). */
+  /** Traffic swerves round obstacles and crossing animals (or pulls off the road on a one-lane road). */
   private trafficAvoidsObstacles(): void {
+    for (const a of this.animals.active) {
+      if (a.mode === 'waiting') continue;
+      for (const v of this.traffic.vehicles) {
+        const gap = oncoming(v.lane) ? v.d - a.d : a.d - v.d;
+        if (gap < 0 || gap > 30 || Math.abs(this.vehicleX(v) - a.x) > ANIMALS[a.kind].width / 2 + 2) continue;
+        const n = PROFILES[classAt(this.segments, v.d)].lanes;
+        // Lanes count out from the centre line: 0, 1… on your side and -1, -2… oncoming.
+        if (n > 1) v.lane = oncoming(v.lane) ? (v.lane === -1 ? -2 : v.lane + 1) : v.lane === 0 ? 1 : v.lane - 1;
+        else this.traffic.remove(v);
+      }
+    }
     for (const o of this.obstacles.list) {
       for (const v of this.traffic.vehicles) {
         if (v.lane !== o.lane || v.d > o.d || o.d - v.d > 30) continue;
@@ -747,6 +844,47 @@ export class DriveScene implements GameScene {
       this.scene.remove(m);
       disposeTree(m);
       this.obstacleMeshes.delete(id);
+    }
+  }
+
+  /** Animals walk across the road, legs swinging; a bumped one wobbles with stars over its head. */
+  private placeAnimals(): void {
+    const alive = new Set<number>();
+    for (const a of this.animals.list) {
+      if (a.d - this.state.distance > this.ahead) continue;
+      alive.add(a.id);
+      let m = this.animalMeshes.get(a.id);
+      if (!m) {
+        m = makeAnimal(a.kind);
+        castShadows(m, this.shadows);
+        this.animalMeshes.set(a.id, m);
+        this.scene.add(m);
+      }
+      const p = this.path.pointAt(a.d);
+      const f = this.path.directionAt(a.d, 6);
+      m.position.set(p.x + f.y * a.x, 0, -p.y + f.x * a.x);
+      const moving = a.mode !== 'waiting' && a.mode !== 'done';
+      const pace = a.mode === 'crossing' ? 5 : 12;
+      // Head toward the way it walks; grazing ones turn a little along the road.
+      const heading = Math.atan2(a.dir * f.y, a.dir * f.x) + (moving ? 0 : 0.6 * a.dir);
+      m.rotation.y = heading;
+      m.rotation.z = a.mode === 'dazed' ? Math.sin(this.clock * 9) * 0.12 : 0;
+      let i = 0;
+      for (const c of m.children) {
+        if (c.name !== 'leg') continue;
+        c.rotation.x = moving ? Math.sin(this.clock * pace + a.id + (i++ % 2) * Math.PI) * 0.45 : 0;
+      }
+      const stars = m.getObjectByName('stars');
+      if (stars) {
+        stars.visible = a.mode === 'dazed';
+        stars.rotation.y = this.clock * 4;
+      }
+    }
+    for (const [id, m] of this.animalMeshes) {
+      if (alive.has(id)) continue;
+      this.scene.remove(m);
+      disposeTree(m);
+      this.animalMeshes.delete(id);
     }
   }
 
@@ -1253,6 +1391,8 @@ export class DriveScene implements GameScene {
 
   dispose(): void {
     this.atmosphere.dispose();
+    for (const m of this.animalMeshes.values()) disposeTree(m);
+    this.animalMeshes.clear();
     for (const g of this.chunks.values()) disposeChunk(g);
     this.chunks.clear();
     disposeTree(this.car);
