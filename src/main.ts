@@ -51,6 +51,7 @@ import { installButton } from './ui/install';
 import { showHowToPlay } from './ui/howToPlay';
 import { narrateUi, narrator } from './audio/narrator';
 import { choiceIcon, kidChoices, kidMode, oneLine } from './game/kidMode';
+import { SOLIDS } from './game/offroad';
 import { BOSS_SCENES, eventScenes, playEventScene, sceneKindFor, type SceneKind } from './scenes/eventScene';
 import { DoubleTap, isSwipe, type Press } from './game/gestures';
 import { RAGE_HOSTILE, RAGE_MAX, rageOf } from './game/rage';
@@ -659,6 +660,24 @@ function startTripNow(s: GameState): void {
     onAnimalBump: (kind, cost) => {
       showToast(kind === 'cow' ? '🐄' : '🦔', kind === 'cow' ? 'Bonk! The cow is OK' : 'Bonk! The armadillo is OK', cost ? `−${cost} car health` : 'The ram plate takes it');
       if (cost) navigator.vibrate?.(40);
+      if (state?.status === 'lost' && drive) {
+        drive.paused = true;
+        setTimeout(showEnd, 900);
+      }
+    },
+    onOffRoad: () => {
+      try {
+        if (localStorage.getItem('rtm-offroad-hint')) return;
+        localStorage.setItem('rtm-offroad-hint', '1');
+      } catch {
+        return;
+      }
+      showToast('🚧', 'Off the road!', 'Bumpy and slow. Posts fall over, buildings do not. Steer back to the road');
+    },
+    onRoadside: (what, cost, big) => {
+      const icon = { delineator: '🚧', mile: '🪧', sign: '🪧', lamp: '💡', pole: '🪵', tree: '🌳', rock: '🪨', building: '🏢', barrier: '🧱', guardrail: '🚧', bridge: '🌉' }[what];
+      showToast(big ? '💥' : icon, big ? `Crash! You hit ${SOLIDS[what].name}` : `Bonk! You knocked over ${SOLIDS[what].name}`, cost ? `−${cost} car health` : 'No harm done');
+      if (cost) navigator.vibrate?.(big ? 140 : 40);
       if (state?.status === 'lost' && drive) {
         drive.paused = true;
         setTimeout(showEnd, 900);

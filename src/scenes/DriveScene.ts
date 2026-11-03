@@ -13,6 +13,8 @@ import { DIFFICULTIES } from '../game/difficulty';
 import { ANIMALS, Animals, bumpAnimal, type Animal, type AnimalKind } from '../game/animals';
 import { makeAnimal } from './animalModels';
 import { distanceSignLines, limitChanges, medianKind, milepost, shoulderAt, SIDEWALK, CURB_HEIGHT, turnAngle } from '../game/roadside';
+import { crashCost, OFFROAD_SPEED, offRoadWreckReason, offRoadX, SOLIDS, steerOffRoad, type OffRoad, type SolidKind } from '../game/offroad';
+import { kidMode } from '../game/kidMode';
 import { disposeRoadside, greenSign, lampGeometries, PROFILES as SHAPES, rumbleTexture, speedLimitSign, sweep } from './roadside';
 import { rideOf } from '../game/rides';
 import { STOP_TITLES, type Stop } from '../game/stops';
@@ -62,6 +64,24 @@ export interface DriveCallbacks {
   onAnimals?(kind: AnimalKind, count: number): void;
   /** Bumped into an animal (cost is car health lost; the animal is fine). */
   onAnimalBump?(kind: AnimalKind, cost: number): void;
+  /** Drove off the road (the first time shows a tip). */
+  onOffRoad?(): void;
+  /** Hit something at the roadside: knocked it over (small) or crashed into it (big). */
+  onRoadside?(what: SolidKind, cost: number, big: boolean): void;
+}
+
+/** Something solid at the roadside the car can hit when it leaves the road. */
+interface Solid {
+  d: number;
+  /** Sideways offset (+ = right of the centre line). */
+  x: number;
+  /** How close (sideways and along) counts as a hit, besides the car's own size. */
+  r: number;
+  kind: SolidKind;
+  knocked?: boolean;
+  /** Where it is drawn, so it can be knocked flat: one instance of an instanced mesh, or its own object. */
+  inst?: { key: string; index: number; mesh?: THREE.InstancedMesh }[];
+  obj?: THREE.Object3D;
 }
 
 /** What the gun is pointed at: something in the road, or another vehicle. */
@@ -187,6 +207,10 @@ export class DriveScene implements GameScene {
   /** The car's speed last frame (units a second), so animals set off in time. */
   private speed = 0;
   private autoHonked = new Set<number>();
+  /** Off the road (null = in a lane). */
+  private off: OffRoad | null = null;
+  /** Roadside things per chunk that the car can hit off the road. */
+  private solids = new Map<number, Solid[]>();
   /** Current sideways position of the car (eases between lanes when the road changes). */
   private lane = 2;
   private shoulderMat: THREE.MeshLambertMaterial;
@@ -397,7 +421,16 @@ export class DriveScene implements GameScene {
   }
 
   private laneAt(d: number): number {
+    if (this.off) {
+      const xs = this.section(d);
+      return offRoadX(this.off, { edge: xs.edge, shoulder: this.shoulder(d), sidewalk: this.sidewalkAt(d) ? SIDEWALK : 0, median: xs.median, divided: isDivided(classAt(this.segments, d)) });
+    }
     return laneCenter(this.section(d), this.playerLane);
+  }
+
+  /** Off the road right now (for the HUD). */
+  get offRoad(): boolean {
+    return !!this.off;
   }
 
   /** Sideways position of a traffic vehicle. */
@@ -408,11 +441,143 @@ export class DriveScene implements GameScene {
   /** Change lanes: -1 = left, 1 = right. On two-way roads you can pull into the oncoming lane to pass. */
   steer(dir: -1 | 1): void {
     if (this.paused || this.stopping || this.turning || this.pendingTurn) return;
-    const cls = classAt(this.segments, this.state.distance);
+    const d = this.state.distance;
+    const cls = classAt(this.segments, d);
     const next = clampLane(cls, this.playerLane + dir);
-    if (next !== this.playerLane) {
-      this.playerLane = next;
-      sound.click();
+    const res = steerOffRoad(
+      this.off,
+      dir,
+      { divided: isDivided(cls), barrierMedian: medianKind(cls) === 'barrier' && this.section(d).median > 1, atEdge: next === this.playerLane },
+      this.off?.step === 2 ? this.bigThingOutside(this.off.side) : null,
+    );
+    // Autopilot keeps to the road.
+    if (this.autopilot && !this.off && res.kind !== 'lane') return;
+    switch (res.kind) {
+      case 'lane':
+        if (next !== this.playerLane) {
+          this.playerLane = next;
+          sound.click();
+        }
+        break;
+      case 'leave':
+        // Bridges and tunnels have walls: no way off.
+        if (structureAt(this.structures, d, 6)) this.crashInto('bridge');
+        else {
+          this.off = res.off;
+          sound.rumble();
+          this.cb.onOffRoad?.();
+        }
+        break;
+      case 'move':
+        // A guardrail on a bend stops you going any further out.
+        if (res.off.step === 2 && this.shoulder(d) > 1.2 && this.sharpBend(d)) this.crashInto('guardrail');
+        else {
+          this.off = res.off;
+          sound.rumble();
+        }
+        break;
+      case 'back':
+        this.off = null;
+        sound.click();
+        break;
+      case 'crash':
+        this.crashInto(res.what);
+        this.off = res.off;
+        break;
+      case 'blocked':
+        sound.click();
+        break;
+    }
+  }
+
+  /** A building, tree or rock just past the verge on one side (what steering out further would hit). */
+  private bigThingOutside(side: -1 | 1): SolidKind | null {
+    const d = this.state.distance;
+    let best: Solid | null = null;
+    for (const list of this.nearSolids()) {
+      for (const s of list) {
+        if (!SOLIDS[s.kind].big || Math.sign(s.x) !== side || Math.abs(s.d - d) > 12 + s.r) continue;
+        if (!best || Math.abs(s.x) < Math.abs(best.x)) best = s;
+      }
+    }
+    return best?.kind ?? null;
+  }
+
+  /** The solids of the chunks around the car. */
+  private nearSolids(): Solid[][] {
+    const k = Math.floor(this.state.distance / CHUNK);
+    return [this.solids.get(k - 1), this.solids.get(k), this.solids.get(k + 1)].filter((x): x is Solid[] => !!x);
+  }
+
+  /**
+   * Hitting something at the roadside. Small things fall over and cost a
+   * little; big things stop the car hard and bounce it back toward the road.
+   */
+  private crashInto(what: SolidKind, solid?: Solid): void {
+    const s = this.state;
+    const big = SOLIDS[what].big;
+    const cost = crashCost(what, { dmg: DIFFICULTIES[s.difficulty].dmg, speed: crashScale(this.throttle), ram: rideOf(s).ram, kid: kidMode.on });
+    if (cost) damage(s, cost);
+    if (s.status === 'lost') s.lostReason = offRoadWreckReason(this.urbanAt(s.distance) > 0.4);
+    if (solid) this.knockOver(solid);
+    if (big) {
+      sound.carHit();
+      this.roadSpeed *= 0.15;
+      this.crashCooldown = 1;
+      navigator.vibrate?.(140);
+    } else {
+      sound.thud();
+      this.roadSpeed *= 0.85;
+    }
+    this.cb.onRoadside?.(what, cost, big);
+  }
+
+  /** Lays a knocked-over post or sign flat, falling away from the road. */
+  private knockOver(sol: Solid): void {
+    if (sol.knocked || SOLIDS[sol.kind].big) return;
+    sol.knocked = true;
+    const f = this.path.directionAt(sol.d);
+    const fwd = new THREE.Vector3(f.x, 0, -f.y).normalize();
+    const out = new THREE.Vector3(f.y, 0, f.x).multiplyScalar(Math.sign(sol.x) || 1);
+    const tilt = new THREE.Quaternion().setFromAxisAngle(fwd, (Math.sign(sol.x) || 1) * (Math.PI / 2 - 0.12));
+    if (sol.obj) {
+      sol.obj.quaternion.premultiply(tilt);
+      sol.obj.position.addScaledVector(out, 0.6);
+    }
+    for (const i of sol.inst ?? []) {
+      if (!i.mesh) continue;
+      const m = new THREE.Matrix4();
+      i.mesh.getMatrixAt(i.index, m);
+      const pos = new THREE.Vector3();
+      const q = new THREE.Quaternion();
+      const sc = new THREE.Vector3();
+      m.decompose(pos, q, sc);
+      q.premultiply(tilt);
+      pos.addScaledVector(out, 0.6).setY(0.15);
+      i.mesh.setMatrixAt(i.index, m.compose(pos, q, sc));
+      i.mesh.instanceMatrix.needsUpdate = true;
+    }
+  }
+
+  /** Off the road: run into whatever is in the car's path. */
+  private roadsideHits(): void {
+    if (!this.off || this.crashCooldown > 0) return;
+    const d = this.state.distance;
+    // Driving off the end of the shoulder onto a bridge or into a tunnel: the rail stops you.
+    if (structureAt(this.structures, d + 4, 0)) {
+      this.crashInto('bridge');
+      this.off = null;
+      return;
+    }
+    const half = rideOf(this.state).length / 2;
+    for (const list of this.nearSolids()) {
+      for (const sol of list) {
+        if (sol.knocked || Math.abs(sol.d - d) > half + sol.r || Math.abs(sol.x - this.lane) > sol.r + 1) continue;
+        this.crashInto(sol.kind, sol);
+        // A big thing bounces you back toward the road.
+        if (SOLIDS[sol.kind].big && this.off) this.off = this.off.step === 2 ? { side: this.off.side, step: 1 } : null;
+        return;
+      }
     }
   }
 
@@ -463,6 +628,8 @@ export class DriveScene implements GameScene {
   /** The player chose to turn off at a stop; the car signals and takes the turn when it gets there. */
   takeTurn(stop: Stop): void {
     this.pendingTurn = stop;
+    // Signalling for a turn brings you back onto the road first.
+    this.off = null;
   }
 
   /** Rebuilds the car model after an upgrade. */
@@ -569,12 +736,15 @@ export class DriveScene implements GameScene {
     this.followRoadChanges();
     this.crashCooldown -= dt;
     if (this.autopilot) {
-      // Autopilot drives at the limit on its own side of the road.
+      // Autopilot drives at the limit on its own side of the road (and back onto it).
+      this.off = null;
       this.throttle = Math.min(this.throttle, 1);
       if (oncoming(this.playerLane)) this.playerLane = clampLane(this.laneClass, 0);
     }
     let speed = CRUISE_SPEED * rideOf(s).speed * this.roadSpeed * this.throttle;
     if (this.promptStop) speed = Math.min(speed, CRUISE_SPEED * 0.7);
+    // Off the road: slower on the shoulder, slower still on the sidewalk, and slowest on grass and dirt.
+    if (this.off) speed *= this.offSurface() === 'paved' ? OFFROAD_SPEED.paved : this.offSurface() === 'sidewalk' ? OFFROAD_SPEED.sidewalk : OFFROAD_SPEED.rough;
     // Brake behind a slower vehicle in your lane.
     if (!oncoming(this.playerLane)) {
       // Speeding leaves less time to react: the car notices slower traffic later.
@@ -594,6 +764,7 @@ export class DriveScene implements GameScene {
     coolRage(s, step);
     this.roadRage(dt, speed);
     this.checkCrash();
+    this.roadsideHits();
     if (res.arrived) {
       this.stopping = true;
       this.cb.onArrive();
@@ -639,6 +810,14 @@ export class DriveScene implements GameScene {
       this.lastBiome = biome;
     }
     this.cb.onTick();
+  }
+
+  /** What the car is driving on, off the road. */
+  private offSurface(): 'paved' | 'sidewalk' | 'rough' {
+    const d = this.state.distance;
+    if (!this.off || this.off.step === 2 || (this.off.side < 0 && isDivided(classAt(this.segments, d)))) return 'rough';
+    if (this.sidewalkAt(d)) return 'sidewalk';
+    return this.shoulder(d) > 1 ? 'paved' : 'rough';
   }
 
   /** Autopilot slows for animals in its path and honks them along, rather than hitting them. */
@@ -1067,6 +1246,11 @@ export class DriveScene implements GameScene {
     p.addScaledVector(new THREE.Vector3(f.y, 0, f.x), this.lane);
     this.car.position.copy(p);
     this.car.lookAt(p.clone().add(fwd));
+    // Bumpy on grass and dirt.
+    if (this.off && !this.paused && this.offSurface() === 'rough') {
+      this.car.position.y = Math.abs(Math.sin(this.clock * 17)) * 0.09;
+      this.car.rotateZ(Math.sin(this.clock * 11) * 0.025);
+    }
     this.ground.position.set(p.x, 0, p.z);
     // The ground follows the car; shift its texture back so the grain stays put in the world.
     const gmap = (this.ground.material as THREE.MeshLambertMaterial).map;
@@ -1100,6 +1284,7 @@ export class DriveScene implements GameScene {
         this.scene.remove(g);
         disposeChunk(g);
         this.chunks.delete(k);
+        this.solids.delete(k);
       }
     }
     for (let k = first; k <= last; k++) {
@@ -1154,6 +1339,11 @@ export class DriveScene implements GameScene {
     const inst: Record<string, THREE.Matrix4[]> = {};
     for (const k of Object.keys(this.geos)) inst[k] = [];
     const buildingColors: THREE.Color[] = [];
+    // Roadside things the car can hit off the road (small ones are knocked flat by instance).
+    const solids: Solid[] = [];
+    this.solids.set(k, solids);
+    const solid = (kind: SolidKind, d: number, x: number, r: number, ...keys: string[]) =>
+      solids.push({ kind, d, x, r, inst: keys.map((key) => ({ key, index: inst[key].length - 1 })) });
     const stopsHere = this.state.stops.filter((s) => s.at > from - 200 && s.at < to + 200);
     const marksHere = this.state.landmarks.filter((l) => l.at > from - 120 && l.at < to + 120 && l.kind !== 'mountains' && l.kind !== 'peak' && l.kind !== 'mesa');
     const clear = (d: number, side: number) =>
@@ -1176,7 +1366,10 @@ export class DriveScene implements GameScene {
       const sidewalk = this.sidewalkAt(d);
       const cls = classAt(this.segments, d);
       // Wooden poles out in the country; street lights on the sidewalks in town.
-      if (Math.round(d) % 48 < 8 && !clear(d, 1) && !sidewalk) placeAt(inst.pole, p, right, 7.5 + wide, 0, 1);
+      if (Math.round(d) % 48 < 8 && !clear(d, 1) && !sidewalk) {
+        placeAt(inst.pole, p, right, 7.5 + wide, 0, 1);
+        solid('pole', d, 7.5 + wide, 0.4, 'pole');
+      }
       const lampSpots = sidewalk ? { every: 40, off: this.edge(d) + SIDEWALK - 0.6 } : cls === 'metro' ? { every: 64, off: this.outer(d) + 0.5 } : null;
       if (lampSpots && Math.round(d) % lampSpots.every < 8) {
         for (const side of [-1, 1]) {
@@ -1185,6 +1378,8 @@ export class DriveScene implements GameScene {
           const yaw = Math.atan2(side * f.x, -side * f.y);
           placeAt(inst.lampPost, p, right, side * lampSpots.off, yaw, 1);
           placeAt(inst.lampHead, p, right, side * lampSpots.off, yaw, 1);
+          // The lamp head falls with its post.
+          solid('lamp', d, side * lampSpots.off, 0.4, 'lampPost', 'lampHead');
           if (quality.level !== 'low') placeAt(inst.lampGlow, p, right, side * lampSpots.off, yaw, 1);
         }
       }
@@ -1194,6 +1389,7 @@ export class DriveScene implements GameScene {
           const off = side * (this.outer(d) + 0.8);
           placeAt(inst.delineator, p, right, off, 0, 1);
           placeAt(inst.reflector, p, right, off, 0, 1);
+          solid('delineator', d, off, 0.3, 'delineator', 'reflector');
         }
       }
       if (this.shoulder(d) > 1.2 && this.sharpBend(d)) {
@@ -1212,9 +1408,12 @@ export class DriveScene implements GameScene {
           if (model) {
             // Models face the road, a little crooked so the street doesn't look stamped out.
             const face = Math.atan2(-side * f.y, -side * f.x) + (rng() - 0.5) * 0.3;
-            placeAt(inst[model], p, right, side * (14 + wide + rng() * 14), face, 0.85 + rng() * 0.35);
+            const mo = side * (14 + wide + rng() * 14);
+            placeAt(inst[model], p, right, mo, face, 0.85 + rng() * 0.35);
+            solid('building', d, mo, 5);
           } else {
             placeAt(inst.building, p, right, off, rng() * Math.PI, w, h, 6 + rng() * 8);
+            solid('building', d, off, w / 2);
             buildingColors.push(new THREE.Color().setHSL(0.08 + rng() * 0.1, 0.25, 0.55 + rng() * 0.25));
           }
         } else {
@@ -1236,10 +1435,14 @@ export class DriveScene implements GameScene {
               const model = models && (!TREES.has(kind) || treeModelsWanted()) ? this.model(pick(rng, models)) : null;
               if (model) placeAt(inst[model], p, right, off, rot, s);
               else for (const part of PLANT_PARTS[kind]) placeAt(inst[part], p, right, off, rot, s);
+              if (TREES.has(kind) || kind === 'saguaro') solid('tree', d, off, 0.8);
             }
           } else if (r2 < b.density * this.density + b.rocks * 0.5 * this.density) {
             const rock = this.model(pick(rng, ROCK_MODELS));
-            placeAt(inst[rock ?? 'rock'], p, right, side * (10 + wide + rng() * 80), rng() * 6, (0.5 + rng() * 2) * (rock ? 1.8 : 1));
+            const ro = side * (10 + wide + rng() * 80);
+            const rs = [rng() * 6, (0.5 + rng() * 2) * (rock ? 1.8 : 1)];
+            placeAt(inst[rock ?? 'rock'], p, right, ro, rs[0], rs[1]);
+            if (rs[1] > 1.2) solid('rock', d, ro, rs[1]);
           }
         }
       }
@@ -1250,6 +1453,7 @@ export class DriveScene implements GameScene {
       mats.forEach((m, i) => mesh.setMatrixAt(i, m));
       if (key === 'building') buildingColors.forEach((c, i) => mesh.setColorAt(i, c));
       g.add(mesh);
+      for (const sol of solids) for (const i of sol.inst ?? []) if (i.key === key) i.mesh = mesh;
     }
     for (const stop of this.state.stops) {
       if (stop.at >= from && stop.at < from + CHUNK) g.add(this.buildStop(stop, rng));
@@ -1411,6 +1615,7 @@ export class DriveScene implements GameScene {
       // Face the oncoming car.
       sign.rotation.y = Math.atan2(-f.x, f.y);
       g.add(sign);
+      this.solids.get(Math.floor(from / CHUNK))?.push({ kind: 'mile', d, x: off, r: 0.4, obj: sign });
     }
   }
 
@@ -1427,6 +1632,7 @@ export class DriveScene implements GameScene {
       sign.position.copy(to3({ x: p.x + f.y * out, y: p.y - f.x * out }, 0));
       sign.rotation.y = Math.atan2(-f.x, f.y);
       g.add(sign);
+      this.solids.get(k)?.push({ kind: 'sign', d, x: out, r: out > this.outer(d) + 2 ? 1.8 : 0.6, obj: sign });
     };
     const free = (d: number) => !structureAt(this.structures, d, 25) && !this.state.stops.some((s) => Math.abs(s.at - d) < 40);
     const limits = limitChanges(from, to, (d) => this.speedLimit(d));

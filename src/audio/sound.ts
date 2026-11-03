@@ -268,6 +268,20 @@ class Sound {
     for (const f of [392, 494]) this.tone('square', f, 0.55, 0.12, { attack: 0.02 });
   }
 
+  /** Tyres on rumble strips and gravel as the car leaves the road. */
+  rumble(): void {
+    if (!this.ready) return;
+    this.noise(0.45, 'lowpass', 260, 0.5, 2);
+    this.tone('square', 46, 0.4, 0.08);
+  }
+
+  /** Knocking over a post or a sign. */
+  thud(): void {
+    if (!this.ready) return;
+    this.noise(0.25, 'bandpass', 500, 0.45, 1.5);
+    this.tone('triangle', 180, 0.25, 0.15, { to: 70 });
+  }
+
   /** A cow's moo (honked at, or bumped). */
   moo(at = 0): void {
     if (!this.ready) return;
