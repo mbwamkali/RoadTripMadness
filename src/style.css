@@ -2306,3 +2306,23 @@ body.kid .howto-tip b {
   bottom: 0;
   box-shadow: 0 -6px 18px rgba(27, 20, 16, 0.9);
 }
+
+/* Shortcut flat tyre: tap until the bar fills. */
+.tap-meter {
+  height: 12px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.15);
+  overflow: hidden;
+  margin: 8px 0;
+}
+
+.tap-meter .fill {
+  height: 100%;
+  width: 0;
+  background: #6cd46c;
+  transition: width 0.12s;
+}
+
+.btn.big-tap {
+  min-height: 64px;
+}

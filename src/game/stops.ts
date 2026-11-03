@@ -6,7 +6,7 @@ import { interstateNumber, latLngAt, stateMap } from '../geo/states';
 import { roadAt } from './landmarks';
 import { biomeAtDistance, biomeSpans, type BiomeId } from './biomes';
 
-export type StopKind = 'town' | 'gas' | 'truckstop' | 'farm' | 'mall' | 'base';
+export type StopKind = 'town' | 'gas' | 'truckstop' | 'farm' | 'mall' | 'base' | 'shortcut';
 export type PlaceKind = 'pumps' | 'garage' | 'grocery' | 'hardware' | 'gunshop' | 'pharmacy' | 'police' | 'junkyard' | 'barn' | 'motel';
 
 /** A spot along the route where the player may turn off left or right. */
@@ -33,6 +33,7 @@ export const STOP_TITLES: Record<StopKind, string> = {
   farm: 'Farmstead',
   mall: 'Strip mall',
   base: 'Abandoned army post',
+  shortcut: 'Dirt road shortcut',
 };
 
 const PLACES_BY_KIND: Record<StopKind, PlaceKind[][]> = {
@@ -42,6 +43,8 @@ const PLACES_BY_KIND: Record<StopKind, PlaceKind[][]> = {
   farm: [['barn', 'junkyard'], ['barn', 'pumps']],
   mall: [['grocery', 'hardware', 'pharmacy', 'gunshop']],
   base: [['police', 'junkyard', 'gunshop']],
+  // Shortcuts are placed separately (game/shortcuts.ts) and have no places.
+  shortcut: [[]],
 };
 
 /** Name endings for stops on the edge of a real town. */
@@ -52,6 +55,7 @@ const OUTSKIRTS: Record<StopKind, string[]> = {
   farm: ['Farm', 'Ranch', 'Feed & Seed'],
   mall: ['Plaza', 'Shopping Center', 'Outlet Mall'],
   base: ['Armory', 'National Guard Post', 'Army Depot'],
+  shortcut: ['Cut-off'],
 };
 
 const MADE_UP_NAMES = ['Dry Creek', 'Pinecone', 'Hollow Rock', 'Bitterroot', 'Red Mesa', 'Junction City', 'Cold Spring', 'Antler', 'Saltlick', 'Fort Sorrow', 'Buzzard Hill', 'Lonesome'];

@@ -1,3 +1,4 @@
+import { placeShortcuts } from './shortcuts';
 import { pathFromRoute, type RouteData } from '../geo/route';
 import type { Path } from '../geo/geo';
 import { fillLandmarks, type Landmark } from './landmarks';
@@ -93,6 +94,9 @@ export function newGame(
   const path = pathFromRoute(route);
   const rng = makeRng(seed);
   const stops = generateStops(route, path.length, seed);
+  // Now and then a dirt-road shortcut, offered like any other turn-off.
+  stops.push(...placeShortcuts(path.length, seed, stops));
+  stops.sort((a, b) => a.at - b.at);
   const r = rideOf({ ride });
   const start = DIFFICULTIES[difficulty].start;
   const s: GameState = {

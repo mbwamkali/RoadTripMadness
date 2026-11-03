@@ -214,6 +214,8 @@ export class DriveScene implements GameScene {
   /** Current sideways position of the car (eases between lanes when the road changes). */
   private lane = 2;
   private shoulderMat: THREE.MeshLambertMaterial;
+  /** Dirt-road shortcuts. */
+  private dirtMat = new THREE.MeshLambertMaterial({ color: 0x9a7650, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
   /** Sidewalks, the median barrier, guardrails and rumble strips (round five roadside detail). */
   private roadsideMats: Record<'concrete' | 'barrier' | 'rail' | 'rumble', THREE.MeshLambertMaterial>;
   /** Town centres along the route (from the town signs), for sidewalks and street lights. */
@@ -1673,7 +1675,8 @@ export class DriveScene implements GameScene {
     const len = 70 + wide;
     const a = { x: p.x + side.x * edge, y: p.y + side.y * edge };
     const b = { x: p.x + side.x * len, y: p.y + side.y * len };
-    const road = new THREE.Mesh(new THREE.PlaneGeometry(7, len - edge), this.roadMat);
+    const dirt = stop.kind === 'shortcut';
+    const road = new THREE.Mesh(new THREE.PlaneGeometry(dirt ? 5 : 7, len - edge), dirt ? this.dirtMat : this.roadMat);
     road.rotation.x = -Math.PI / 2;
     road.rotation.z = Math.atan2(side.x, side.y);
     road.position.copy(to3({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, 0.09));
@@ -1682,7 +1685,9 @@ export class DriveScene implements GameScene {
     const signAt = this.path.pointAt(stop.at - 90);
     const sf = this.path.directionAt(stop.at - 90);
     const sub = [stop.exit ? `EXIT ${stop.exit}` : STOP_TITLES[stop.kind], stop.street].filter(Boolean).join(' · ');
-    const sign = textSprite(`${stop.side === 'left' ? '◀' : ''} ${stop.name} ${stop.side === 'right' ? '▶' : ''}`.trim(), sub);
+    const sign = dirt
+      ? textSprite(`SHORTCUT ${stop.side === 'right' ? '▶' : '◀'}`, stop.name, '#7a5230')
+      : textSprite(`${stop.side === 'left' ? '◀' : ''} ${stop.name} ${stop.side === 'right' ? '▶' : ''}`.trim(), sub);
     const so = this.outer(stop.at - 90) + 1.5;
     sign.position.copy(to3({ x: signAt.x + sf.y * sideSign * so, y: signAt.y - sf.x * sideSign * so }, 5));
     g.add(sign);
@@ -1694,6 +1699,8 @@ export class DriveScene implements GameScene {
       blade.position.copy(to3({ x: a.x + side.x * 3 + f.x * back, y: a.y + side.y * 3 + f.y * back }, 4));
       g.add(blade);
     }
+    // A dirt road just runs off into the distance.
+    if (dirt) return g;
     // A little cluster of buildings at the end of the side road.
     for (let i = 0; i < 4 + rng() * 4; i++) {
       const w = 8 + rng() * 10;
@@ -1767,6 +1774,7 @@ export class DriveScene implements GameScene {
     bm.emissiveMap?.dispose();
     Object.values(this.mats).forEach((x) => !x.userData.shared && x.dispose());
     for (const m of [this.roadMat, this.asphaltMat, ...Object.values(this.stripeMats), this.medianMat, this.shoulderMat]) m.dispose();
+    this.dirtMat.dispose();
     this.roadsideMats.rumble.map?.dispose();
     Object.values(this.roadsideMats).forEach((m) => m.dispose());
     disposeRoadside();

@@ -38,6 +38,7 @@ import {
   tankSize,
   type ActionResult,
   type GameState,
+  fuelPerUnit,
 } from './game/state';
 import { STOP_TITLES, type PlaceKind, type Stop } from './game/stops';
 import { classAt, roadSegments } from './game/roads';
@@ -52,6 +53,8 @@ import { showHowToPlay } from './ui/howToPlay';
 import { narrateUi, narrator } from './audio/narrator';
 import { choiceIcon, kidChoices, kidMode, oneLine } from './game/kidMode';
 import { SOLIDS } from './game/offroad';
+import { FLAT_TAPS, fixFlat, rollShortcut, shortcutSkip, takeShortcut } from './game/shortcuts';
+import { hashString as hashStr, makeRng as makeRngFor } from './game/rng';
 import { BOSS_SCENES, eventScenes, playEventScene, sceneKindFor, type SceneKind } from './scenes/eventScene';
 import { DoubleTap, isSwipe, type Press } from './game/gestures';
 import { RAGE_HOSTILE, RAGE_MAX, rageOf } from './game/rage';
@@ -626,7 +629,7 @@ function startTripNow(s: GameState): void {
     onArrive: () => setTimeout(showEnd, 600),
     onOutOfFuel: () => setTimeout(() => (state?.status === 'lost' ? showEnd() : showBikeRescue()), 600),
     onPrompt: (stop, dist) => updatePrompt(stop, dist),
-    onEnterStop: (stop) => showStop(stop),
+    onEnterStop: (stop) => (stop.kind === 'shortcut' ? showShortcut(stop) : showStop(stop)),
     onLandmark: (l) => showLandmarkToast(l),
     onBiome: (icon, name) => showToast(icon, 'Now entering', name),
     onRoadEvent: () => showRoadEvent(rollEvent(s)),
@@ -735,7 +738,9 @@ function updatePrompt(stop: Stop | null, dist: number): void {
       h('span', {}, ` on the ${stop.side} `),
       h('span', { class: 'dist' }, `in ${distText}`),
       stop.street && h('div', { class: 'muted' }, `Turn onto ${stop.street}`),
-      h('div', { class: 'muted' }, stop.places.map((p) => PLACE_TITLES[p]).join(' · ')),
+      stop.kind === 'shortcut'
+        ? h('div', { class: 'muted' }, 'Skips ahead · bumpy · maybe a flat or outlaws')
+        : h('div', { class: 'muted' }, stop.places.map((p) => PLACE_TITLES[p]).join(' · ')),
     ),
     h(
       'div',
@@ -1303,6 +1308,84 @@ function showRoadEvent(ev: RoadEvent): void {
     ),
   );
   sound.charge();
+  ui().append(overlay);
+}
+
+/**
+ * A dirt-road shortcut: a bumpy ride that skips ahead and saves gas, with a
+ * chance of a flat tyre (tap to change it) or outlaws waiting. Then the car
+ * rejoins the route further on.
+ */
+function showShortcut(stop: Stop): void {
+  const s = state!;
+  const p = path!;
+  const kid = kidMode.on;
+  const rng = makeRngFor(s.seed ^ hashStr(stop.id));
+  const skip = shortcutSkip(s, p.length, stop.at, rng);
+  const outcome = rollShortcut(rng, kid);
+  takeShortcut(s, stop, skip, fuelPerUnit(p.length));
+  saveGame(s);
+  sound.engine(0);
+  const km = realKmAt(s.route, skip);
+  const saved = `You skip ${km < 10 ? km.toFixed(1) : Math.round(km)} km of road and save gas.`;
+  const body = h('div', { class: 'event-body' });
+  const card = h(
+    'div',
+    { class: `card event ${kid ? 'kid' : ''}` },
+    eventPicture('🛻', 'dirt'),
+    h('h2', {}, `Shortcut: ${stop.name}`),
+    h('p', {}, kid ? 'A bumpy dirt road!' : `The dirt road rattles every bolt in the car, but it cuts a big corner off the trip. ${saved}`),
+    body,
+  );
+  const overlay = h('div', { class: 'modal' }, card);
+  const rejoin = (fight: boolean) => {
+    overlay.remove();
+    if (s.status === 'lost') return showEnd();
+    // Back on the route further along (a fresh drive view at the new spot).
+    startTrip(s);
+    if (fight) startCombat(!kid, undefined, 'outlaw');
+  };
+  const say = (text: string, good: boolean) => {
+    narrator.say(text);
+    return h('p', { class: `outcome ${good ? 'good' : 'bad'}` }, text);
+  };
+  if (outcome === 'clear') {
+    sound.coin();
+    body.replaceChildren(say(kid ? 'Zoom! You skipped ahead!' : 'Not a soul on it. Smooth sailing, as dirt roads go.', true), h('button', { class: 'btn primary', onclick: () => rejoin(false) }, 'Back on the road'));
+  } else if (outcome === 'ambush') {
+    sound.bad();
+    body.replaceChildren(say(kid ? 'Bad guys on the dirt road!' : 'Outlaws were waiting where the dirt road meets the highway!', false), h('button', { class: 'btn primary', onclick: () => rejoin(true) }, 'Fight!'));
+  } else {
+    // Pop! Tap the wheel to change the tyre.
+    sound.bad();
+    const need = kid ? FLAT_TAPS.kid : FLAT_TAPS.normal;
+    let taps = 0;
+    const fill = h('div', { class: 'fill' });
+    const meter = h('div', { class: 'tap-meter' }, fill);
+    const tapBtn = h(
+      'button',
+      {
+        class: 'btn choice big-tap',
+        onclick: () => {
+          taps++;
+          sound.click();
+          navigator.vibrate?.(20);
+          fill.style.width = `${Math.min(100, (taps / need) * 100)}%`;
+          if (taps < need) return;
+          const how = fixFlat(s);
+          sound.coin();
+          hudTick?.();
+          body.replaceChildren(
+            say(kid ? 'Fixed! Off you go!' : how === 'scrap' ? 'New tyre on. You used 1 scrap to patch the old one.' : 'New tyre on, but with no scrap to patch it, it took half an hour.', true),
+            h('button', { class: 'btn primary', onclick: () => rejoin(false) }, 'Back on the road'),
+          );
+        },
+      },
+      h('span', { class: 'choice-icon' }, '🛞'),
+      h('b', {}, kid ? 'Tap tap tap!' : 'Tap to change the tyre'),
+    );
+    body.replaceChildren(say(kid ? 'Pop! A flat tyre!' : 'Bang! A sharp rock and a flat tyre.', false), meter, tapBtn);
+  }
   ui().append(overlay);
 }
 

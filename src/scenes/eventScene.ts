@@ -14,7 +14,7 @@ import type { Upgrades } from '../game/upgrades';
  * graphics the people, saucers and wrecks are simple shapes.
  */
 
-export type SceneKind = 'flat' | 'help' | 'dog' | 'loot' | 'trade' | 'beam' | 'roadblock' | 'bridge' | 'fuel' | BossScene;
+export type SceneKind = 'dirt' | 'flat' | 'help' | 'dog' | 'loot' | 'trade' | 'beam' | 'roadblock' | 'bridge' | 'fuel' | BossScene;
 /** Boss intros with their own scene (the older bosses show just their icon). */
 export type BossScene = 'hermit' | 'pizza' | 'sweeper' | 'karen' | 'drones';
 export const BOSS_SCENES: readonly string[] = ['hermit', 'pizza', 'sweeper', 'karen', 'drones'] satisfies BossScene[];
@@ -141,13 +141,13 @@ function stage(kind: SceneKind, ride: 'car' | 'motorcycle' | 'truck', up?: Upgra
   camera.lookAt(0, 1.3, 0);
   scene.add(mesh(new THREE.PlaneGeometry(80, 30).rotateX(-Math.PI / 2), lam(kind === 'bridge' ? 0x3d6f9a : 0x6f9a45), 0, -0.02, 0));
   const road = new THREE.Group();
-  const asphalt = lam(0x3a3a40);
+  const asphalt = lam(kind === 'dirt' ? 0x9a7650 : 0x3a3a40);
   const dash = lam(0xf2d36b);
   const gap = kind === 'bridge';
   for (let x = -40; x < 40; x += 4) {
     if (gap && x >= 2 && x < 10) continue; // the bridge is out
     road.add(mesh(new THREE.BoxGeometry(4.02, 0.1, 5), asphalt, x + 2, 0, 0));
-    road.add(mesh(new THREE.BoxGeometry(1.6, 0.02, 0.18), dash, x + 2, 0.06, 0));
+    if (kind !== 'dirt') road.add(mesh(new THREE.BoxGeometry(1.6, 0.02, 0.18), dash, x + 2, 0.06, 0));
   }
   scene.add(road);
   const car = makeRide(ride, up);
@@ -163,6 +163,41 @@ function stage(kind: SceneKind, ride: 'car' | 'motorcycle' | 'truck', up?: Upgra
     for (const w of car.children) if (w.name === 'wheel') w.rotation.x -= 0.2 * (1 - k);
   };
   switch (kind) {
+    case 'dirt': {
+      // Bouncing along a dirt road in a cloud of dust, past cacti and rocks.
+      stopX = 14;
+      const dust: THREE.Mesh[] = [];
+      const dustMat = lam(0xc9a978, { transparent: true, opacity: 0.6 });
+      for (let i = 0; i < 8; i++) {
+        const m = mesh(new THREE.SphereGeometry(0.45, 7, 5), dustMat, 0, 0.4, 0);
+        dust.push(m);
+        scene.add(m);
+      }
+      for (const [x, z, cactus] of [[-9, -4, 1], [-3, -6, 0], [4, -4.5, 1], [9, -6, 0], [12, 3.5, 1], [-12, 3, 0]] as [number, number, number][]) {
+        if (cactus) {
+          const c = new THREE.Group();
+          c.add(mesh(new THREE.CylinderGeometry(0.3, 0.35, 2.6, 7), lam(0x4f8a3c), 0, 1.3, 0));
+          c.add(mesh(new THREE.CylinderGeometry(0.2, 0.2, 1, 6), lam(0x4f8a3c), 0.5, 1.6, 0));
+          c.position.set(x, 0, z);
+          scene.add(c);
+        } else scene.add(mesh(new THREE.DodecahedronGeometry(0.8, 0), lam(0x9c8a78), x, 0.4, z));
+      }
+      props.push((t) => {
+        car.position.x = -14 + (t / SCENE_SECONDS) * 28;
+        car.position.y = Math.abs(Math.sin(t * 9)) * 0.22;
+        car.rotation.z = Math.sin(t * 7) * 0.05;
+        for (const w of car.children) if (w.name === 'wheel') w.rotation.x -= 0.25;
+        dust.forEach((m, i) => {
+          const age = (t * 2 + i / dust.length) % 1;
+          m.position.set(car.position.x - 2 - age * 3, 0.3 + age * 0.8, (i % 2 ? 0.6 : -0.6) * (1 + age));
+          m.scale.setScalar(0.6 + age * 1.6);
+        });
+        dustMat.opacity = 0.55;
+        camera.position.x = car.position.x * 0.6;
+        camera.lookAt(car.position.x * 0.6, 1.3, 0);
+      });
+      break;
+    }
     case 'flat': {
       stopX = 0;
       const puff = new THREE.Group();
