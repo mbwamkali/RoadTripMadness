@@ -1,7 +1,7 @@
 import type { BossKind } from '../game/combat';
 import * as THREE from 'three';
 import type { Path, Vec2 } from '../geo/geo';
-import { CRUISE_SPEED, postedLimit } from '../geo/route';
+import { CRUISE_SPEED, postedLimit, realKmAt } from '../geo/route';
 import { advance, damage, fuelPerUnit, upcomingStop, type GameState } from '../game/state';
 import { brakeRange, crashScale, speedFuelFactor } from '../game/driving';
 import { structureAt, type Structure } from '../game/structures';
@@ -12,6 +12,8 @@ import { Obstacles, ramObstacle, shootObstacle, SHOOT_RANGE, type Obstacle, type
 import { DIFFICULTIES } from '../game/difficulty';
 import { ANIMALS, Animals, bumpAnimal, type Animal, type AnimalKind } from '../game/animals';
 import { makeAnimal } from './animalModels';
+import { distanceSignLines, limitChanges, medianKind, milepost, shoulderAt, SIDEWALK, CURB_HEIGHT, turnAngle } from '../game/roadside';
+import { disposeRoadside, greenSign, lampGeometries, PROFILES as SHAPES, rumbleTexture, speedLimitSign, sweep } from './roadside';
 import { rideOf } from '../game/rides';
 import { STOP_TITLES, type Stop } from '../game/stops';
 import { hashString, makeRng, pick, type Rng } from '../game/rng';
@@ -188,6 +190,10 @@ export class DriveScene implements GameScene {
   /** Current sideways position of the car (eases between lanes when the road changes). */
   private lane = 2;
   private shoulderMat: THREE.MeshLambertMaterial;
+  /** Sidewalks, the median barrier, guardrails and rumble strips (round five roadside detail). */
+  private roadsideMats: Record<'concrete' | 'barrier' | 'rail' | 'rumble', THREE.MeshLambertMaterial>;
+  /** Town centres along the route (from the town signs), for sidewalks and street lights. */
+  private townList: { mid: number; radius: number; big: boolean }[] = [];
   private mats: Record<string, THREE.Material>;
   private geos: Record<string, THREE.BufferGeometry>;
   private biomes: BiomeSpan[];
@@ -245,6 +251,9 @@ export class DriveScene implements GameScene {
       polygonOffsetUnits: -2,
     });
     this.segments = roadSegments(state.route, path.length);
+    this.townList = state.landmarks
+      .filter((l) => l.kind === 'citysign' && !/^Leaving |^Welcome to /.test(l.name))
+      .map((l) => ({ mid: l.at + (l.big ? 380 : 170), radius: l.big ? 620 : 240, big: !!l.big }));
     this.laneClass = classAt(this.segments, state.distance);
     this.playerLane = defaultLane(this.laneClass);
     this.lane = this.laneAt(state.distance);
@@ -260,7 +269,7 @@ export class DriveScene implements GameScene {
       return b === 'desert' || b === 'sagebrush';
     };
     this.animals = new Animals(this.segments, path.length, state.seed ^ Math.floor(state.distance), state.distance, {
-      edgeAt: (d) => this.edge(d),
+      edgeAt: (d) => this.outer(d),
       desertAt: desert,
       boost: (d) => (desert(d) || stateMap()?.stateAt(latLngAt(state.route, path, d))?.code === 'TX' ? 2 : 1),
       blocked: (d) =>
@@ -274,7 +283,16 @@ export class DriveScene implements GameScene {
     // Photo grain on Medium/High (the colours still come from the climate).
     this.shoulderMat.map = detailTexture('gravel', 1, 1 / 6);
     this.medianMat.map = detailTexture('ground', 0.12, 1 / 60);
+    const flat = { polygonOffset: true, polygonOffsetFactor: -5, polygonOffsetUnits: -10 };
+    const rumble = rumbleTexture();
+    this.roadsideMats = {
+      concrete: new THREE.MeshLambertMaterial({ color: 0xbdb8ad, side: THREE.DoubleSide }),
+      barrier: new THREE.MeshLambertMaterial({ color: 0xcfcabe, side: THREE.DoubleSide }),
+      rail: new THREE.MeshLambertMaterial({ color: 0xaab2b8, side: THREE.DoubleSide }),
+      rumble: new THREE.MeshLambertMaterial({ map: rumble, transparent: true, depthWrite: false, ...flat }),
+    };
     const plants = plantModels();
+    const lamp = lampGeometries();
     this.mats = {
       ...plants.mats,
       rock: new THREE.MeshLambertMaterial({ color: 0x9c8a78 }),
@@ -287,6 +305,11 @@ export class DriveScene implements GameScene {
       delineator: new THREE.MeshLambertMaterial({ color: 0xe8e8e8 }),
       // Unlit, so the reflectors catch the headlights' eye at night.
       reflector: new THREE.MeshBasicMaterial({ color: 0xffb030 }),
+      // Street lights: the head glows after dark, with a pool of light on the road (not on Low).
+      lampPost: new THREE.MeshLambertMaterial({ color: 0x6d737a }),
+      lampHead: new THREE.MeshLambertMaterial({ color: 0xfff4d8, emissive: 0xffd890, emissiveIntensity: 0 }),
+      lampGlow: new THREE.MeshBasicMaterial({ color: 0xffd28a, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }),
+      railPost: new THREE.MeshLambertMaterial({ color: 0x8a9096 }),
     };
     this.geos = {
       ...plants.geos,
@@ -296,6 +319,10 @@ export class DriveScene implements GameScene {
       roof: new THREE.ConeGeometry(0.75, 0.5, 4).rotateY(Math.PI / 4).translate(0, 1.25, 0),
       delineator: new THREE.BoxGeometry(0.12, 1.1, 0.12).translate(0, 0.55, 0),
       reflector: new THREE.BoxGeometry(0.15, 0.2, 0.15).translate(0, 0.95, 0),
+      lampPost: lamp.post,
+      lampHead: lamp.head,
+      lampGlow: lamp.glow,
+      railPost: new THREE.BoxGeometry(0.16, 0.85, 0.16).translate(0, 0.42, 0),
     };
     // CC0 models on Medium and High, when they've loaded (see models.ts).
     for (const name of Object.keys(MODEL_SPECS) as ModelName[]) {
@@ -335,7 +362,32 @@ export class DriveScene implements GameScene {
 
   /** How much wider than a plain two-lane road it is here (scenery moves out by this much). */
   widen(d: number): number {
-    return this.edge(d) - ROAD_HALF;
+    return this.outer(d) - ROAD_HALF;
+  }
+
+  /** How built-up it is here, 0 (open country) to 1 (downtown): near the start, the end, town stops and town signs. */
+  urbanAt(d: number): number {
+    const total = this.path.length;
+    let u = Math.max(d < 1500 ? 1 - d / 1500 : 0, d > total - 1500 ? 1 - (total - d) / 1500 : 0);
+    for (const s of this.state.stops) if (s.kind === 'town' || s.kind === 'mall') u = Math.max(u, 1 - Math.abs(s.at - d) / 260);
+    for (const t of this.townList) u = Math.max(u, 1 - Math.abs(t.mid - d) / t.radius);
+    return u;
+  }
+
+  /** Sidewalks with curbs and street lights: town streets (not freeways), leaving a gap at side roads. */
+  sidewalkAt(d: number): boolean {
+    if (isDivided(classAt(this.segments, d)) || this.urbanAt(d) < 0.4) return false;
+    return !this.state.stops.some((s) => Math.abs(s.at - d) < 6);
+  }
+
+  /** The paved shoulder outside the last lane (none on local roads or where there is a sidewalk). */
+  shoulder(d: number): number {
+    return this.sidewalkAt(d) ? 0 : shoulderAt(this.segments, d);
+  }
+
+  /** Distance from the centre line to the outside of the shoulder or sidewalk: where the roadside starts. */
+  outer(d: number): number {
+    return this.edge(d) + (this.sidewalkAt(d) ? SIDEWALK : this.shoulder(d));
   }
 
   /** The speed limit where the car is, in mph: the posted one from OpenStreetMap when known, else the usual one for the road. */
@@ -473,7 +525,10 @@ export class DriveScene implements GameScene {
     if (this.skyTimer <= 0) {
       this.skyTimer = 0.25;
       this.applyBiomeColours();
-      (this.mats.building as THREE.MeshLambertMaterial).emissiveIntensity = Math.max(0, 1 - daylight(hourOf(this.state)) * 2.5);
+      const night = Math.max(0, 1 - daylight(hourOf(this.state)) * 2.5);
+      (this.mats.building as THREE.MeshLambertMaterial).emissiveIntensity = night;
+      (this.mats.lampHead as THREE.MeshLambertMaterial).emissiveIntensity = night * 1.6;
+      (this.mats.lampGlow as THREE.MeshBasicMaterial).opacity = night * 0.32;
     }
     // The clock moves every frame so dawn and dusk come on smoothly.
     this.atmosphere.set(hourOf(this.state), weatherAt(this.state));
@@ -1104,7 +1159,6 @@ export class DriveScene implements GameScene {
     const clear = (d: number, side: number) =>
       !!structureAt(this.structures, d, 30) ||
       marksHere.some((l) => (l.kind === 'river' ? Math.abs(l.at - d) < 45 : Math.abs(l.at - d) < (WIDE_SIGHTS.has(l.kind) ? 75 : 30) && l.side === side));
-    const total = this.path.length;
     // Every town sign, real or made up, starts a town: a few blocks for a small
     // town, a bigger, taller spread for a city of 50,000+.
     const towns = this.state.landmarks
@@ -1116,22 +1170,34 @@ export class DriveScene implements GameScene {
       const f = this.path.directionAt(d);
       const right = { x: f.y, y: -f.x };
       // More buildings near the start, the end and towns.
-      const urban = Math.max(
-        d < 1500 ? 1 - d / 1500 : 0,
-        d > total - 1500 ? 1 - (total - d) / 1500 : 0,
-        ...stopsHere.filter((s) => s.kind === 'town' || s.kind === 'mall').map((s) => Math.max(0, 1 - Math.abs(s.at - d) / 260)),
-        ...towns.map((t) => Math.max(0, 1 - Math.abs(t.mid - d) / t.radius)),
-      );
+      const urban = this.urbanAt(d);
       const city = towns.some((t) => t.big && Math.abs(t.mid - d) < t.radius * 0.6);
       const wide = this.widen(d);
-      if (Math.round(d) % 48 < 8 && !clear(d, 1)) placeAt(inst.pole, p, right, 7.5 + wide, 0, 1);
-      // Reflector posts along the shoulders of bigger roads.
-      if (Math.round(d) % 40 < 8 && classAt(this.segments, d) !== 'local' && urban < 0.3) {
+      const sidewalk = this.sidewalkAt(d);
+      const cls = classAt(this.segments, d);
+      // Wooden poles out in the country; street lights on the sidewalks in town.
+      if (Math.round(d) % 48 < 8 && !clear(d, 1) && !sidewalk) placeAt(inst.pole, p, right, 7.5 + wide, 0, 1);
+      const lampSpots = sidewalk ? { every: 40, off: this.edge(d) + SIDEWALK - 0.6 } : cls === 'metro' ? { every: 64, off: this.outer(d) + 0.5 } : null;
+      if (lampSpots && Math.round(d) % lampSpots.every < 8) {
         for (const side of [-1, 1]) {
-          const off = side * (this.edge(d) + 1.4);
+          if (structureAt(this.structures, d, 10)) continue;
+          // The arm reaches out over the road.
+          const yaw = Math.atan2(side * f.x, -side * f.y);
+          placeAt(inst.lampPost, p, right, side * lampSpots.off, yaw, 1);
+          placeAt(inst.lampHead, p, right, side * lampSpots.off, yaw, 1);
+          if (quality.level !== 'low') placeAt(inst.lampGlow, p, right, side * lampSpots.off, yaw, 1);
+        }
+      }
+      // Reflector posts along the shoulders of bigger roads (guardrail posts on sharp bends).
+      if (Math.round(d) % 40 < 8 && cls !== 'local' && urban < 0.3) {
+        for (const side of [-1, 1]) {
+          const off = side * (this.outer(d) + 0.8);
           placeAt(inst.delineator, p, right, off, 0, 1);
           placeAt(inst.reflector, p, right, off, 0, 1);
         }
+      }
+      if (this.shoulder(d) > 1.2 && this.sharpBend(d)) {
+        for (const side of [-1, 1]) placeAt(inst.railPost, p, right, side * (this.edge(d) + this.shoulder(d) + 0.52), 0, 1);
       }
       for (const side of [-1, 1]) {
         if (stopsHere.some((s) => Math.abs(s.at - d) < 30 && (s.side === 'right' ? 1 : -1) === side)) continue;
@@ -1189,11 +1255,12 @@ export class DriveScene implements GameScene {
       if (stop.at >= from && stop.at < from + CHUNK) g.add(this.buildStop(stop, rng));
     }
     this.addMileMarkers(g, from, to);
+    this.addSigns(g, k, from, Math.min(this.path.length, from + CHUNK));
     for (const l of this.state.landmarks) {
-      if (l.at >= from && l.at < from + CHUNK) g.add(buildLandmark(l, this.path, (d) => this.edge(d)));
+      if (l.at >= from && l.at < from + CHUNK) g.add(buildLandmark(l, this.path, (d) => this.outer(d)));
     }
     for (const st of this.structures) {
-      if (st.to > from && st.from < to) g.add(buildStructurePart(st, this.path, from, to, (d) => this.edge(d)));
+      if (st.to > from && st.from < to) g.add(buildStructurePart(st, this.path, from, to, (d) => this.outer(d)));
     }
     if (k === Math.floor(this.path.length / CHUNK)) g.add(this.buildFinish());
     if (this.shadows) castShadows(g, true);
@@ -1232,8 +1299,47 @@ export class DriveScene implements GameScene {
     const line = (mat: THREE.Material, a: number, b: number, at: (d: number) => number, w = 0.2) => {
       for (const fn of both((d) => [at(d) - w / 2, at(d) + w / 2])) add(mat, this.strip(a, b, fn, 0.1, 12, 0));
     };
-    // Gravel shoulders just outside the pavement on both sides.
-    for (const fn of both((d) => [xs(d).edge - 0.5, xs(d).edge + 3])) add(this.shoulderMat, this.strip(from, to, fn, 0.04, 1));
+    // Gravel verges outside the paved shoulder (or sidewalk) on both sides.
+    const shoulderCache = new Map<number, number>();
+    const sh = (d: number) => {
+      let v = shoulderCache.get(d);
+      if (v === undefined) shoulderCache.set(d, (v = this.shoulder(d)));
+      return v;
+    };
+    const walkCache = new Map<number, boolean>();
+    const walk = (d: number) => {
+      let v = walkCache.get(d);
+      if (v === undefined) walkCache.set(d, (v = this.sidewalkAt(d)));
+      return v;
+    };
+    const outer = (d: number) => xs(d).edge + (walk(d) ? SIDEWALK : sh(d));
+    for (const fn of both((d) => [outer(d) - 0.5, outer(d) + 3])) add(this.shoulderMat, this.strip(from, to, fn, 0.04, 1));
+    // Paved shoulders on highways and freeways, with rumble strips just outside the edge line.
+    for (const [a, b] of this.spans(from, to, (d) => sh(d) > 0.05)) {
+      for (const fn of both((d) => [xs(d).edge - 0.2, xs(d).edge + sh(d)])) add(this.asphaltMat, this.strip(a, b, fn, 0.1, 7, 7));
+    }
+    for (const [a, b] of this.spans(from, to, (d) => sh(d) > 1.2)) {
+      for (const fn of both((d) => [xs(d).edge + 0.15, xs(d).edge + 0.75])) add(this.roadsideMats.rumble, this.strip(a, b, fn, 0.11, 1.1));
+    }
+    // Curbs and sidewalks through towns.
+    for (const [a, b] of this.spans(from, to, walk)) {
+      for (const left of [false, true]) {
+        const geo = sweep(this.path, a, b, SHAPES.sidewalk(SIDEWALK, CURB_HEIGHT), (d) => xs(d).edge, left);
+        if (geo) add(this.roadsideMats.concrete, geo);
+      }
+    }
+    // A concrete barrier down the middle of city freeways (the grass median stays in the country).
+    for (const [a, b] of this.spans(from, to, (d) => xs(d).median > 1 && medianKind(classAt(this.segments, d)) === 'barrier')) {
+      const geo = sweep(this.path, a, b, SHAPES.barrier, () => 0);
+      if (geo) add(this.roadsideMats.barrier, geo);
+    }
+    // Guardrails on the outside of sharp bends on highways and freeways.
+    for (const [a, b] of this.spans(from, to, (d) => sh(d) > 1.2 && this.sharpBend(d))) {
+      for (const left of [false, true]) {
+        const geo = sweep(this.path, a, b, SHAPES.guardrail, (d) => xs(d).edge + sh(d) + 0.4, left);
+        if (geo) add(this.roadsideMats.rail, geo);
+      }
+    }
     // Asphalt, one side of the centre line (or median) each.
     for (const fn of both((d) => [xs(d).median, xs(d).edge])) add(this.asphaltMat, this.strip(from, to, fn, 0.1, 7, 7));
     // Grass median, where there is one.
@@ -1258,6 +1364,11 @@ export class DriveScene implements GameScene {
       if (geos.length > 1) geos.forEach((x) => x.dispose());
       g.add(new THREE.Mesh(geo, mat));
     }
+  }
+
+  /** A bend tight enough for guardrails. */
+  sharpBend(d: number): boolean {
+    return turnAngle(this.path.directionAt(Math.max(0, d - 25)), this.path.directionAt(d + 25)) > 0.22;
   }
 
   /** The stretches of [from, to] where a test holds, to the nearest 2 units. */
@@ -1287,16 +1398,60 @@ export class DriveScene implements GameScene {
     for (let d = Math.ceil(from / step) * step; d < to; d += step) {
       if (!isDivided(classAt(this.segments, d))) continue;
       const n = interstateNumber(roadAt(route, d));
-      const mile = n === null ? null : map.exitNumber(latLngAt(route, this.path, d), n);
+      // Follow the real exit numbers where the route knows them; the border estimate fills the gaps.
+      const estimate = (x: number) => (n === null ? null : map.exitNumber(latLngAt(route, this.path, x), n));
+      const mile = milepost(d, route.exits, route.scale, estimate);
       if (mile === null) continue;
       const sign = mileMarker(mile);
       const p = this.path.pointAt(d);
       const f = this.path.directionAt(d);
-      const off = this.edge(d) + 2;
+      // On the outside of the shoulder.
+      const off = this.outer(d) + 0.8;
       sign.position.copy(to3({ x: p.x + f.y * off, y: p.y - f.x * off }, 0));
       // Face the oncoming car.
       sign.rotation.y = Math.atan2(-f.x, f.y);
       g.add(sign);
+    }
+  }
+
+  /**
+   * Roadside signs: SPEED LIMIT where the limit changes (and now and then as
+   * a reminder), green EXIT signs half a mile before each exit on freeways,
+   * and green distance signs to the next towns and the end of the trip.
+   */
+  private addSigns(g: THREE.Group, k: number, from: number, to: number): void {
+    const route = this.state.route;
+    const put = (sign: THREE.Object3D, d: number, out: number) => {
+      const p = this.path.pointAt(d);
+      const f = this.path.directionAt(d);
+      sign.position.copy(to3({ x: p.x + f.y * out, y: p.y - f.x * out }, 0));
+      sign.rotation.y = Math.atan2(-f.x, f.y);
+      g.add(sign);
+    };
+    const free = (d: number) => !structureAt(this.structures, d, 25) && !this.state.stops.some((s) => Math.abs(s.at - d) < 40);
+    const limits = limitChanges(from, to, (d) => this.speedLimit(d));
+    // A reminder every few chunks, out of town.
+    if (k % 5 === 2 && !limits.length && this.urbanAt(from + 60) < 0.4) limits.push({ at: from + 60, mph: this.speedLimit(from + 60) });
+    for (const l of limits) {
+      const d = l.at + 15;
+      if (d < to && free(d)) put(speedLimitSign(l.mph), d, this.outer(d) + 1.2);
+    }
+    const miles = (a: number, b: number) => realKmAt(route, Math.abs(b - a)) / 1.609;
+    // Exit ahead.
+    for (const stop of this.state.stops) {
+      const d = stop.at - 450;
+      if (!stop.exit || d < from || d >= to || !isDivided(classAt(this.segments, d)) || !free(d)) continue;
+      const m = miles(d, stop.at);
+      const dist = m < 0.35 ? '1/4 MILE' : m < 0.65 ? '1/2 MILE' : m < 0.9 ? '3/4 MILE' : `${Math.round(m)} MILE${Math.round(m) > 1 ? 'S' : ''}`;
+      put(greenSign([{ text: `EXIT ${stop.exit}` }, { text: stop.name }, { text: dist }], 5.5), d, this.outer(d) + 2.2);
+    }
+    // Distances to the next towns, now and then out of town.
+    const d = from + 220;
+    if (k % 7 === 3 && d < to && free(d) && this.urbanAt(d) < 0.3) {
+      const towns = this.state.landmarks.filter((l) => l.kind === 'citysign' && !/^Leaving |^Welcome to /.test(l.name)).map((l) => ({ at: l.at, name: l.name }));
+      const end = { at: this.path.length, name: route.endLabel.split(',')[0] };
+      const lines = distanceSignLines(d, towns, end, miles);
+      put(greenSign(lines.map((l) => ({ text: l.name, right: String(l.miles) }))), d, this.outer(d) + 2.6);
     }
   }
 
@@ -1322,7 +1477,7 @@ export class DriveScene implements GameScene {
     const sf = this.path.directionAt(stop.at - 90);
     const sub = [stop.exit ? `EXIT ${stop.exit}` : STOP_TITLES[stop.kind], stop.street].filter(Boolean).join(' · ');
     const sign = textSprite(`${stop.side === 'left' ? '◀' : ''} ${stop.name} ${stop.side === 'right' ? '▶' : ''}`.trim(), sub);
-    const so = this.edge(stop.at - 90) + 3.5;
+    const so = this.outer(stop.at - 90) + 1.5;
     sign.position.copy(to3({ x: signAt.x + sf.y * sideSign * so, y: signAt.y - sf.x * sideSign * so }, 5));
     g.add(sign);
     // Street name blade at the corner.
@@ -1406,6 +1561,9 @@ export class DriveScene implements GameScene {
     bm.emissiveMap?.dispose();
     Object.values(this.mats).forEach((x) => !x.userData.shared && x.dispose());
     for (const m of [this.roadMat, this.asphaltMat, ...Object.values(this.stripeMats), this.medianMat, this.shoulderMat]) m.dispose();
+    this.roadsideMats.rumble.map?.dispose();
+    Object.values(this.roadsideMats).forEach((m) => m.dispose());
+    disposeRoadside();
     this.roadTex.dispose();
     this.asphaltTex.dispose();
     this.stripeTex.forEach((t) => t.dispose());
