@@ -48,6 +48,7 @@ With no ammo left for a weapon, the player throws rocks. They are weak, but neve
 ## Map data
 
 - Place search: Nominatim (OpenStreetMap). Searches only run when the player presses Search, to respect the one-request-per-second usage policy.
+- Coverage: the contiguous US only (the lower 48 states and DC), the same area as the road build and the atlas. Search asks Nominatim for US results inside the lower 48 box, and "My location" is checked against the state outlines (with about 11 km of slack for coastal and border towns), so Alaska, Hawaii, Puerto Rico, Canada and Mexico can't be picked (`src/geo/coverage.ts`). How to play says so too.
 - Routing: the game's own router on the device, over road files built from OpenStreetMap (see "Road files from OpenStreetMap" below). No routing server is used.
 - When search or the road files are unreachable, the game falls back to the offline options below, and as a last resort offers a demo route through a made-up desert.
 - The screens credit OpenStreetMap contributors as the licence requires.

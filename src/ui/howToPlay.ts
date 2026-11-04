@@ -48,6 +48,7 @@ export const SECTIONS: Section[] = [
       { icon: '⛽', title: 'Keep gas in the tank', text: 'If the gas runs out, the trip is over. Stop at green dots for gas.' },
       { icon: '🔧', title: "Don't wreck the car", text: 'Bad guys and crashes hurt the car. Fix it at a garage.' },
       { icon: '👑', title: 'Beat the bosses', text: 'A boss waits halfway, and the Cat Queen waits at the end.' },
+      { icon: '🇺🇸', title: 'Where you can drive', text: 'Trips work in the 48 states that touch each other. Not Alaska, Hawaii, Canada or Mexico.' },
     ],
   },
   {

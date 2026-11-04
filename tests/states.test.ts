@@ -51,3 +51,28 @@ describe('US states', () => {
     setStateMap(null);
   });
 });
+
+describe('play area (lower 48 only)', () => {
+  it('keeps trips inside the contiguous US', async () => {
+    const { inPlayArea, inLower48Box } = await import('../src/geo/coverage');
+    for (const p of [
+      { lat: 35.2, lng: -101.83 }, // Amarillo
+      { lat: 24.56, lng: -81.78 }, // Key West
+      { lat: 47.61, lng: -122.33 }, // Seattle
+      { lat: 44.39, lng: -68.2 }, // Bar Harbor
+      { lat: 38.9, lng: -77.04 }, // Washington DC
+    ])
+      expect(inPlayArea(p, map)).toBe(true);
+    for (const p of [
+      { lat: 43.65, lng: -79.38 }, // Toronto
+      { lat: 31.87, lng: -116.6 }, // Ensenada (towns right on the border, like Tijuana, are let in)
+      { lat: 21.31, lng: -157.86 }, // Honolulu
+      { lat: 61.22, lng: -149.9 }, // Anchorage
+      { lat: 18.47, lng: -66.11 }, // San Juan
+      { lat: 51.51, lng: -0.13 }, // London
+    ])
+      expect(inPlayArea(p, map)).toBe(false);
+    expect(inLower48Box({ lat: 21.31, lng: -157.86 })).toBe(false);
+    expect(inPlayArea({ lat: 40.7, lng: -74 }, null)).toBe(true);
+  });
+});

@@ -11,6 +11,7 @@ import { canUseBike, planBikeRide, rideForGas } from './game/rescue';
 import { loadRide, RIDE_IDS, RIDES, rideOf, saveRide, type Ride } from './game/rides';
 import { addStateLines, buildRouteData, pathFromRoute, realKmAt, type RawRoute, type RouteData } from './geo/route';
 import { latLngAt, loadStateMap } from './geo/states';
+import { COVERAGE_NOTE, inPlayArea } from './geo/coverage';
 import { overpassStreets } from './geo/streets';
 import { fetchLiveConditions, liveEnabled, setLiveEnabled, type LiveConditions } from './geo/liveWeather';
 import { isOffline, planTrip, prefetchStreets, searchAnywhere, type PlanStep, type StepId } from './offline/planner';
@@ -272,7 +273,7 @@ function placePicker(label: string, onPick: (p: Place | null) => void, withGps: 
     status('Searching…');
     try {
       const { places: found, offline } = await searchAnywhere(input.value);
-      if (!found.length) return status(offline ? 'Offline, so only cities and parks in the built-in US atlas can be found. Try a bigger nearby city.' : 'No places found. Try adding a state or country.');
+      if (!found.length) return status(offline ? 'Offline, so only cities and parks in the built-in US atlas can be found. Try a bigger nearby city.' : `No places found. Try adding a state. ${COVERAGE_NOTE}`);
       results.replaceChildren(
         ...(offline ? [h('div', { class: 'muted' }, 'Offline: showing places from the built-in US atlas.')] : []),
         ...found.map((p) => h('button', { class: 'result', onclick: () => choose(p) }, p.label)),
@@ -302,7 +303,9 @@ function placePicker(label: string, onPick: (p: Place | null) => void, withGps: 
             onclick: async () => {
               status('Finding you…');
               try {
-                choose(await currentPosition());
+                const here = await currentPosition();
+                if (!inPlayArea(here, await loadStateMap())) return status(`You're outside the map. ${COVERAGE_NOTE} Search for a US place instead.`);
+                choose(here);
               } catch (e) {
                 status((e as Error).message);
               }
