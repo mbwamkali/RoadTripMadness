@@ -36,6 +36,14 @@ jobs:
           else
             echo "No osm-roads release yet; deploying without road files."
           fi
+      # Keep the side-branch preview (preview/, deployed by preview.yml) across live deploys.
+      - name: Keep preview
+        run: |
+          if git fetch -q --depth 1 origin gh-pages && git cat-file -e FETCH_HEAD:preview 2>/dev/null; then
+            mkdir -p dist/preview
+            git archive FETCH_HEAD preview | tar -x -C dist
+            echo "Kept preview/"
+          fi
       # Publish the built game to the gh-pages branch, which GitHub Pages serves.
       - run: |
           cd dist
