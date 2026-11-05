@@ -185,8 +185,17 @@ export interface RoadFight {
   update(dt: number): void;
   /** Camera shake from hits. */
   shake(): number;
+  /** Swipes and the lane buttons dodge between the fight's lanes. */
+  changeLane(dir: -1 | 1): void;
+  /** The car's speed as a share of cruise speed (escape is by distance). */
+  setPace(pace: number): void;
+  /** Nitro is burning: the car really speeds up. */
+  boosting(): boolean;
   boss: boolean;
 }
+
+/** How much a fight's nitro boost speeds the car up. */
+export const FIGHT_BOOST_SPEED = 1.6;
 
 export class DriveScene implements GameScene {
   scene = new THREE.Scene();
@@ -473,6 +482,11 @@ export class DriveScene implements GameScene {
   /** Change lanes: -1 = left, 1 = right. On two-way roads you can pull into the oncoming lane to pass. */
   steer(dir: -1 | 1): void {
     if (this.paused || this.stopping || this.turning || this.pendingTurn) return;
+    if (this.fight) {
+      this.fight.changeLane(dir);
+      sound.click();
+      return;
+    }
     const d = this.state.distance;
     const cls = classAt(this.segments, d);
     const next = clampLane(cls, this.playerLane + dir);
@@ -712,6 +726,11 @@ export class DriveScene implements GameScene {
     this.cb.onPrompt(null, 0);
   }
 
+  /** Where the car sits across your side of the road (a fight's starting x). */
+  get sideX(): number {
+    return this.lane - this.sideCentre(this.state.distance);
+  }
+
   detachFight(): void {
     this.fight = null;
   }
@@ -806,7 +825,9 @@ export class DriveScene implements GameScene {
       if (v) speed = Math.min(speed, v.speed * (1 - Math.max(0, 8 - (v.d - s.distance)) * 0.08));
     }
     if (this.autopilot) speed = this.autopilotAnimals(speed);
+    if (this.fight?.boosting()) speed *= FIGHT_BOOST_SPEED;
     speed = Math.max(0, speed);
+    this.fight?.setPace(speed / CRUISE_SPEED);
     this.speed = speed;
     this.announceAnimals();
     let step = speed * dt;

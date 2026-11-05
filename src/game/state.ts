@@ -199,8 +199,12 @@ export function advance(
   const nearBoss = s.bossStage < 2 && bosses[s.bossStage] - s.distance < 0.04 * path.length;
   if (s.distance >= s.nextEncounterAt) {
     const rng = makeRng(s.seed + (s.encounters + 1) * 977);
+    // Fights play out on the road, so don't start one just before a turn-off: wait until it's behind you.
+    const stop = upcomingStop(s, FIGHT_CLEAR);
     if (nearBoss) {
       s.nextEncounterAt = bosses[s.bossStage] + encounterGap(rng, path.length, s.difficulty) * 0.5;
+    } else if (stop) {
+      s.nextEncounterAt = stop.at + 150;
     } else {
       encounter = true;
       s.encounters++;
@@ -218,6 +222,9 @@ export function advance(
   }
   return { arrived: false, outOfFuel: false, encounter, event };
 }
+
+/** Road units ahead that must be free of turn-offs before an ordinary fight starts. */
+export const FIGHT_CLEAR = 1200;
 
 /** The next stop the player hasn't passed, if it's within `lookahead` units. */
 export function upcomingStop(s: GameState, lookahead: number): Stop | undefined {
