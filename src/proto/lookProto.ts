@@ -21,6 +21,7 @@ function modelGeometry(name: ModelName): THREE.BufferGeometry | null {
 }
 import { makeAsphaltTexture } from '../scenes/common';
 import { makeRng } from '../game/rng';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 /**
  * Throwaway visual target (look-proto.html): the same desert two-lane road as
@@ -367,9 +368,38 @@ function resize(): void {
   camera.updateProjectionMatrix();
 }
 
+// ---------------------------------------------------------------- generated models (?car=gen/x.glb&saucer=gen/y.glb)
+function loadGen(url: string, yawDeg: number, size: number, clearcoat: number): Promise<THREE.Object3D> {
+  return new GLTFLoader().loadAsync(url).then((g) => {
+    const root = g.scene;
+    root.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh) return;
+      const old = m.material as THREE.MeshStandardMaterial;
+      const mat = new THREE.MeshPhysicalMaterial({ map: old.map, normalMap: old.normalMap, roughnessMap: old.roughnessMap, metalnessMap: old.metalnessMap,
+        roughness: old.roughness, metalness: old.metalness, clearcoat, clearcoatRoughness: 0.08 });
+      m.material = mat;
+      m.castShadow = m.receiveShadow = true;
+    });
+    const box = new THREE.Box3().setFromObject(root);
+    const dims = box.getSize(new THREE.Vector3());
+    root.scale.setScalar(size / Math.max(dims.x, dims.z));
+    box.setFromObject(root);
+    root.position.y -= box.min.y;
+    root.position.x -= (box.min.x + box.max.x) / 2;
+    root.position.z -= (box.min.z + box.max.z) / 2;
+    const pivot = new THREE.Group();
+    const inner = new THREE.Group();
+    inner.add(root);
+    inner.rotation.y = THREE.MathUtils.degToRad(yawDeg);
+    pivot.add(inner);
+    return pivot;
+  });
+}
+
 // ---------------------------------------------------------------- go
 const status = document.getElementById('status')!;
-void loadModels().then(() => {
+void loadModels().then(async () => {
   scatter('cactus-1', 70, 3, 90, [0.8, 1.3]);
   scatter('cactus-2', 50, 6, 120, [0.7, 1.2]);
   scatter('cactus-3', 40, 6, 120, [0.7, 1.1]);
@@ -383,7 +413,15 @@ void loadModels().then(() => {
   poles();
   reflectors();
   traffic();
-  const car = playerCar();
+  const genCar = params.get('car');
+  const car = genCar ? await loadGen(genCar, Number(params.get('caryaw') ?? 270), 4.4, 0.7) : playerCar();
+  const genSaucer = params.get('saucer');
+  if (genSaucer) {
+    const sc = await loadGen(genSaucer, Number(params.get('saucyaw') ?? 200), 7, 0.3);
+    sc.position.set(roadX(-34) - 1, 6.5, -34);
+    sc.rotation.z = 0.08;
+    scene.add(sc);
+  }
   const carZ = 0;
   car.position.set(roadX(carZ) + 2.1, 0, carZ);
   car.lookAt(roadX(carZ - 8) + 2.1, 0, carZ - 8);

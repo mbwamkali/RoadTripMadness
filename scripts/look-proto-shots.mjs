@@ -15,7 +15,7 @@ for (const t of (process.env.TIMES || 'day,golden').split(',')) {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true });
   page.on('pageerror', (e) => console.error(t, e.message));
   page.on('console', (m) => m.type() === 'error' && console.error(t, m.text()));
-  await page.goto(`http://localhost:${PORT}/look-proto.html?time=${t}`);
+  await page.goto(`http://localhost:${PORT}/look-proto.html?time=${t}${process.env.EXTRA || ""}`);
   await page.evaluate(() => localStorage.setItem('rtm-quality', 'high'));
   await page.reload();
   await page.waitForFunction(() => document.getElementById('status')?.textContent === 'ready', null, { timeout: 300000 });
