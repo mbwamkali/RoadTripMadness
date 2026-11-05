@@ -23,4 +23,17 @@ Low-poly models by Quaternius (https://quaternius.com), released as CC0 (public 
 | oak-*, pine-*, palm-*, tree-dead, cactus-*, bush-*, grass, corn, wheat, rock-*.glb | Ultimate Nature pack |
 | shop, flat-*, hospital, house-*.glb | Simple Buildings pack |
 
+## Detailed models (visual overhaul)
+
+Files in `public/models/hd/` were generated for this game from its own concept pictures (FLUX.1 schnell, Apache 2.0, on Comfy Cloud and locally):
+
+| Files | Made with |
+| --- | --- |
+| car, pickup, saucer, earl, warrig, hermit, pizza, sweeper, karen, drone, zombie, outlaw, alien_cat, cow, armadillo, sedan, van, semi | Tripo image-to-3D via Comfy Cloud (https://www.tripo3d.ai) |
+| b/*.glb, b/lod/*.glb (buildings, houses, landmarks) | Microsoft TRELLIS.2 (MIT, https://github.com/microsoft/TRELLIS.2) in ComfyUI on our own PC |
+
+All were shrunk for phones with glTF Transform (MIT, https://gltf-transform.dev): quantised meshes, WebP textures, and for buildings simplified to about 6k triangles (3.5k for the roadside copies in `b/lod/`).
+
+`ground_n.jpg` and `asphalt_n.jpg` are bump (normal) maps computed from `ground.jpg` and `asphalt.jpg`.
+
 Other bundled data: the offline atlas and US state outlines come from Natural Earth (public domain); classic routes and map features from OpenStreetMap (© OpenStreetMap contributors, ODbL); live weather from Open-Meteo (CC BY 4.0).

@@ -15,6 +15,12 @@ This product bundles third-party data and assets under their own terms:
 - Ground, asphalt and gravel textures from Poly Haven (CC0, public domain).
 - Low-poly 3D models (cars, zombie, trees, plants, rocks, buildings)
   by Quaternius, https://quaternius.com (CC0, public domain).
+- Detailed 3D models in public/models/hd/ generated for this game from its own
+  concept pictures (made with FLUX.1 schnell, Apache 2.0): vehicles, bosses,
+  enemies and animals with Tripo image-to-3D (https://www.tripo3d.ai); buildings,
+  houses and landmarks with Microsoft TRELLIS.2 (MIT) in ComfyUI. Shrunk with
+  glTF Transform (MIT).
+- Bump maps ground_n.jpg and asphalt_n.jpg made from the Poly Haven textures.
 - Live weather from Open-Meteo.com (CC BY 4.0), fetched at play time.
 
 See docs/CREDITS.md for details.

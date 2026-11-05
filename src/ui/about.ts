@@ -55,9 +55,37 @@ export const CREDITS: Credit[] = [
   {
     icon: '🧱',
     name: 'Poly Haven',
-    what: 'Asphalt, ground and gravel textures.',
+    what: 'Asphalt, ground and gravel textures (and the bump maps made from them).',
     licence: 'CC0 (public domain).',
     links: [['polyhaven.com', 'https://polyhaven.com']],
+  },
+  {
+    icon: '🚗',
+    name: 'Tripo',
+    what: 'The detailed cars, trucks, bosses, enemies and animals, made from our own concept pictures with Tripo image-to-3D (via Comfy Cloud).',
+    licence: 'Generated for this game.',
+    links: [['tripo3d.ai', 'https://www.tripo3d.ai']],
+  },
+  {
+    icon: '🏚️',
+    name: 'TRELLIS.2',
+    what: 'The detailed buildings, houses, landmarks and characters, made on our own PC with Microsoft\'s TRELLIS.2 image-to-3D model in ComfyUI.',
+    licence: 'TRELLIS.2 is MIT licensed; the models were generated for this game.',
+    links: [['github.com/microsoft/TRELLIS.2', 'https://github.com/microsoft/TRELLIS.2'], ['comfy.org', 'https://www.comfy.org']],
+  },
+  {
+    icon: '🎨',
+    name: 'FLUX.1 schnell',
+    what: 'The concept pictures the 3D models were made from, by Black Forest Labs.',
+    licence: 'Apache 2.0.',
+    links: [['blackforestlabs.ai', 'https://blackforestlabs.ai']],
+  },
+  {
+    icon: '🗜️',
+    name: 'glTF Transform',
+    what: 'Shrinks the 3D models for phones.',
+    licence: 'MIT.',
+    links: [['gltf-transform.dev', 'https://gltf-transform.dev']],
   },
   {
     icon: '🌦️',
