@@ -4,6 +4,7 @@ import type { Path } from '../geo/geo';
 import { LANDMARK_TITLES, type Landmark } from '../game/landmarks';
 import { hashString, makeRng, range } from '../game/rng';
 import { textSprite, to3 } from './common';
+import { hdBuilding, type HdBuilding } from './hdBuildings';
 
 /**
  * Low-poly models for landmarks. Every material made here is owned by the
@@ -677,6 +678,25 @@ function poiSign(l: Landmark, path: Path, edge = ROAD_HALF): THREE.Object3D {
 }
 
 /** Builds a landmark, positioned and turned to face the road. */
+/** Landmarks with a detailed generated model (the windmill keeps its code-built one, whose blades turn). */
+const HD_LANDMARKS: Partial<Record<Landmark['kind'], HdBuilding>> = {
+  watertower: 'water_tower',
+  grain: 'grain_elevator',
+  lookout: 'lookout',
+  ghosttown: 'ghost_town',
+  lighthouse: 'lighthouse',
+  farmstead: 'barn',
+};
+
+/** Swaps in the detailed model at the code-built one's height, when it has loaded. */
+function withHdLandmark(l: Landmark, code: THREE.Object3D): THREE.Object3D {
+  const lumberjack = l.kind === 'giant' && /lumberjack|bunyan|logger|muffler/i.test(l.name);
+  const name = lumberjack ? 'giant_statue' : HD_LANDMARKS[l.kind];
+  if (!name) return code;
+  const h = new THREE.Box3().setFromObject(code).getSize(new THREE.Vector3()).y;
+  return hdBuilding(name, Math.max(h, 6), 'height') ?? code;
+}
+
 export function buildLandmark(l: Landmark, path: Path, edgeAt: (d: number) => number = () => ROAD_HALF): THREE.Object3D {
   if (l.kind === 'river') return buildRiver(l, path, edgeAt(l.at));
   const wide = l.kind === 'peak' || l.kind === 'mountains' || l.kind === 'mesa' ? 0 : edgeAt(l.at) - ROAD_HALF;
@@ -703,7 +723,7 @@ export function buildLandmark(l: Landmark, path: Path, edgeAt: (d: number) => nu
     lookout: buildLookout,
     farmstead: () => buildFarmstead(rng),
   };
-  const model = (builders[l.kind] ?? buildMonument)();
+  const model = withHdLandmark(l, (builders[l.kind] ?? buildMonument)());
   const { p, fwd, right } = frame(path, l.at);
   const out = new THREE.Group();
   model.position.copy(to3(p)).addScaledVector(right, l.side * (l.offset + wide));

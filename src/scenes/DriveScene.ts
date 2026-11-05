@@ -29,6 +29,7 @@ import { sound } from '../audio/sound';
 import { Atmosphere } from './atmosphere';
 import { Backdrop } from './backdrop';
 import { addGroundDetail } from './groundDetail';
+import { fitted, HD_HOUSES, HD_ROADSIDE, hdRoadside, placeBuilding, type HdRoadside } from './hdBuildings';
 import { quality } from './quality';
 import { MODEL_SPECS, modelGeometry, modelMaterial, modelMesh, treeModelsWanted, type ModelName } from './models';
 import { detailTexture } from './textures';
@@ -160,6 +161,8 @@ const ROCK_MODELS: ModelName[] = ['rock-1', 'rock-2', 'rock-3'];
 /** Small-town buildings and the taller ones for busier blocks. */
 const HOUSE_MODELS: ModelName[] = ['house-1', 'house-2', 'house-3', 'house-4', 'house-5', 'shop'];
 const BLOCK_MODELS: ModelName[] = ['flat-1', 'flat-2', 'shop', 'hospital'];
+const HD_HOUSES_ROADSIDE: HdRoadside[] = ['house_ranch', 'house_farm', 'house_bungalow'];
+const HD_SHOPS: HdRoadside[] = ['grocery', 'hardware', 'pharmacy', 'motel', 'supply', 'garage', 'police'];
 
 /** The on-rails road trip view: the car follows the route and the world streams in around it. */
 /** How much faster time runs on autopilot. */
@@ -1454,6 +1457,7 @@ export class DriveScene implements GameScene {
     this.buildRoad(g, from, to);
 
     const rng = makeRng(this.state.seed ^ hashString(`chunk${k}`));
+    this.addHdRoadside();
     const inst: Record<string, THREE.Matrix4[]> = {};
     for (const k of Object.keys(this.geos)) inst[k] = [];
     const buildingColors: THREE.Color[] = [];
@@ -1522,8 +1526,17 @@ export class DriveScene implements GameScene {
           const w = 6 + rng() * 10;
           const h = 4 + rng() * (city && urban > 0.5 ? 34 : urban > 0.6 ? 18 : 6);
           const tower = city && urban > 0.5 && h > 16;
-          const model = !tower && this.model(pick(rng, urban > 0.6 ? BLOCK_MODELS : HOUSE_MODELS));
-          if (model) {
+          // The detailed houses and shops when they've loaded: mostly houses on the edge of town, shops nearer the middle.
+          const hdName = tower ? null : pick(rng, urban > 0.6 ? (rng() < 0.5 ? HD_SHOPS : []) : rng() < 0.6 ? HD_HOUSES_ROADSIDE : HD_SHOPS);
+          const hd = hdName && this.geos[`hd:${hdName}`] ? hdName : null;
+          const model = !tower && !hd && this.model(pick(rng, urban > 0.6 ? BLOCK_MODELS : HOUSE_MODELS));
+          if (hd) {
+            const face = Math.atan2(-side * f.y, -side * f.x) + (rng() - 0.5) * 0.2;
+            const mo = side * (16 + wide + rng() * 12);
+            const size = hdRoadside(hd)!.size;
+            placeAt(inst[`hd:${hd}`], p, right, mo, face, ((hd.startsWith('house') ? 11 : 13) / size.x) * (0.9 + rng() * 0.2));
+            solid('building', d, mo, 6);
+          } else if (model) {
             // Models face the road, a little crooked so the street doesn't look stamped out.
             const face = Math.atan2(-side * f.y, -side * f.x) + (rng() - 0.5) * 0.3;
             const mo = side * (14 + wide + rng() * 14);
@@ -1590,6 +1603,18 @@ export class DriveScene implements GameScene {
   }
 
   /** The instancing key for a model, or null when it isn't loaded. */
+  /** Registers the light roadside buildings for instancing once they've loaded. */
+  private addHdRoadside(): void {
+    for (const name of HD_ROADSIDE) {
+      const key = `hd:${name}`;
+      if (this.geos[key]) continue;
+      const r = hdRoadside(name);
+      if (!r) continue;
+      this.geos[key] = r.geometry;
+      this.mats[key] = r.material;
+    }
+  }
+
   private model(name: ModelName): string | null {
     return this.geos[`m:${name}`] ? `m:${name}` : null;
   }
@@ -1817,6 +1842,26 @@ export class DriveScene implements GameScene {
     }
     // A dirt road just runs off into the distance.
     if (dirt) return g;
+    // The detailed buildings, when loaded: the stop's own places in a row across the end of the side road, houses behind.
+    const facing = Math.atan2(-side.x, side.y);
+    const at = (along: number, out: number) => to3({ x: p.x + side.x * out + f.x * along, y: p.y + side.y * out + f.y * along }, 0);
+    const places = stop.places.map((pl) => placeBuilding(pl, pl === 'junkyard' ? 18 : 13, 14));
+    if (places.length && places.every(Boolean)) {
+      places.forEach((b, i) => {
+        b!.position.copy(at((i - (places.length - 1) / 2) * 17, len + 4));
+        b!.rotation.y = facing + (rng() - 0.5) * 0.1;
+        g.add(b!);
+      });
+      const houses = stop.kind === 'farm' ? ['barn', 'house_farm'] as const : stop.kind === 'town' ? HD_HOUSES : [];
+      houses.forEach((h, i) => {
+        const b = fitted(h, 11, 12);
+        if (!b) return;
+        b.position.copy(at((i - (houses.length - 1) / 2) * 18 + (rng() - 0.5) * 4, len + 24 + rng() * 4));
+        b.rotation.y = facing + (rng() - 0.5) * 0.3;
+        g.add(b);
+      });
+      return g;
+    }
     // A little cluster of buildings at the end of the side road.
     for (let i = 0; i < 4 + rng() * 4; i++) {
       const w = 8 + rng() * 10;

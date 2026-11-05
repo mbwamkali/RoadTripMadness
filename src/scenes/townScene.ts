@@ -3,6 +3,7 @@ import { lit } from './materials';
 import { disposeTree, makeCar } from './common';
 import { modelMesh, type ModelName } from './models';
 import { quality } from './quality';
+import { fitted, HD_HOUSES, placeBuilding } from './hdBuildings';
 import { makeWalker, makeZombie } from './scavengeScene';
 import type { PlaceKind, Stop } from '../game/stops';
 import type { Upgrades } from '../game/upgrades';
@@ -215,7 +216,7 @@ export class TownScene {
     const houses: ModelName[] = rural ? ['house-2', 'house-5'] : ['house-1', 'house-3', 'house-2', 'house-4'];
     houses.forEach((n, i) => {
       const side = i % 2 === 0 ? -1 : 1;
-      const m = modelMesh(n);
+      const m = fitted(rural ? (i % 2 ? 'barn' : 'house_farm') : HD_HOUSES[i % HD_HOUSES.length], 11, 11) ?? modelMesh(n);
       if (!m) return;
       m.position.set(side * (SIDE_X + 0.5), 0, -rows * ROW - 6 - Math.floor(i / 2) * 16);
       m.rotation.y = side === -1 ? Math.PI / 2 : -Math.PI / 2;
@@ -277,6 +278,14 @@ export class TownScene {
     const face = -side; // the side that faces the street
     const x = side * SIDE_X;
     const ry = face === 1 ? Math.PI / 2 : -Math.PI / 2;
+    // The detailed building with a clean sign, when it has loaded.
+    const hd = placeBuilding(place, 12, 11);
+    if (hd) {
+      hd.position.set(x, 0, z);
+      hd.rotation.y = ry;
+      g.add(hd);
+      return g;
+    }
     const model = (n: ModelName, mx: number, s = 1.15) => {
       const m = modelMesh(n);
       if (m) {
@@ -347,7 +356,11 @@ export class TownScene {
     let hit = bubbles[0]?.object.userData.place as PlaceKind | undefined;
     if (!hit) {
       const walls = this.ray.intersectObjects(this.buildings.map((b) => b.group), true)[0];
-      hit = walls && this.buildings.find((b) => b.group === walls.object.parent || b.group.children.includes(walls.object))?.place;
+      const inside = (b: Building) => {
+        for (let o: THREE.Object3D | null = walls?.object ?? null; o; o = o.parent) if (o === b.group) return true;
+        return false;
+      };
+      hit = walls && this.buildings.find(inside)?.place;
     }
     if (hit) this.walkTo(hit);
   };

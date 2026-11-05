@@ -72,6 +72,7 @@ import { openScavengeScene } from './scenes/scavengeScene';
 import { gunDamageFor, MAX_LEVEL, ramDamageFor, upgradeCost, UPGRADES, type UpgradeKind } from './game/upgrades';
 import { sound } from './audio/sound';
 import { hdModelsReady, loadHdModels } from './scenes/hdModels';
+import { loadHdBuildings } from './scenes/hdBuildings';
 import { gfx, loadQualityChoice, nextQualityChoice, quality, QUALITY_NAMES, resolveQuality, saveQualityChoice } from './scenes/quality';
 import type { Bloom } from './scenes/bloom';
 
@@ -109,7 +110,7 @@ applyQuality();
 void loadStateMap();
 void loadModels();
 // The detailed overhaul models (Medium and High).
-void loadHdModels();
+void loadHdModels().then(() => loadHdBuildings());
 
 let active: GameScene | null = null;
 let state: GameState | null = null;
