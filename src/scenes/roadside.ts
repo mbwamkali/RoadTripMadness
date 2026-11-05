@@ -85,7 +85,7 @@ export function lampGeometries(): { post: THREE.BufferGeometry; head: THREE.Buff
     post: merged,
     head: new THREE.BoxGeometry(0.9, 0.18, 0.45).translate(2.2, 7.32, 0),
     // A pool of light on the road under the lamp.
-    glow: new THREE.CircleGeometry(3.4, 16).rotateX(-Math.PI / 2).translate(2.2, 0.14, 0),
+    glow: new THREE.PlaneGeometry(9, 9).rotateX(-Math.PI / 2).translate(2.2, 0.16, 0),
   };
 }
 

@@ -199,10 +199,11 @@ export class Atmosphere {
     fog.near = Math.min(this.fogNear * this.fogScale * nightScale * 0.6, fog.far * 0.5);
     const clear = this.clearness;
     // Tuned for film tone mapping plus sky reflections: a strong sun, a softer fill.
-    this.hemi.intensity = (0.25 + d * 1.0 - (1 - clear) * 0.2) * (this.envTarget ? 0.7 : 1);
-    this.hemi.color.setHex(d < 0.3 ? 0x8090c0 : 0xfff6e0);
-    this.sun.intensity = 0.1 + d * 3.0 * (0.5 + clear * 0.5);
-    this.scene.environmentIntensity = 0.12 + d * 0.55;
+    this.hemi.intensity = (0.5 - d * 0.25 + d * 1.0 - (1 - clear) * 0.2) * (this.envTarget ? 0.7 : 1);
+    this.hemi.color.setHex(d < 0.3 ? 0x8ea0d8 : 0xfff6e0);
+    this.sun.intensity = 0.3 * (1 - d) + d * 3.0 * (0.5 + clear * 0.5);
+    // Moonlit nights: dim, but the road and buildings still read.
+    this.scene.environmentIntensity = 0.25 + d * 0.42;
     if (d < 0.6) this.sun.color.copy(WARM_SUN).lerp(WHITE, d);
     else this.sun.color.copy(WHITE);
     this.headlight.intensity = d < 0.5 ? (1 - d * 2) * 90 : 0;

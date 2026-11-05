@@ -29,7 +29,7 @@ import { sound } from '../audio/sound';
 import { Atmosphere } from './atmosphere';
 import { Backdrop } from './backdrop';
 import { addGroundDetail } from './groundDetail';
-import { fitted, HD_HOUSES, HD_ROADSIDE, hdRoadside, placeBuilding, type HdRoadside } from './hdBuildings';
+import { fitted, setBuildingsNight, HD_HOUSES, HD_ROADSIDE, hdRoadside, placeBuilding, type HdRoadside } from './hdBuildings';
 import { quality } from './quality';
 import { MODEL_SPECS, modelGeometry, modelMaterial, modelMesh, treeModelsWanted, type ModelName } from './models';
 import { detailTexture } from './textures';
@@ -375,7 +375,8 @@ export class DriveScene implements GameScene {
       // Street lights: the head glows after dark, with a pool of light on the road (not on Low).
       lampPost: lit({ color: 0x6d737a }),
       lampHead: lit({ color: 0xfff4d8, emissive: 0xffd890, emissiveIntensity: 0 }),
-      lampGlow: new THREE.MeshBasicMaterial({ color: 0xffd28a, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }),
+      // Soft-edged, and pulled ahead of the road surface so it shows from far off, not just as you pass.
+      lampGlow: new THREE.MeshBasicMaterial({ color: 0xffd28a, map: glowTexture(), transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -10, polygonOffsetUnits: -20, toneMapped: false }),
       railPost: lit({ color: 0x8a9096 }),
     };
     this.geos = {
@@ -673,7 +674,8 @@ export class DriveScene implements GameScene {
   resize(w: number, h: number): void {
     this.camera.aspect = w / h;
     // Portrait phones need a wider view to see the road ahead.
-    this.camera.fov = w < h ? 75 : 60;
+    // Upright phones need a wide view, but too wide makes buildings at the edges lean.
+    this.camera.fov = w < h ? 68 : 58;
     this.camera.updateProjectionMatrix();
   }
 
@@ -769,7 +771,8 @@ export class DriveScene implements GameScene {
       const night = Math.max(0, 1 - daylight(hourOf(this.state)) * 2.5);
       (this.mats.building as THREE.MeshStandardMaterial).emissiveIntensity = night;
       (this.mats.lampHead as THREE.MeshStandardMaterial).emissiveIntensity = night * 1.6;
-      (this.mats.lampGlow as THREE.MeshBasicMaterial).opacity = night * 0.32;
+      (this.mats.lampGlow as THREE.MeshBasicMaterial).opacity = night * 0.4;
+      setBuildingsNight(night);
     }
     // The clock moves every frame so dawn and dusk come on smoothly.
     this.atmosphere.set(hourOf(this.state), weatherAt(this.state));
@@ -1935,6 +1938,7 @@ export class DriveScene implements GameScene {
     const bm = this.mats.building as THREE.MeshStandardMaterial;
     bm.map?.dispose();
     bm.emissiveMap?.dispose();
+    (this.mats.lampGlow as THREE.MeshBasicMaterial).map?.dispose();
     Object.values(this.mats).forEach((x) => !x.userData.shared && x.dispose());
     for (const m of [this.roadMat, this.asphaltMat, ...Object.values(this.stripeMats), this.medianMat, this.shoulderMat]) m.dispose();
     this.dirtMat.dispose();
@@ -1962,6 +1966,22 @@ function pickPlant(weights: Partial<Record<PlantKind, number>>, r: number): Plan
     if (t <= 0) return k;
   }
   return entries[0][0];
+}
+
+/** A round glow that fades out to nothing at the edge. */
+function glowTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d')!;
+  const r = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  r.addColorStop(0, 'rgba(255,255,255,1)');
+  r.addColorStop(0.45, 'rgba(255,255,255,0.55)');
+  r.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = r;
+  g.fillRect(0, 0, 64, 64);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
 }
 
 function placeAt(list: THREE.Matrix4[], p: Vec2, right: Vec2, offset: number, rotY: number, sx: number, sy = sx, sz = sx): void {
@@ -2032,22 +2052,45 @@ function mileMarker(mile: number): THREE.Group {
  * windows are lit at night (the same pattern, so lights sit in the windows).
  */
 function windowTexture(lit: boolean): THREE.CanvasTexture {
+  // Framed windows with blinds; by night about a third glow, each a slightly different warmth.
   const c = document.createElement('canvas');
-  c.width = c.height = 64;
+  c.width = c.height = 128;
   const g = c.getContext('2d')!;
   g.fillStyle = lit ? '#000' : '#fff';
-  g.fillRect(0, 0, 64, 64);
+  g.fillRect(0, 0, 128, 128);
   const rng = makeRng(7);
+  const warm = ['#ffd890', '#ffe7b8', '#f6c070', '#fff0d0'];
   for (let row = 0; row < 4; row++) {
     for (let col = 0; col < 3; col++) {
-      const on = rng() < 0.55;
-      if (lit && !on) continue;
-      g.fillStyle = lit ? '#fff' : '#5a6370';
-      g.fillRect(6 + col * 20, 6 + row * 15, 12, 8);
+      const x = 12 + col * 40;
+      const y = 10 + row * 30;
+      const on = rng() < 0.35;
+      const shade = rng();
+      if (lit) {
+        if (!on) continue;
+        const grad = g.createLinearGradient(0, y, 0, y + 18);
+        const tone = warm[Math.floor(rng() * warm.length)];
+        grad.addColorStop(0, tone);
+        grad.addColorStop(1, '#a07040');
+        g.fillStyle = grad;
+        g.globalAlpha = 0.6 + shade * 0.4;
+        g.fillRect(x + 2, y + 2 + shade * 6, 20, 16 - shade * 6);
+        g.globalAlpha = 1;
+        continue;
+      }
+      g.fillStyle = '#8a8a86';
+      g.fillRect(x, y, 24, 20);
+      g.fillStyle = '#3e4a58';
+      g.fillRect(x + 2, y + 2, 20, 16);
+      // A blind part-way down.
+      g.fillStyle = '#c9c2b0';
+      g.fillRect(x + 2, y + 2, 20, shade * 6);
+      g.fillStyle = '#8a8a86';
+      g.fillRect(x + 11, y + 2, 2, 16);
     }
   }
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
-  t.magFilter = THREE.NearestFilter;
+  t.anisotropy = 4;
   return t;
 }

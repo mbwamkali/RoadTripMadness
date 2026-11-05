@@ -64,6 +64,7 @@ export function loadHdBuildings(base = `${import.meta.env.BASE_URL}models/hd/b/`
             for (const mat of [m.material].flat()) mat.userData.shared = true;
           });
           loaded.set(name, pivot);
+          nightLevel = -1;
         } catch (e) {
           console.warn(`Building ${name} not loaded:`, e);
         }
@@ -91,6 +92,7 @@ export function loadHdBuildings(base = `${import.meta.env.BASE_URL}models/hd/b/`
           const material = m.material as THREE.Material;
           material.userData.shared = true;
           roadside.set(name, { geometry, material, size: box.getSize(new THREE.Vector3()) });
+          nightLevel = -1;
         } catch (e) {
           console.warn(`Roadside building ${name} not loaded:`, e);
         }
@@ -204,4 +206,27 @@ export function placeBuilding(place: PlaceKind, width: number, maxDepth = Infini
   }
   g.userData.size = (b.userData.size as THREE.Vector3).clone();
   return g;
+}
+
+let nightLevel = -1;
+/**
+ * Night glow for the generated buildings: they have no window lights of their
+ * own, so their own picture glows faintly, warmed like porch and street light.
+ * Shared by every copy, so one call covers the whole road.
+ */
+export function setBuildingsNight(night: number): void {
+  const n = Math.round(night * 20) / 20;
+  if (n === nightLevel) return;
+  nightLevel = n;
+  const mats = new Set<THREE.MeshStandardMaterial>();
+  for (const g of loaded.values()) g.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) mats.add(m.material as THREE.MeshStandardMaterial); });
+  for (const r of roadside.values()) mats.add(r.material as THREE.MeshStandardMaterial);
+  for (const m of mats) {
+    if (!m.emissive) continue;
+    if (m.map && m.emissiveMap !== m.map) {
+      m.emissiveMap = m.map;
+      m.needsUpdate = true;
+    }
+    m.emissive.setRGB(0.55, 0.42, 0.3).multiplyScalar(n * 0.55);
+  }
 }

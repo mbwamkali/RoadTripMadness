@@ -27,7 +27,7 @@ try {
   const stops = await page.evaluate(() => window.rtm.state.stops.filter((s) => s.kind !== 'shortcut').sort((a, b) => (b.kind === 'town') - (a.kind === 'town')).map((s) => ({ at: s.at, kind: s.kind, places: s.places })));
   console.log(JSON.stringify(stops.slice(0, 4)));
   for (const [i, st] of stops.slice(0, 2).entries()) {
-    await page.evaluate((at) => { window.rtm.state.distance = at - 90; }, st.at);
+    await page.evaluate((at) => { window.rtm.state.distance = at - 120; }, st.at);
     await page.waitForTimeout(1500);
     await page.evaluate(() => { const s = window.rtm.state; s.hoursSpent = (s.hoursSpent || 0) + ((12 - window.rtm.hour() + 48) % 24); });
     await page.waitForTimeout(9000);
