@@ -7,7 +7,8 @@ import { quality } from './quality';
  * still sets the hue, the texture adds grain. Low quality keeps the flat
  * colours and drawn asphalt.
  */
-export type TextureName = 'ground' | 'gravel' | 'asphalt';
+/** `_n` files are bump (normal) maps made from the photo of the same name. */
+export type TextureName = 'ground' | 'gravel' | 'asphalt' | 'ground_n' | 'asphalt_n';
 
 const cache = new Map<TextureName, THREE.Texture>();
 /** Copies made before the photo arrived; each needs its own upload flag set. */

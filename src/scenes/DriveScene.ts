@@ -27,6 +27,8 @@ import { classAt, crossSectionAt, isDivided, PROFILES, roadSegments, SPEED, urba
 import { buildLandmark, waterTexture } from './landmarkModels';
 import { sound } from '../audio/sound';
 import { Atmosphere } from './atmosphere';
+import { Backdrop } from './backdrop';
+import { addGroundDetail } from './groundDetail';
 import { quality } from './quality';
 import { MODEL_SPECS, modelGeometry, modelMaterial, modelMesh, treeModelsWanted, type ModelName } from './models';
 import { detailTexture } from './textures';
@@ -267,6 +269,7 @@ export class DriveScene implements GameScene {
   private structures: Structure[];
   private lastBlink = false;
   private atmosphere: Atmosphere;
+  private backdrop: Backdrop;
   private skyTimer = 0;
   private announced = new Set<number>();
   /** From the graphics quality setting. */
@@ -294,11 +297,14 @@ export class DriveScene implements GameScene {
     this.camera.far = 2500 * q.drawScale;
     this.atmosphere = new Atmosphere(this.scene, groundColorAt(this.biomes, state.distance, 'sky'), 300, 1300 * q.drawScale, q.shadows ? { size: q.shadowSize, range: 70 } : null);
     this.atmosphere.attachHeadlights(this.car);
+    this.backdrop = new Backdrop(1300 * q.drawScale);
+    this.backdrop.setBiome(biomeAtDistance(this.biomes, state.distance));
+    this.scene.add(this.backdrop.group);
     this.atmosphere.set(hourOf(state), weatherAt(state));
 
     // Layered flat surfaces: polygon offsets keep road > water > shoulder > ground without z-fighting.
     this.roadMat = lit({ map: this.roadTex, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
-    this.asphaltMat = lit({ map: this.asphaltTex, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
+    this.asphaltMat = lit({ map: this.asphaltTex, normalMap: detailTexture('asphalt_n', 2, 2), roughness: 0.85, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
     const stripe = (color: number, dashed: boolean) =>
       lit({ color, map: this.stripeTex[dashed ? 1 : 0], alphaTest: 0.5, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -12 });
     this.stripeMats = { white: stripe(0xe8e2cf, false), whiteDash: stripe(0xe8e2cf, true), yellow: stripe(0xf2c230, false), yellowDash: stripe(0xf2c230, true) };
@@ -395,6 +401,8 @@ export class DriveScene implements GameScene {
       lit({
         color: groundColorAt(this.biomes, state.distance),
         map: detailTexture('ground', GROUND_SIZE / GROUND_TILE, GROUND_SIZE / GROUND_TILE),
+        normalMap: detailTexture('ground_n', GROUND_SIZE / GROUND_TILE, GROUND_SIZE / GROUND_TILE),
+        normalScale: new THREE.Vector2(0.9, 0.9),
         polygonOffset: true,
         polygonOffsetFactor: 2,
         polygonOffsetUnits: 4,
@@ -402,6 +410,7 @@ export class DriveScene implements GameScene {
     );
     this.ground.rotation.x = -Math.PI / 2;
     this.ground.receiveShadow = true;
+    if (quality.level !== 'low') addGroundDetail(this.ground.material as THREE.Material);
     this.scene.add(this.ground);
     castShadows(this.car, this.shadows);
     this.scene.add(this.car);
@@ -650,6 +659,7 @@ export class DriveScene implements GameScene {
     this.medianMat.color.setHex(groundColorAt(this.biomes, d)).multiplyScalar(0.85);
     this.shoulderMat.color.setHex(groundColorAt(this.biomes, d, 'shoulder'));
     this.atmosphere.daySky = groundColorAt(this.biomes, d, 'sky');
+    this.backdrop.setBiome(biomeAtDistance(this.biomes, d));
   }
 
   /** The kind of country at a distance (for the HUD). */
@@ -761,6 +771,7 @@ export class DriveScene implements GameScene {
     // The clock moves every frame so dawn and dusk come on smoothly.
     this.atmosphere.set(hourOf(this.state), weatherAt(this.state));
     this.atmosphere.update(dt, this.camera, this.car.position);
+    this.backdrop.follow(this.camera);
     const water = waterTexture();
     water.offset.y -= dt * 0.25;
     for (const g of this.chunks.values()) {
@@ -1336,8 +1347,8 @@ export class DriveScene implements GameScene {
     }
     this.ground.position.set(p.x, 0, p.z);
     // The ground follows the car; shift its texture back so the grain stays put in the world.
-    const gmap = (this.ground.material as THREE.MeshStandardMaterial).map;
-    if (gmap) gmap.offset.set((p.x / GROUND_TILE) % 1, (-p.z / GROUND_TILE) % 1);
+    const gm = this.ground.material as THREE.MeshStandardMaterial;
+    for (const t of [gm.map, gm.normalMap]) t?.offset.set((p.x / GROUND_TILE) % 1, (-p.z / GROUND_TILE) % 1);
     if (snap) {
       this.camPos.copy(p).addScaledVector(fwd, -14).setY(7);
       this.camLook.copy(p).addScaledVector(fwd, 20);
@@ -1864,6 +1875,7 @@ export class DriveScene implements GameScene {
 
   dispose(): void {
     this.atmosphere.dispose();
+    this.backdrop.dispose();
     for (const m of this.animalMeshes.values()) disposeTree(m);
     this.animalMeshes.clear();
     for (const g of this.chunks.values()) disposeChunk(g);
@@ -1871,6 +1883,7 @@ export class DriveScene implements GameScene {
     disposeTree(this.car);
     this.ground.geometry.dispose();
     const gm = this.ground.material as THREE.MeshStandardMaterial;
+    for (const m of [gm, this.medianMat, this.shoulderMat, this.asphaltMat]) m.normalMap?.dispose();
     for (const m of [gm, this.medianMat, this.shoulderMat]) m.map?.dispose();
     gm.dispose();
     Object.values(this.geos).forEach((x) => !x.userData.shared && x.dispose());
