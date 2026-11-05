@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { lit } from './materials';
+import { withHd } from './hdModels';
 import type { AnimalKind } from '../game/animals';
 import { modelsWanted } from './models';
 
@@ -125,7 +126,8 @@ function stars(y: number): THREE.Group {
 }
 
 export function makeAnimal(kind: AnimalKind, detailed = modelsWanted()): THREE.Group {
-  const g = kind === 'cow' ? cow(detailed) : armadillo(detailed);
+  const code = kind === 'cow' ? cow(detailed) : armadillo(detailed);
+  const g = detailed ? withHd(kind, code, 'length') : code;
   g.add(stars(kind === 'cow' ? 2.5 : 1.8));
   if (kind === 'armadillo') g.scale.setScalar(1.25);
   return g;

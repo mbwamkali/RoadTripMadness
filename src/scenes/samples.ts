@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { withHd } from './hdModels';
 import { lit } from './materials';
 
 /**
@@ -172,7 +173,7 @@ export function sampleMotorcycle(paint = 0x1f1f24, who?: Rider): THREE.Group {
 }
 
 /** Traffic: a pickup, box van or semi facing +z, sized like the current ones. */
-export function sampleTraffic(kind: 'pickup' | 'van' | 'truck', color: number): THREE.Group {
+function codeTraffic(kind: 'pickup' | 'van' | 'truck', color: number): THREE.Group {
   const g = new THREE.Group();
   const paint = lam(color);
   const glass = lam(0x5f7f96, 0x0b1620);
@@ -260,7 +261,7 @@ export function sampleWreck(): THREE.Group {
 // ------------------------------------------------------------------ enemies
 
 /** A biker outlaw on a chopper, holding a revolver. Built facing +z like the current one. */
-export function sampleOutlaw(): THREE.Group {
+function codeOutlaw(): THREE.Group {
   const g = new THREE.Group();
   const bike = sampleMotorcycle(0x6b1f1a, { jacket: 0x5a3622, skin: 0xd8a77a, pants: 0x2b3a55, hat: 0x3a2a1a, beard: 0x6b4a2a });
   g.add(bike);
@@ -306,7 +307,7 @@ function saucer(parent: THREE.Object3D, r: number, hull: number, rim: number, nL
 }
 
 /** An alien cat in its saucer, with a little antenna. */
-export function sampleCatship(): THREE.Group {
+function codeCatship(): THREE.Group {
   const g = new THREE.Group();
   saucer(g, 2.4, 0xa6aec6, 0x4f5d84, 8);
   // Tabby pilot in a space collar, sitting in the dome.
@@ -319,7 +320,7 @@ export function sampleCatship(): THREE.Group {
 }
 
 /** The Cat Queen's mothership: a big layered saucer, the white queen with a crown, cape and gem. */
-export function sampleMothership(): THREE.Group {
+function codeMothership(): THREE.Group {
   const g = new THREE.Group();
   saucer(g, 8.6, 0x8a8fb0, 0x5a3f8a, 18);
   // A second deck with glowing windows.
@@ -352,7 +353,7 @@ export function sampleMothership(): THREE.Group {
 }
 
 /** The brute: a hulking zombie farmhand in overalls, swinging a stop sign. */
-export function sampleBrute(): THREE.Group {
+function codeBrute(): THREE.Group {
   const g = new THREE.Group();
   const skin = lam(0x8fbf5a);
   const shirt = lam(0x8a3a2a);
@@ -399,7 +400,7 @@ export function sampleBrute(): THREE.Group {
 }
 
 /** The war rig: armoured semi with a plough, spikes, stacks, a turret and a skull. Faces +z. */
-export function sampleWarRig(): THREE.Group {
+function codeWarRig(): THREE.Group {
   const g = new THREE.Group();
   const rust = lam(0x7a2a1a);
   const steel = lam(0x6a6a70);
@@ -454,3 +455,33 @@ export const SAMPLES = {
   motorcycle: () => sampleMotorcycle(0xd9482b, { jacket: 0x222226, skin: 0xd8a77a, pants: 0x2b3a55 }),
   wreck: sampleWreck,
 } as const;
+
+/** Outlaw (detailed generated model on Medium/High once loaded; built in code otherwise). */
+export function sampleOutlaw(): THREE.Group {
+  return withHd('outlaw', codeOutlaw(), 'length');
+}
+
+/** Catship (detailed generated model on Medium/High once loaded; built in code otherwise). */
+export function sampleCatship(): THREE.Group {
+  return withHd('alien_cat', codeCatship(), 'height');
+}
+
+/** Mothership (detailed generated model on Medium/High once loaded; built in code otherwise). */
+export function sampleMothership(): THREE.Group {
+  return withHd('saucer', codeMothership(), 'height');
+}
+
+/** Brute (detailed generated model on Medium/High once loaded; built in code otherwise). */
+export function sampleBrute(): THREE.Group {
+  return withHd('earl', codeBrute(), 'height');
+}
+
+/** WarRig (detailed generated model on Medium/High once loaded; built in code otherwise). */
+export function sampleWarRig(): THREE.Group {
+  return withHd('warrig', codeWarRig(), 'length');
+}
+
+/** Traffic (detailed generated model on Medium/High once loaded; built in code otherwise). */
+export function sampleTraffic(kind: 'pickup' | 'van' | 'truck', color: number): THREE.Group {
+  return withHd(kind === 'truck' ? 'semi' : kind, codeTraffic(kind, color), 'length');
+}

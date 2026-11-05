@@ -1,6 +1,7 @@
 // Screenshots of the real game on the offline demo trip, for checking the look.
 //   npm run build && node scripts/game-shots.mjs outDir [hours] [quality]
 // hours: comma list of clock hours to show (default 12,18.6,22); quality: low|medium|high (default high).
+// BOSSES=brute,warrig,... or FIGHTS=outlaw,catship,... also shoots each boss or fight at noon.
 import { spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -38,6 +39,23 @@ try {
     await page.waitForTimeout(6000);
     await page.screenshot({ path: `${OUT}/drive-${Q}-${String(h).replace('.', '_')}.png`, timeout: 240000 });
     console.log('shot', h);
+  }
+  for (const [kind, list] of [['boss', process.env.BOSSES], ['fight', process.env.FIGHTS]]) {
+    for (const b of (list || '').split(',').filter(Boolean)) {
+      await page.evaluate(([kind, b]) => {
+        const s = window.rtm.state;
+        s.hoursSpent = (s.hoursSpent || 0) + ((12 - window.rtm.hour() + 48) % 24);
+        window.rtm[kind](b);
+      }, [kind, b]);
+      await page.waitForTimeout(Number(process.env.WAIT || 16000));
+      await page.screenshot({ path: `${OUT}/${kind}-${b}.png`, timeout: 240000 });
+      console.log(kind, b);
+      // End it and get back on the road.
+      await page.evaluate(() => { const c = window.rtm.combat; if (c) for (const e of c.enemies ?? []) e.hp = 0; });
+      await page.waitForTimeout(4000);
+      await page.evaluate(() => document.querySelectorAll('.modal button, .card button').forEach((b) => /Keep|Continue|OK|Drive/i.test(b.textContent) && b.click()));
+      await page.waitForTimeout(1500);
+    }
   }
 } finally {
   await browser.close();

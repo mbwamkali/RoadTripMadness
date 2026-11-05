@@ -71,6 +71,7 @@ import { TownScene } from './scenes/townScene';
 import { openScavengeScene } from './scenes/scavengeScene';
 import { gunDamageFor, MAX_LEVEL, ramDamageFor, upgradeCost, UPGRADES, type UpgradeKind } from './game/upgrades';
 import { sound } from './audio/sound';
+import { hdModelsReady, loadHdModels } from './scenes/hdModels';
 import { gfx, loadQualityChoice, nextQualityChoice, quality, QUALITY_NAMES, resolveQuality, saveQualityChoice } from './scenes/quality';
 import type { Bloom } from './scenes/bloom';
 
@@ -107,6 +108,8 @@ applyQuality();
 // State outlines for state-line signs and exit numbers (small, cached offline).
 void loadStateMap();
 void loadModels();
+// The detailed overhaul models (Medium and High).
+void loadHdModels();
 
 let active: GameScene | null = null;
 let state: GameState | null = null;
@@ -620,8 +623,8 @@ function disposeAll(): void {
 function startTrip(s: GameState): void {
   // The CC0 models load in the background at startup; wait for them on the
   // rare first trip that starts before they arrive (they never block on Low).
-  if (modelsWanted() && !modelsReady()) {
-    void loadModels().then(() => startTripNow(s));
+  if (modelsWanted() && (!modelsReady() || !hdModelsReady())) {
+    void Promise.all([loadModels(), loadHdModels()]).then(() => startTripNow(s));
     return;
   }
   startTripNow(s);

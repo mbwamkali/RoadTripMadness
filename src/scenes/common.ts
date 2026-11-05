@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { lit } from './materials';
+import { hdModel, hdZombie, withHd } from './hdModels';
 import { modelMesh, modelsWanted } from './models';
 import { sampleMotorcycle, sampleTraffic, sampleWreck } from './samples';
 import { textureImage } from './textures';
@@ -304,7 +305,16 @@ export function makeCar(color = 0xd9482b, up?: Upgrades): THREE.Group {
 
 /** The player's ride: the muscle car, a motorcycle or a pickup truck. Faces +z. */
 export function makeRide(ride: 'car' | 'motorcycle' | 'truck', up?: Upgrades): THREE.Group {
-  if (ride === 'car') return makeCar(undefined, up);
+  // The detailed muscle car and pickup keep the code model's turn signals, gun and bolt-on upgrades.
+  if (ride === 'car') return withHd('car', makeCar(undefined, up), 'length', keepOnRide);
+  if (ride === 'truck') return withHd('pickup', codeRide(ride, up), 'length', keepOnRide);
+  return codeRide(ride, up);
+}
+
+/** Parts of a code-built ride that stay on its detailed model. */
+const keepOnRide = (o: THREE.Object3D) => /^(blink|glow)/.test(o.name) || o.name === 'gun' || !!o.userData.upgrade;
+
+function codeRide(ride: 'motorcycle' | 'truck', up?: Upgrades): THREE.Group {
   const g = new THREE.Group();
   const paint = lit({ color: ride === 'truck' ? 0x2f5d8a : 0xd9482b });
   const dark = lit({ color: 0x1d1d22 });
@@ -412,6 +422,15 @@ export function makeTrafficVehicle(kind: 'car' | 'motorcycle' | 'pickup' | 'van'
   const g = new THREE.Group();
   // CC0 car models on Medium and High; the colour picks which one.
   if (kind === 'car') {
+    // Now and then a detailed black sedan; otherwise the CC0 cars in their colours.
+    if (Math.abs(color) % 5 === 0) {
+      const sedan = hdModel('sedan');
+      if (sedan) {
+        sedan.scale.setScalar(4.6 / (sedan.userData.size as THREE.Vector3).z);
+        g.add(sedan);
+        return g;
+      }
+    }
     const model = modelMesh(CAR_MODELS[Math.abs(color) % CAR_MODELS.length]);
     if (model) {
       g.add(model);
@@ -484,8 +503,8 @@ export function makeObstacle(kind: 'debris' | 'zombie' | 'wreck' | 'roadblock'):
     box(0.6, 0.5, 0.6, lam(0x9a6b3a), 0.5, 0.25, -0.3, 0.4);
     box(0.45, 0.4, 0.45, lam(0x7d5530), 0.7, 0.2, 0.5, -0.3);
     box(1.4, 0.05, 0.9, lam(0xb08a5a), 0, 0.03, 0.6, 0.7);
-  } else if (kind === 'zombie' && modelMesh('zombie')) {
-    g.add(modelMesh('zombie')!);
+  } else if (kind === 'zombie' && (hdModel('zombie') || modelMesh('zombie'))) {
+    g.add(hdZombie() ?? modelMesh('zombie')!);
     g.scale.setScalar(1.15);
     g.name = 'zombie';
   } else if (kind === 'zombie') {
@@ -612,6 +631,12 @@ export function addLights(scene: THREE.Scene): void {
 
 /** Bolts visible upgrades onto the car so players can see what they bought. */
 function addUpgradeParts(car: THREE.Group, up: Upgrades, metal: THREE.Material, dark: THREE.Material): void {
+  const before = new Set(car.children);
+  addUpgradeMeshes(car, up, metal, dark);
+  for (const c of car.children) if (!before.has(c)) c.userData.upgrade = true;
+}
+
+function addUpgradeMeshes(car: THREE.Group, up: Upgrades, metal: THREE.Material, dark: THREE.Material): void {
   const plate = lit({ color: 0x5d6168 });
   for (let i = 0; i < up.armor; i++) {
     for (const x of [-1.06, 1.06]) {

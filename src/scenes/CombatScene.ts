@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { lit } from './materials';
+import { hdModel, hdZombie } from './hdModels';
 import {
   combatOutcome,
   isBoss,
@@ -812,9 +813,9 @@ export function buildEnemy(type: EnemyType): THREE.Group {
     body.add(beam);
     hitRadius = 8;
     barY = 5.5;
-  } else if (type === 'zombie' && modelMesh('zombie')) {
-    // CC0 zombie model (Medium and High).
-    body.add(modelMesh('zombie')!);
+  } else if (type === 'zombie' && (hdModel('zombie') || modelMesh('zombie'))) {
+    // Detailed zombie once loaded, else the CC0 one (Medium and High), at the same 2.3 height.
+    body.add(hdZombie() ?? modelMesh('zombie')!);
   } else if (type === 'zombie' || type === 'brute') {
     box(0.8, 1.1, 0.5, 0x4a5d7a, 0, 1.3); // torn shirt
     box(0.6, 0.6, 0.6, 0x8fbf5a, 0, 2.15); // head

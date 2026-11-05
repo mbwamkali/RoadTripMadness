@@ -39,7 +39,9 @@ function serviceWorker(): Plugin {
     name: 'rtm-service-worker',
     apply: 'build',
     generateBundle(_options, bundle) {
-      const files = ['./', ...Object.keys(bundle).filter((f) => !f.endsWith('.map')), ...publicFiles()].filter((f) => f !== 'sw.js');
+      // The detailed models (models/hd/, about 10 MB) aren't precached: Low never uses them,
+      // and the worker caches each one the first time it's fetched, so they still work offline after.
+      const files = ['./', ...Object.keys(bundle).filter((f) => !f.endsWith('.map')), ...publicFiles().filter((f) => !f.startsWith('models/hd/') && !f.startsWith('gen/'))].filter((f) => f !== 'sw.js');
       const hash = createHash('sha256');
       for (const [name, chunk] of Object.entries(bundle)) hash.update(name).update(chunk.type === 'chunk' ? chunk.code : String(chunk.source));
       for (const f of publicFiles()) hash.update(f).update(fs.readFileSync(path.join('public', f)));
