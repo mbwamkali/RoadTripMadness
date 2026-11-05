@@ -2048,6 +2048,10 @@ registerServiceWorker(() => {
   get combat() {
     return combat;
   },
+  /** The clock hour on the road (for look checks: scripts/game-shots.mjs). */
+  hour() {
+    return state ? hourOf(state) : null;
+  },
   /** Shows an event scene on its own card, for checking how each one looks. */
   showScene(kind: SceneKind) {
     const card = h('div', { class: 'card event', 'data-quiet': true }, eventPicture('🎬', kind), h('h2', {}, kind));
