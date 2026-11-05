@@ -167,17 +167,6 @@ export const AUTOPILOT_SPEEDUP = 3;
  * in `root`, which the drive view carries along with the car: combat x runs
  * across your side of the road and -z points up the road ahead.
  */
-/** Prototype: ?cam=iso draws the road with a high three-quarter (isometric-style) camera. */
-export const ISO_CAMERA = typeof location !== 'undefined' && new URLSearchParams(location.search).get('cam') === 'iso';
-
-const ISO_RIG = (() => {
-  const dist = 62;
-  const pitch = (40 * Math.PI) / 180;
-  const yaw = (45 * Math.PI) / 180;
-  const flat = dist * Math.cos(pitch);
-  return { up: dist * Math.sin(pitch), back: flat * Math.cos(yaw), side: flat * Math.sin(yaw) };
-})();
-
 export interface RoadFight {
   root: THREE.Object3D;
   /** The car's sideways place within your side of the road. */
@@ -670,7 +659,7 @@ export class DriveScene implements GameScene {
   resize(w: number, h: number): void {
     this.camera.aspect = w / h;
     // Portrait phones need a wider view to see the road ahead.
-    this.camera.fov = ISO_CAMERA ? (w < h ? 34 : 24) : w < h ? 75 : 60;
+    this.camera.fov = w < h ? 75 : 60;
     this.camera.updateProjectionMatrix();
   }
 
@@ -1378,20 +1367,6 @@ export class DriveScene implements GameScene {
   private followCamera(p: THREE.Vector3, fwd: THREE.Vector3, dt: number): void {
     // In a fight the camera rises and tilts down, like the old fight view, so the road ahead fills the screen.
     const k = this.fightCam;
-    if (ISO_CAMERA) {
-      // High and off to the right, looking down at about 45 degrees with a narrow lens: the
-      // isometric look. It turns with the road so the way ahead is always up the screen.
-      const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
-      // Shared rig with the town prototype: 40 degrees down, 45 degrees around, 62 units from the spot it looks at.
-      const isoPos = p.clone().addScaledVector(fwd, 14 - ISO_RIG.back).addScaledVector(right, ISO_RIG.side).setY(ISO_RIG.up);
-      const isoLook = p.clone().addScaledVector(fwd, 14).setY(0);
-      const e = this.camPos.distanceTo(isoPos) > 150 ? 1 : Math.min(1, dt * 2);
-      this.camPos.lerp(isoPos, e);
-      this.camLook.lerp(isoLook, e);
-      this.camera.position.copy(this.camPos);
-      this.camera.lookAt(this.camLook);
-      return;
-    }
     const wantPos = p.clone().addScaledVector(fwd, -14 + 2.5 * k).setY(p.y + 7 + 1.5 * k);
     // Snap instead of gliding across the map after a jump (loading a save, resuming).
     const ease = this.camPos.distanceTo(wantPos) > 150 ? 1 : Math.min(1, dt * 4);
