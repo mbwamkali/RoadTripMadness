@@ -415,6 +415,14 @@ void loadModels().then(async () => {
   traffic();
   const genCar = params.get('car');
   const car = genCar ? await loadGen(genCar, Number(params.get('caryaw') ?? 270), 4.4, 0.7) : playerCar();
+  // ?props=url:size:side:z:yaw;... places models beside the road (size = longest side in metres, side = metres from the road centre).
+  for (const spec of (params.get('props') ?? '').split(';').filter(Boolean)) {
+    const [url, size, side, z, yaw] = spec.split(':');
+    const prop = await loadGen(url, Number(yaw ?? 0), Number(size), 0);
+    const zz = Number(z);
+    prop.position.set(roadX(zz) + Number(side), 0, zz);
+    scene.add(prop);
+  }
   const genSaucer = params.get('saucer');
   if (genSaucer) {
     const sc = await loadGen(genSaucer, Number(params.get('saucyaw') ?? 200), 7, 0.3);
