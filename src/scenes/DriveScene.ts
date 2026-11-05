@@ -162,6 +162,32 @@ const BLOCK_MODELS: ModelName[] = ['flat-1', 'flat-2', 'shop', 'hospital'];
 /** How much faster time runs on autopilot. */
 export const AUTOPILOT_SPEEDUP = 3;
 
+/**
+ * A fight happening right on the road (prototype). Its enemies and effects sit
+ * in `root`, which the drive view carries along with the car: combat x runs
+ * across your side of the road and -z points up the road ahead.
+ */
+/** Prototype: ?cam=iso draws the road with a high three-quarter (isometric-style) camera. */
+export const ISO_CAMERA = typeof location !== 'undefined' && new URLSearchParams(location.search).get('cam') === 'iso';
+
+const ISO_RIG = (() => {
+  const dist = 62;
+  const pitch = (40 * Math.PI) / 180;
+  const yaw = (45 * Math.PI) / 180;
+  const flat = dist * Math.cos(pitch);
+  return { up: dist * Math.sin(pitch), back: flat * Math.cos(yaw), side: flat * Math.sin(yaw) };
+})();
+
+export interface RoadFight {
+  root: THREE.Object3D;
+  /** The car's sideways place within your side of the road. */
+  carX(): number;
+  update(dt: number): void;
+  /** Camera shake from hits. */
+  shake(): number;
+  boss: boolean;
+}
+
 export class DriveScene implements GameScene {
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(60, 1, 0.5, 2500);
@@ -175,6 +201,10 @@ export class DriveScene implements GameScene {
     return this.autopilot ? AUTOPILOT_SPEEDUP : 1;
   }
   paused = false;
+  /** A fight on the road, if one is on. */
+  private fight: RoadFight | null = null;
+  /** 0..1: how far the camera has pulled back and up for a fight. */
+  private fightCam = 0;
 
   private chunks = new Map<number, THREE.Group>();
   private car: THREE.Group;
@@ -623,7 +653,7 @@ export class DriveScene implements GameScene {
   resize(w: number, h: number): void {
     this.camera.aspect = w / h;
     // Portrait phones need a wider view to see the road ahead.
-    this.camera.fov = w < h ? 75 : 60;
+    this.camera.fov = ISO_CAMERA ? (w < h ? 34 : 24) : w < h ? 75 : 60;
     this.camera.updateProjectionMatrix();
   }
 
@@ -673,6 +703,23 @@ export class DriveScene implements GameScene {
   }
 
   /** Puts the car back on the route after a stop or a fight. */
+  /** Starts drawing and running a fight around the car while it keeps driving. */
+  attachFight(f: RoadFight): void {
+    this.fight = f;
+    this.off = null;
+    this.traffic.clearNear(this.state.distance, 400);
+    this.promptStop = null;
+    this.cb.onPrompt(null, 0);
+  }
+
+  detachFight(): void {
+    this.fight = null;
+  }
+
+  get fighting(): boolean {
+    return !!this.fight;
+  }
+
   resume(): void {
     this.turning = null;
     this.pendingTurn = null;
@@ -724,7 +771,12 @@ export class DriveScene implements GameScene {
       if (this.stopping) break;
     }
     this.streamChunks();
+    this.fightCam += ((this.fight ? 1 : 0) - this.fightCam) * Math.min(1, dt * 2);
     this.placeCar(false, dt);
+    if (this.fight) {
+      this.placeFight();
+      if (!this.paused) for (let i = 0; i < this.warp; i++) this.fight?.update(dt);
+    }
     this.placeTraffic();
     this.placeObstacles();
     this.placeAnimals();
@@ -785,6 +837,12 @@ export class DriveScene implements GameScene {
     }
     if (this.pendingTurn && s.distance >= this.pendingTurn.at - 0.01) {
       this.startTurn(this.pendingTurn);
+      return;
+    }
+    if (this.fight) {
+      // Traffic pulls off and stops wait while you fight.
+      this.traffic.clearNear(s.distance, 300);
+      this.cb.onTick();
       return;
     }
     if (res.encounter && !this.pendingTurn) {
@@ -1241,10 +1299,11 @@ export class DriveScene implements GameScene {
     const f = this.path.directionAt(d, 10);
     const fwd = new THREE.Vector3(f.x, 0, -f.y);
     // Drive in the right-hand lane, easing over when the road widens or narrows.
-    const want = this.laneAt(d);
-    // Jumps (loading, debug teleports) snap; otherwise change lanes at a steady pace.
+    const want = this.fight ? this.sideCentre(d) + this.fight.carX() : this.laneAt(d);
+    // Jumps (loading, debug teleports) snap; otherwise change lanes at a steady pace (quicker when dodging in a fight).
     const jumped = this.car.position.distanceTo(p) > 150;
-    this.lane = snap || jumped ? want : this.lane + Math.sign(want - this.lane) * Math.min(Math.abs(want - this.lane), 5 * rideOf(this.state).steer * dt);
+    const rate = (this.fight ? 14 : 5) * rideOf(this.state).steer;
+    this.lane = snap || jumped ? want : this.lane + Math.sign(want - this.lane) * Math.min(Math.abs(want - this.lane), rate * dt);
     p.addScaledVector(new THREE.Vector3(f.y, 0, f.x), this.lane);
     this.car.position.copy(p);
     this.car.lookAt(p.clone().add(fwd));
@@ -1264,14 +1323,52 @@ export class DriveScene implements GameScene {
     this.followCamera(p, fwd, snap ? 1 : dt);
   }
 
+  /** The middle of your side of the road (where a fight centres its lanes). */
+  private sideCentre(d: number): number {
+    const xs = this.section(d);
+    return xs.median + (xs.lanes * xs.laneWidth) / 2;
+  }
+
+  /** Lines the fight up with the car: origin on your side of the road, -z up the road. */
+  private placeFight(): void {
+    const f = this.fight!;
+    const d = this.state.distance;
+    const p = to3(this.path.pointAt(d));
+    const dir = this.path.directionAt(d, 10);
+    const right = new THREE.Vector3(dir.y, 0, dir.x);
+    const back = new THREE.Vector3(-dir.x, 0, dir.y);
+    p.addScaledVector(right, this.sideCentre(d));
+    f.root.position.copy(p).setY(0);
+    f.root.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(right, new THREE.Vector3(0, 1, 0), back));
+    f.root.updateMatrixWorld(true);
+  }
+
   private followCamera(p: THREE.Vector3, fwd: THREE.Vector3, dt: number): void {
-    const wantPos = p.clone().addScaledVector(fwd, -14).setY(p.y + 7);
+    // In a fight the camera rises and tilts down, like the old fight view, so the road ahead fills the screen.
+    const k = this.fightCam;
+    if (ISO_CAMERA) {
+      // High and off to the right, looking down at about 45 degrees with a narrow lens: the
+      // isometric look. It turns with the road so the way ahead is always up the screen.
+      const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
+      // Shared rig with the town prototype: 40 degrees down, 45 degrees around, 62 units from the spot it looks at.
+      const isoPos = p.clone().addScaledVector(fwd, 14 - ISO_RIG.back).addScaledVector(right, ISO_RIG.side).setY(ISO_RIG.up);
+      const isoLook = p.clone().addScaledVector(fwd, 14).setY(0);
+      const e = this.camPos.distanceTo(isoPos) > 150 ? 1 : Math.min(1, dt * 2);
+      this.camPos.lerp(isoPos, e);
+      this.camLook.lerp(isoLook, e);
+      this.camera.position.copy(this.camPos);
+      this.camera.lookAt(this.camLook);
+      return;
+    }
+    const wantPos = p.clone().addScaledVector(fwd, -14 + 2.5 * k).setY(p.y + 7 + 1.5 * k);
     // Snap instead of gliding across the map after a jump (loading a save, resuming).
-    const k = this.camPos.distanceTo(wantPos) > 150 ? 1 : Math.min(1, dt * 4);
-    const wantLook = p.clone().addScaledVector(fwd, 20).setY(1);
-    this.camPos.lerp(wantPos, k);
-    this.camLook.lerp(wantLook, k);
+    const ease = this.camPos.distanceTo(wantPos) > 150 ? 1 : Math.min(1, dt * 4);
+    const wantLook = p.clone().addScaledVector(fwd, 20 + 2 * k).setY(1 - 1.5 * k);
+    this.camPos.lerp(wantPos, ease);
+    this.camLook.lerp(wantLook, ease);
     this.camera.position.copy(this.camPos);
+    const shake = this.fight?.shake() ?? 0;
+    if (shake > 0) this.camera.position.add(new THREE.Vector3((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake, 0));
     this.camera.lookAt(this.camLook);
   }
 

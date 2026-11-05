@@ -1704,6 +1704,10 @@ function showBossIntro(boss: BossKind): void {
 
 /** Set by play tests to force or block a horde. */
 let testHorde: boolean | undefined;
+/** Prototype switch: fights play on the road instead of in their own view (?roadfights=0 turns it off). */
+const roadFights = new URLSearchParams(location.search).get('roadfights') !== '0';
+/** A fight is on, in its own view or on the road. */
+const inFight = () => !!combat && (active === combat || !!drive?.fighting);
 
 function startCombat(ambush: boolean, stop?: Stop, theme?: EnemyType, boss?: BossKind): void {
   const s = state!;
@@ -1729,16 +1733,29 @@ function startCombat(ambush: boolean, stop?: Stop, theme?: EnemyType, boss?: Bos
     hordeMax: quality.level === 'low' || kidMode.on ? 20 : 40,
   });
   combat?.dispose();
-  combat = new CombatScene(c, s, {
-    onCarHit: () => {
-      document.body.classList.remove('hurt');
-      void document.body.offsetWidth;
-      document.body.classList.add('hurt');
+  // Prototype: fights on the road happen right in the drive view. Ambushes at a town stop keep the old fight view for now.
+  const onRoad = roadFights && !stop && !!drive;
+  combat = new CombatScene(
+    c,
+    s,
+    {
+      onCarHit: () => {
+        document.body.classList.remove('hurt');
+        void document.body.offsetWidth;
+        document.body.classList.add('hurt');
+      },
+      onEnd: (outcome) => setTimeout(() => endCombat(c, outcome, stop), onRoad ? 300 : 700),
+      onTick: () => hudTick?.(),
     },
-    onEnd: (outcome) => setTimeout(() => endCombat(c, outcome, stop), 700),
-    onTick: () => hudTick?.(),
-  });
-  setScene(combat);
+    onRoad ? { scene: drive!.scene, camera: drive!.camera } : undefined,
+  );
+  if (onRoad) {
+    const fight = combat;
+    drive!.attachFight({ root: fight.root, carX: () => c.carX, update: (dt) => fight.update(dt), shake: () => fight.shakeAmount, boss: !!c.boss });
+    drive!.resume();
+    sound.startMusic();
+    setScene(drive);
+  } else setScene(combat);
   showCombatHud(c);
 }
 
@@ -1826,10 +1843,10 @@ const doubleTap = new DoubleTap();
 canvas.addEventListener('pointerdown', (e) => {
   press = { x: e.clientX, y: e.clientY, t: e.timeStamp, id: e.pointerId };
   pressSwiped = false;
-  if (active === combat && combat) combat.pointerDown(toNdc(e));
+  if (inFight()) combat!.pointerDown(toNdc(e));
 });
 canvas.addEventListener('pointermove', (e) => {
-  if (active !== combat || !combat || !press || press.id !== e.pointerId) return;
+  if (!inFight() || !combat || !press || press.id !== e.pointerId) return;
   if (!pressSwiped && isSwipe(press, e.clientX, e.clientY, e.timeStamp)) {
     pressSwiped = true;
     combat.pointerUp();
@@ -1842,7 +1859,7 @@ canvas.addEventListener('pointerup', (e) => {
   const from = press;
   press = null;
   if (!from || from.id !== e.pointerId) return;
-  if (active === combat) {
+  if (inFight()) {
     // A sideways swipe keeps steering for a moment after the finger lifts.
     if (fightSteer) {
       const dir = fightSteer;
@@ -1891,6 +1908,8 @@ function fightSwipe(act: ReturnType<typeof swipeAction>): void {
 
 function endCombat(c: CombatState, outcome: 'cleared' | 'escaped' | 'wrecked', stop?: Stop): void {
   const s = state!;
+  const onRoad = !!drive?.fighting;
+  if (onRoad) drive!.detachFight();
   if (outcome === 'wrecked') {
     showEnd();
     return;
@@ -1912,6 +1931,15 @@ function endCombat(c: CombatState, outcome: 'cleared' | 'escaped' | 'wrecked', s
     s.health += patched;
   }
   saveGame(s);
+  if (onRoad && !c.boss) {
+    // A road fight just ends: the car never stopped, so a short note is enough.
+    combat?.dispose();
+    combat = null;
+    showDriveHud();
+    showToast(outcome === 'cleared' ? '💥' : '🏁', outcome === 'cleared' ? 'Wiped them out!' : 'You got away!', found.length ? `Picked up ${found.join(', ')}` : `${c.kills} taken down`);
+    return;
+  }
+  if (onRoad) drive!.paused = true;
   ui().append(
     h(
       'div',
