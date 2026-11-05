@@ -2,7 +2,11 @@
  * PRECACHE and VERSION are filled in with the built files. */
 const VERSION = '__VERSION__';
 const PRECACHE = __PRECACHE__;
-const CACHE = `rtm-${VERSION}`;
+// The side-branch preview lives under /preview/ on the same site. Each build keeps
+// to its own caches, and the live game's worker leaves preview pages alone.
+const IS_PREVIEW = self.location.pathname.includes('/preview/');
+const PREFIX = IS_PREVIEW ? 'rtm-preview-' : 'rtm-';
+const CACHE = `${PREFIX}${VERSION}`;
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -17,7 +21,13 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((k) => k.startsWith('rtm-') && k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) =>
+        Promise.all(
+          keys
+            .filter((k) => k.startsWith(PREFIX) && k !== CACHE && (IS_PREVIEW || !k.startsWith('rtm-preview-')))
+            .map((k) => caches.delete(k)),
+        ),
+      )
       .then(() => self.clients.claim()),
   );
 });
@@ -28,6 +38,7 @@ self.addEventListener('fetch', (event) => {
   // Map services (search, routing, landmarks) are never cached here: the game
   // saves the trips it plans itself, and falls back to the offline atlas.
   if (req.method !== 'GET' || url.origin !== self.location.origin) return;
+  if (!IS_PREVIEW && url.pathname.includes('/preview/')) return;
 
   // Road files (data/osm/) live in their own cache that survives app updates,
   // since the backbone alone is about 10 MB. The index is network first; the

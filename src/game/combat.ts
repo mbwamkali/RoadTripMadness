@@ -99,11 +99,26 @@ interface Spawn {
 export interface CombatState {
   rng: Rng;
   time: number;
-  /** Seconds the player has to survive to get away. */
+  /**
+   * How far you have to get to escape, in seconds at cruise speed. In the
+   * separate fight view that is plain seconds; on the road it is distance
+   * (see `pace`), so driving faster gets you away sooner.
+   */
   escapeAt: number;
   escape: number;
+  /**
+   * On the road: the car's speed as a share of cruise speed, set every frame by
+   * the drive. Escape then grows with distance driven. Unset = time-based.
+   */
+  pace?: number;
   carX: number;
   steer: number;
+  /**
+   * On the road: the lane centres you can dodge between (across your side of
+   * the road), and which one you're heading for. Unset = free steering.
+   */
+  lanes?: number[];
+  lane?: number;
   weapon: WeaponKind;
   fireCooldown: number;
   hornCooldown: number;
@@ -222,6 +237,45 @@ export const WEAPONS: Record<WeaponKind, { name: string; dmg: number; cooldown: 
 
 export const ROAD_SPEED = 14;
 export const LANE_LIMIT = 2.6;
+/** Lane centres for fights on the road: your side's two lanes, 3.6 apart (one lane over clears a boss's red strip). */
+export const ROAD_LANES = [-1.8, 1.8];
+/** How fast the car slides to a new lane in a road fight (units a second). */
+export const LANE_SLIDE = 9;
+
+/** Road fights: turns lane dodging on, starting from the lane nearest the car. */
+export function useLanes(c: CombatState, carX: number, lanes = ROAD_LANES): void {
+  c.lanes = lanes;
+  c.carX = carX;
+  c.lane = nearestLane(lanes, carX);
+}
+
+function nearestLane(lanes: number[], x: number): number {
+  let best = 0;
+  lanes.forEach((l, i) => {
+    if (Math.abs(l - x) < Math.abs(lanes[best] - x)) best = i;
+  });
+  return best;
+}
+
+/** Road fights: move one lane left (-1) or right (1). False at the edge. */
+export function changeLane(c: CombatState, dir: -1 | 1): boolean {
+  if (!c.lanes || c.lane === undefined) return false;
+  const next = Math.max(0, Math.min(c.lanes.length - 1, c.lane + dir));
+  if (next === c.lane) return false;
+  c.lane = next;
+  return true;
+}
+
+/** The nearest enemy still in the fight (for kid mode's big shoot button). */
+export function nearestEnemy(c: CombatState): Enemy | null {
+  let best: Enemy | null = null;
+  for (const e of c.enemies) {
+    if (e.hp <= 0) continue;
+    const d = Math.hypot(e.x - c.carX, e.z);
+    if (!best || d < Math.hypot(best.x - c.carX, best.z)) best = e;
+  }
+  return best;
+}
 export const HORN_COOLDOWN = 8;
 export const BOOST_COOLDOWN = 6;
 export const BOOST_FUEL = 4;
@@ -437,9 +491,15 @@ export function stepCombat(c: CombatState, dt: number): number {
   c.boostCooldown = Math.max(0, c.boostCooldown - dt);
   const boosting = c.boostTime > 0;
   c.boostTime = Math.max(0, c.boostTime - dt);
-  c.escape += dt * (boosting ? 2.5 : 1);
+  // On the road the car's own speed (boost included) carries you away; in the fight view a boost counts extra.
+  c.escape += c.pace !== undefined ? dt * c.pace : dt * (boosting ? 2.5 : 1);
 
-  c.carX = Math.max(-LANE_LIMIT, Math.min(LANE_LIMIT, c.carX + c.steer * 7 * c.steerScale * dt));
+  if (c.lanes && c.lane !== undefined) {
+    // Lane dodging: slide over to the chosen lane. Moving counts as steering (it shakes off climbers).
+    const gap = c.lanes[c.lane] - c.carX;
+    c.carX += Math.sign(gap) * Math.min(Math.abs(gap), LANE_SLIDE * c.steerScale * dt);
+    c.steer = Math.abs(gap) > 0.05 ? Math.sign(gap) : 0;
+  } else c.carX = Math.max(-LANE_LIMIT, Math.min(LANE_LIMIT, c.carX + c.steer * 7 * c.steerScale * dt));
 
   while (c.queue.length && c.queue[0].t <= c.time) {
     const q = c.queue.shift()!;

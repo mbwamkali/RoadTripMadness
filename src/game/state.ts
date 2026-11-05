@@ -142,9 +142,21 @@ export function encounterGap(rng: Rng, pathLength: number, difficulty: Difficult
 }
 
 /** Where the boss fights happen: halfway, and just outside the destination. */
-export function bossPoints(pathLength: number): [number, number] {
-  return [pathLength * 0.5, pathLength - Math.min(pathLength * 0.04, 400)];
+export function bossPoints(pathLength: number, stops?: { at: number }[]): [number, number] {
+  const end = pathLength - Math.min(pathLength * 0.04, 400);
+  const half = pathLength * 0.5;
+  if (!stops?.length) return [half, end];
+  // Boss fights play out on the road, so slide the halfway boss to the nearest spot with no turn-off
+  // just before it or for BOSS_CLEAR units after it (so a boss never makes you miss a gas stop).
+  const clear = (x: number) => !stops.some((st) => st.at > x - 150 && st.at < x + BOSS_CLEAR);
+  for (let k = 0; k * 100 <= pathLength * 0.15; k++) {
+    for (const x of [half + k * 100, half - k * 100]) if (clear(x)) return [x, end];
+  }
+  return [half, end];
 }
+
+/** Road units after the halfway boss with no turn-off. */
+export const BOSS_CLEAR = 1500;
 
 /** Which boss waits at each point. The finale is always the Cat Queen. */
 export function bossFor(s: GameState, stage: number): BossKind {
@@ -166,7 +178,7 @@ export function advance(
   fuelRate = fuelPerUnit(path.length),
 ): { arrived: boolean; outOfFuel: boolean; encounter: boolean; event?: boolean; boss?: BossKind } {
   if (s.status !== 'driving') return { arrived: false, outOfFuel: false, encounter: false };
-  const bosses = bossPoints(path.length);
+  const bosses = bossPoints(path.length, s.stops);
   // Never skip past a boss, even on fast-forward.
   const toBoss = s.bossStage < 2 ? Math.max(0, bosses[s.bossStage] - s.distance) + 0.001 : Infinity;
   const step = Math.min(dist, path.length - s.distance, toBoss);
@@ -199,8 +211,12 @@ export function advance(
   const nearBoss = s.bossStage < 2 && bosses[s.bossStage] - s.distance < 0.04 * path.length;
   if (s.distance >= s.nextEncounterAt) {
     const rng = makeRng(s.seed + (s.encounters + 1) * 977);
+    // Fights play out on the road, so don't start one just before a turn-off: wait until it's behind you.
+    const stop = upcomingStop(s, FIGHT_CLEAR);
     if (nearBoss) {
       s.nextEncounterAt = bosses[s.bossStage] + encounterGap(rng, path.length, s.difficulty) * 0.5;
+    } else if (stop) {
+      s.nextEncounterAt = stop.at + 150;
     } else {
       encounter = true;
       s.encounters++;
@@ -218,6 +234,9 @@ export function advance(
   }
   return { arrived: false, outOfFuel: false, encounter, event };
 }
+
+/** Road units ahead that must be free of turn-offs before an ordinary fight starts. */
+export const FIGHT_CLEAR = 1200;
 
 /** The next stop the player hasn't passed, if it's within `lookahead` units. */
 export function upcomingStop(s: GameState, lookahead: number): Stop | undefined {

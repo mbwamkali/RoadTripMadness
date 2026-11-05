@@ -45,7 +45,7 @@ import {
 import { STOP_TITLES, type PlaceKind, type Stop } from './game/stops';
 import { classAt, roadSegments } from './game/roads';
 import { afterTrip, freshCareer, loadCareer, saveCareer, threatFor, threatScale } from './game/career';
-import { BOOST_FUEL, BOSS_INFO, boost, createCombat, easeOff, ENEMY_STATS, horn, WEAPONS, type BossKind, type CombatState, type EnemyType, type WeaponKind } from './game/combat';
+import { BOOST_FUEL, BOSS_INFO, boost, changeLane, createCombat, easeOff, ENEMY_STATS, fireAt, horn, nearestEnemy, useLanes, WEAPONS, type BossKind, type CombatState, type EnemyType, type WeaponKind } from './game/combat';
 import { DIFFICULTIES, DIFFICULTY_IDS, type Difficulty } from './game/difficulty';
 import { addScore, loadScores, scoreFor, type ScoreEntry } from './game/scores';
 import { CREW, rollEvent, type RoadEvent } from './game/events';
@@ -637,7 +637,8 @@ function startTripNow(s: GameState): void {
     onLandmark: (l) => showLandmarkToast(l),
     onBiome: (icon, name) => showToast(icon, 'Now entering', name),
     onRoadEvent: () => showRoadEvent(rollEvent(s)),
-    onBoss: (boss) => showBossIntro(boss),
+    // Bosses arrive right on the road (a name banner and the narrator); the old intro card stays for the fight view.
+    onBoss: (boss) => (roadFights ? startCombat(false, undefined, undefined, boss) : showBossIntro(boss)),
     onTick: () => hudTick?.(),
     onRam: (kind, cost) => {
       const what = { debris: 'You plough through the junk', zombie: 'Splat! You run down a zombie', wreck: 'You shove a wreck aside', roadblock: 'You smash through the roadblock' }[kind];
@@ -808,7 +809,7 @@ function showLandmarkToast(l: Landmark): void {
   showToast(LANDMARK_ICONS[l.kind], verb ? `${verb} · ${LANDMARK_TITLES[l.kind]}` : LANDMARK_TITLES[l.kind], l.name, link);
 }
 
-function showToast(icon: string, small: string, big: string, link?: string | null): void {
+function showToast(icon: string, small: string, big: string, link?: string | null, ms?: number): void {
   const el = document.querySelector('.landmark-toast') as HTMLElement | null;
   if (!el) return;
   el.replaceChildren(h('span', { class: 'icon' }, icon), h('div', {}, h('small', {}, small), h('strong', {}, big), link && h('span', { class: 'more' }, 'Tap to read about it ↗')));
@@ -825,7 +826,7 @@ function showToast(icon: string, small: string, big: string, link?: string | nul
   void el.offsetWidth;
   el.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => el.classList.remove('show'), link ? 5000 : 3500);
+  toastTimer = window.setTimeout(() => el.classList.remove('show'), ms ?? (link ? 5000 : 3500));
 }
 
 /** Real sights already passed, newest first, with somewhere to read about each. */
@@ -891,12 +892,17 @@ function kidSupplies(s: GameState): HTMLElement {
   );
 }
 
-function showDriveHud(): void {
+function showDriveHud(fight?: CombatState): void {
   clearUi();
   const s = state!;
   const p = path!;
+  fightCombatState = fight ?? null;
+  fightSteer = 0;
   const fuel = bar('fuel', '⛽');
   const hp = bar('hp', '🔧');
+  // In a fight on the road: how close you are to getting away (or the boss's health), the fight's buttons, and a banner.
+  const fightBar = fight ? bar(fight.boss ? 'bosshp' : 'escape', fight.boss ? '💀' : '🏁') : null;
+  const fightParts = fight ? fightControls(fight) : null;
   const rage = bar('rage', '😡');
   const inv = h('div', {});
   const progress = h('div', { class: 'progress' }, h('div', { class: 'fill' }));
@@ -960,10 +966,13 @@ function showDriveHud(): void {
   ui().append(
     h(
       'div',
-      { class: 'hud' },
+      { class: fight ? 'hud fighting' : 'hud' },
       h('div', { class: 'landmark-toast' }),
-      h('div', { class: 'hud-top' }, h('div', { class: 'stats' }, fuel.el, hp.el, rage.el, inv), h('div', { class: 'side' }, map.canvas, h('div', { class: 'row' }, radioBtn, speedBtn, menuBtn))),
-      h('div', { class: 'hud-bottom' }, promptEl, hornRow, bigShoot && shootRow, dash, controls, progress, progressText),
+      fightParts?.banner,
+      h('div', { class: 'hud-top' }, h('div', { class: 'stats' }, fuel.el, hp.el, fightBar?.el, rage.el, inv), h('div', { class: 'side' }, map.canvas, h('div', { class: 'row' }, radioBtn, speedBtn, menuBtn))),
+      fightParts
+        ? h('div', { class: 'hud-bottom fighting' }, fightParts.kidShoot, dash, fightParts.pad, progress)
+        : h('div', { class: 'hud-bottom' }, promptEl, hornRow, bigShoot && shootRow, dash, controls, progress, progressText),
     ),
   );
   try {
@@ -980,6 +989,13 @@ function showDriveHud(): void {
     fuel.set(s.inv.fuel, tankSize(s));
     hp.set(s.health, maxHealth(s));
     rage.set(rageOf(s), RAGE_MAX);
+    if (fight && fightBar) {
+      if (fight.boss) {
+        const b = fight.enemies.find((e) => e.id === fight.bossId);
+        fightBar.set(b ? b.hp : fight.queue.length ? 1 : 0, b ? b.maxHp : 1, b ? `${Math.ceil(b.hp)}` : fight.queue.length ? 'Incoming…' : 'Down!');
+      } else fightBar.set(fight.escape, fight.escapeAt, `${fight.enemies.length + fight.queue.length} left`);
+      fightParts?.sync();
+    }
     rage.el.classList.toggle('show', rageOf(s) > 0.5);
     rage.el.classList.toggle('hot', rageOf(s) >= RAGE_HOSTILE);
     const key = JSON.stringify(s.inv) + s.crew.join();
@@ -997,6 +1013,11 @@ function showDriveHud(): void {
     if (frameCount++ % 10 === 0) map.draw(s.distance, s.passed);
     if (drive) {
       const limit = drive.speedLimit();
+      if (fight) {
+        dashSpeed.textContent = String(Math.round(limit * drive.throttle * (fight.boostTime > 0 ? 1.6 : 1)));
+        dashMpg.textContent = String(Math.round(mpg(s, drive.throttle)));
+        return;
+      }
       const mph = Math.round(limit * drive.throttle);
       speedText.textContent = `Limit ${limit}`;
       dashSpeed.textContent = String(mph);
@@ -1704,6 +1725,12 @@ function showBossIntro(boss: BossKind): void {
 
 /** Set by play tests to force or block a horde. */
 let testHorde: boolean | undefined;
+/** Prototype switch: fights play on the road instead of in their own view (?roadfights=0 turns it off). */
+const roadFights = new URLSearchParams(location.search).get('roadfights') !== '0';
+/** How long the note after an ordinary road fight stays up. */
+const FIGHT_NOTE_MS = 2000;
+/** A fight is on, in its own view or on the road. */
+const inFight = () => !!combat && (active === combat || !!drive?.fighting);
 
 function startCombat(ambush: boolean, stop?: Stop, theme?: EnemyType, boss?: BossKind): void {
   const s = state!;
@@ -1729,17 +1756,97 @@ function startCombat(ambush: boolean, stop?: Stop, theme?: EnemyType, boss?: Bos
     hordeMax: quality.level === 'low' || kidMode.on ? 20 : 40,
   });
   combat?.dispose();
-  combat = new CombatScene(c, s, {
-    onCarHit: () => {
-      document.body.classList.remove('hurt');
-      void document.body.offsetWidth;
-      document.body.classList.add('hurt');
+  // Fights happen right on the road in the drive view. Ambushes at a town stop keep the old fight view until the walkable town replaces it.
+  const onRoad = roadFights && !stop && !!drive;
+  if (onRoad) {
+    useLanes(c, drive!.sideX);
+    c.pace = 1;
+  }
+  combat = new CombatScene(
+    c,
+    s,
+    {
+      onCarHit: () => {
+        document.body.classList.remove('hurt');
+        void document.body.offsetWidth;
+        document.body.classList.add('hurt');
+      },
+      onEnd: (outcome) => setTimeout(() => endCombat(c, outcome, stop), onRoad ? 300 : 700),
+      onTick: () => hudTick?.(),
     },
-    onEnd: (outcome) => setTimeout(() => endCombat(c, outcome, stop), 700),
-    onTick: () => hudTick?.(),
+    onRoad ? { scene: drive!.scene, camera: drive!.camera } : undefined,
+  );
+  if (onRoad) {
+    const fight = combat;
+    drive!.attachFight({
+      root: fight.root,
+      carX: () => c.carX,
+      update: (dt) => fight.update(dt),
+      shake: () => fight.shakeAmount,
+      changeLane: (dir) => changeLane(c, dir),
+      setPace: (pace) => (c.pace = pace),
+      boosting: () => c.boostTime > 0,
+      boss: !!c.boss,
+    });
+    drive!.resume();
+    setScene(drive);
+    showDriveHud(c);
+  } else {
+    setScene(combat);
+    showCombatHud(c);
+  }
+}
+
+/** A fight's buttons for the road dashboard: weapons, lane dodging, horn and nitro, and a banner that fades. */
+function fightControls(c: CombatState): { banner: HTMLElement; pad: HTMLElement; kidShoot: HTMLElement | false; sync: () => void } {
+  const s = state!;
+  narrator.say(c.title);
+  const hint = kidMode.on ? 'Tap the bad guys!' : c.boss ? 'Tap the boss to shoot. Swipe to change lanes out of the red strip!' : 'Tap enemies to shoot. Swipe sideways to dodge.';
+  // A boss arrives with its picture and name, read out, so pre-readers know who it is.
+  if (c.boss) {
+    narrator.say(BOSS_INFO[c.boss].intro);
+    if (c.boss === 'mothership' && s.karenBeaten) narrator.say(KAREN_STORY.queen);
+  }
+  const banner = h(
+    'div',
+    { class: `fight-banner ${c.boss ? 'boss' : ''}` },
+    c.boss && h('span', { class: 'boss-icon' }, BOSS_INFO[c.boss].icon),
+    c.boss ? ENEMY_STATS[c.boss].name : c.title,
+    h('small', {}, hint),
+  );
+  setTimeout(() => banner.classList.add('gone'), c.boss ? 6000 : 4000);
+  const weapons: WeaponKind[] = ['bullets', 'shells', 'catnip'];
+  const wbtns = weapons.map((w) => h('button', { class: 'btn weapon', onclick: () => ((c.weapon = w), sync()) }, h('b', {}, WEAPONS[w].name), h('span', {}, '')));
+  const lane = (dir: -1 | 1, label: string) => {
+    const b = h('button', { class: 'btn steer', title: dir < 0 ? 'Dodge left' : 'Dodge right' }, label);
+    b.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      drive?.steer(dir);
+    });
+    return b;
+  };
+  const hornBtn = h('button', { class: 'btn action', onclick: () => horn(c) }, '📯 Horn');
+  const boostBtn = h('button', { class: 'btn action', onclick: () => boost(c, s.inv) }, `🔥 Boost (${BOOST_FUEL}⛽)`);
+  // Kid mode: one big button that fires at the nearest bad guy.
+  const kidBtn = h('button', { class: 'btn pad shoot', title: 'Shoot the nearest bad guy' }, '🔫 Shoot!');
+  kidBtn.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    const t = nearestEnemy(c);
+    if (t) fireAt(c, s.inv, t.id);
   });
-  setScene(combat);
-  showCombatHud(c);
+  const sync = () => {
+    wbtns.forEach((b, i) => {
+      const w = weapons[i] as 'bullets' | 'shells' | 'catnip';
+      b.classList.toggle('selected', c.weapon === w);
+      b.lastChild!.textContent = String(s.inv[w]);
+      b.classList.toggle('empty', s.inv[w] <= 0);
+    });
+    hornBtn.classList.toggle('cooling', c.hornCooldown > 0);
+    boostBtn.classList.toggle('cooling', c.boostCooldown > 0 || s.inv.fuel < BOOST_FUEL + 1);
+  };
+  const pad = h('div', { class: 'fight-pad combat' }, h('div', { class: 'row weapons' }, ...wbtns), h('div', { class: 'row' }, lane(-1, '◀'), hornBtn, boostBtn, lane(1, '▶')));
+  sync();
+  return { banner, pad, kidShoot: kidMode.on && h('div', { class: 'shoot-row show' }, kidBtn), sync };
 }
 
 function showCombatHud(c: CombatState): void {
@@ -1826,10 +1933,10 @@ const doubleTap = new DoubleTap();
 canvas.addEventListener('pointerdown', (e) => {
   press = { x: e.clientX, y: e.clientY, t: e.timeStamp, id: e.pointerId };
   pressSwiped = false;
-  if (active === combat && combat) combat.pointerDown(toNdc(e));
+  if (inFight()) combat!.pointerDown(toNdc(e));
 });
 canvas.addEventListener('pointermove', (e) => {
-  if (active !== combat || !combat || !press || press.id !== e.pointerId) return;
+  if (!inFight() || !combat || !press || press.id !== e.pointerId) return;
   if (!pressSwiped && isSwipe(press, e.clientX, e.clientY, e.timeStamp)) {
     pressSwiped = true;
     combat.pointerUp();
@@ -1842,7 +1949,7 @@ canvas.addEventListener('pointerup', (e) => {
   const from = press;
   press = null;
   if (!from || from.id !== e.pointerId) return;
-  if (active === combat) {
+  if (inFight()) {
     // A sideways swipe keeps steering for a moment after the finger lifts.
     if (fightSteer) {
       const dir = fightSteer;
@@ -1882,6 +1989,12 @@ let fightCombatState: CombatState | null = null;
 function fightSwipe(act: ReturnType<typeof swipeAction>): void {
   const c = fightCombatState;
   if (!c || !act || !state) return;
+  // On the road a fight uses the driving swipes: sideways changes lane, up and down change speed.
+  if (c.lanes && drive) {
+    if (act === 'left' || act === 'right') drive.steer(act === 'left' ? -1 : 1);
+    else drive.pedal(act === 'faster' ? 1 : -1);
+    return;
+  }
   if (act === 'left' || act === 'right') {
     fightSteer = act === 'left' ? -1 : 1;
     c.steer = fightSteer;
@@ -1891,6 +2004,8 @@ function fightSwipe(act: ReturnType<typeof swipeAction>): void {
 
 function endCombat(c: CombatState, outcome: 'cleared' | 'escaped' | 'wrecked', stop?: Stop): void {
   const s = state!;
+  const onRoad = !!drive?.fighting;
+  if (onRoad) drive!.detachFight();
   if (outcome === 'wrecked') {
     showEnd();
     return;
@@ -1912,6 +2027,17 @@ function endCombat(c: CombatState, outcome: 'cleared' | 'escaped' | 'wrecked', s
     s.health += patched;
   }
   saveGame(s);
+  if (onRoad && !c.boss) {
+    // A road fight just ends: the car never stopped, so a short note is enough.
+    combat?.dispose();
+    combat = null;
+    showDriveHud();
+    sound.startMusic();
+    // A short note that closes by itself: the drive never stops.
+    showToast(outcome === 'cleared' ? '💥' : '🏁', outcome === 'cleared' ? 'Wiped them out!' : 'You got away!', found.length ? `Picked up ${found.join(', ')}` : `${c.kills} taken down`, null, FIGHT_NOTE_MS);
+    return;
+  }
+  if (onRoad) drive!.paused = true;
   ui().append(
     h(
       'div',
@@ -2093,6 +2219,10 @@ registerServiceWorker(() => {
   end(won = true) {
     state!.status = won ? 'won' : 'lost';
     showEnd();
+  },
+  /** Starts a boss fight on the spot (on the road, as when you reach the boss). */
+  boss(boss: BossKind) {
+    startCombat(false, undefined, undefined, boss);
   },
   /** Starts a fight on the spot; `horde` forces (true) or blocks (false) a zombie horde. */
   fight(theme?: EnemyType, horde?: boolean) {

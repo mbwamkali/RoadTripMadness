@@ -155,7 +155,7 @@ const STEPS = [
       await p.locator('.sheet button', { hasText: /Search|Again/ }).first().click({ timeout: 8000 });
     },
   ],
-  ['boss', async (p) => (await p.evaluate(() => document.querySelector('.scavenge')?.remove()), p.evaluate(() => window.rtm.bossIntro('karen')))],
+  ['boss', async (p) => (await p.evaluate(() => { document.querySelector('.scavenge')?.remove(); document.querySelector('.modal')?.remove(); }), p.evaluate(() => window.rtm.boss('karen')))],
   ['fight', async (p) => (await p.evaluate(() => document.querySelector('.modal')?.remove()), p.evaluate(() => window.rtm.fight('zombie', false)))],
   ['end', async (p) => p.evaluate(() => window.rtm.end(true))],
 ];

@@ -46,9 +46,17 @@ interface Fx {
  */
 export class CombatScene implements GameScene {
   scene = new THREE.Scene();
-  camera = new THREE.PerspectiveCamera(60, 1, 0.3, 400);
-  private car: THREE.Group;
-  private atmosphere: Atmosphere;
+  camera: THREE.PerspectiveCamera;
+  /**
+   * Where the fight's enemies, shots and effects live. In its own view that is
+   * the scene; on the road it is a group the drive view moves along with the car
+   * (combat x is across your side of the road, -z is up the road ahead).
+   */
+  readonly root: THREE.Object3D;
+  /** Fighting on the road: no road, car, sky or camera of its own. */
+  readonly onRoad: boolean;
+  private car!: THREE.Group;
+  private atmosphere!: Atmosphere;
   private shadows = quality.profile.shadows;
   private groundMap: THREE.Texture | null = null;
   private roadTex = makeRoadTexture();
@@ -79,7 +87,30 @@ export class CombatScene implements GameScene {
     readonly combat: CombatState,
     private state: GameState,
     private cb: CombatCallbacks,
+    host?: { scene: THREE.Scene; camera: THREE.PerspectiveCamera },
   ) {
+    this.onRoad = !!host;
+    this.camera = host?.camera ?? new THREE.PerspectiveCamera(60, 1, 0.3, 400);
+    this.root = host ? new THREE.Group() : this.scene;
+    if (host) host.scene.add(this.root);
+    if (!host) this.buildView();
+    this.hitGlow.visible = false;
+    this.root.add(this.hitGlow);
+
+    this.warning = new THREE.Mesh(
+      new THREE.PlaneGeometry(3.6, 26),
+      new THREE.MeshBasicMaterial({ color: 0xff2020, transparent: true, opacity: 0.4, depthWrite: false }),
+    );
+    this.warning.rotation.x = -Math.PI / 2;
+    this.warning.position.set(0, 0.06, -6);
+    this.warning.visible = false;
+    this.root.add(this.warning);
+  }
+
+  /** The separate fight view's own road, roadside, car and sky. */
+  private buildView(): void {
+    const state = this.state;
+    const combat = this.combat;
     this.car = makeRide(state.ride ?? 'car', state.upgrades);
     this.atmosphere = new Atmosphere(this.scene, combat.title.includes('cat') || combat.boss === 'mothership' ? 0x5a3f8a : 0xe8a868, 60, 170, this.shadows ? { size: quality.profile.shadowSize, range: 45 } : null);
     this.atmosphere.minFogFar = combat.boss ? 90 : 55;
@@ -90,7 +121,7 @@ export class CombatScene implements GameScene {
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshLambertMaterial({ color: groundColorAt(biomeSpans(state.route), state.distance), map: this.groundMap }));
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
-    this.scene.add(ground);
+    this.root.add(ground);
 
     // The same kind of road you were driving on: lanes, median and shoulders.
     const path = pathFromRoute(state.route);
@@ -100,22 +131,12 @@ export class CombatScene implements GameScene {
     this.buildProps(layout, biomeAtDistance(biomeSpans(state.route, path), state.distance));
     castShadows(this.props, this.shadows);
     castShadows(this.car, this.shadows);
-    this.scene.add(this.props);
-    this.scene.add(this.car);
-    this.hitGlow.visible = false;
-    this.scene.add(this.hitGlow);
-
-    this.warning = new THREE.Mesh(
-      new THREE.PlaneGeometry(3.6, 26),
-      new THREE.MeshBasicMaterial({ color: 0xff2020, transparent: true, opacity: 0.4, depthWrite: false }),
-    );
-    this.warning.rotation.x = -Math.PI / 2;
-    this.warning.position.set(0, 0.06, -6);
-    this.warning.visible = false;
-    this.scene.add(this.warning);
+    this.root.add(this.props);
+    this.root.add(this.car);
   }
 
   resize(w: number, h: number): void {
+    if (this.onRoad) return;
     this.camera.aspect = w / h;
     this.camera.fov = w < h ? 78 : 58;
     this.camera.updateProjectionMatrix();
@@ -138,8 +159,8 @@ export class CombatScene implements GameScene {
       const d = Math.hypot(p.x - ndc.x, (p.y - ndc.y) * 0.8);
       if (d < 0.18 && (!near || d < near.d)) near = { id, d };
     };
-    for (const [id, g] of this.meshes) consider(id, g.position.clone());
-    for (const e of this.combat.enemies) if (e.horde || e.type === 'drone') consider(e.id, new THREE.Vector3(e.x, e.y, e.z));
+    for (const [id, g] of this.meshes) consider(id, g.getWorldPosition(new THREE.Vector3()));
+    for (const e of this.combat.enemies) if (e.horde || e.type === 'drone') consider(e.id, this.root.localToWorld(new THREE.Vector3(e.x, e.y, e.z)));
     return (near as { id: number } | null)?.id ?? null;
   }
 
@@ -177,8 +198,41 @@ export class CombatScene implements GameScene {
     this.handleEvents();
     this.syncEnemies();
     this.ambience(dt);
-    sound.engine(1, c.boostTime > 0);
+    if (!this.onRoad) this.moveView(dt);
+    this.hitFlash = Math.max(0, this.hitFlash - dt);
+    this.hitGlow.visible = this.hitFlash > 0;
+    this.hitGlow.position.set(c.carX, 0.9, 0);
+    (this.hitGlow.material as THREE.MeshBasicMaterial).opacity = (this.hitFlash / 0.3) * 0.55;
+    this.syncMissiles();
+    this.shake = Math.max(0, this.shake - dt * 3);
+    const boss = c.enemies.find((e) => e.id === c.bossId);
+    this.warning.visible = !!boss?.charging;
+    if (boss?.charging) {
+      this.warning.position.x = boss.targetX;
+      // Pulse faster as the hit gets closer.
+      (this.warning.material as THREE.MeshBasicMaterial).opacity = 0.25 + 0.3 * (0.5 + 0.5 * Math.sin(c.time * (8 + (1.5 - boss.timer) * 14)));
+    }
+    this.updateFx(dt);
+    if (!this.onRoad) this.atmosphere.update(dt, this.camera, this.car.position);
+    this.cb.onTick();
 
+    const outcome = this.state.status === 'lost' ? 'wrecked' : combatOutcome(c);
+    if (outcome) {
+      this.done = true;
+      this.state.kills += c.kills;
+      this.cb.onEnd(outcome);
+    }
+  }
+
+  /** How hard the camera shakes from hits (the road view adds it to its own camera). */
+  get shakeAmount(): number {
+    return this.shake;
+  }
+
+  /** The separate fight view: scroll the road and props, steer the car, aim the camera. */
+  private moveView(dt: number): void {
+    const c = this.combat;
+    sound.engine(1, c.boostTime > 0);
     const speed = ROAD_SPEED * (c.boostTime > 0 ? 2.2 : 1);
     for (const r of this.scrolling) r.tex.offset.y += (r.dir * speed * dt) / 16;
     if (this.groundMap) this.groundMap.offset.y = (this.groundMap.offset.y + (speed * dt) / 30) % 1;
@@ -193,34 +247,11 @@ export class CombatScene implements GameScene {
     const target = c.enemies.find((e) => e.id === this.lockedTarget);
     if (gun && target) gun.rotation.y = Math.atan2(-(target.x - c.carX), -target.z);
 
-    this.hitFlash = Math.max(0, this.hitFlash - dt);
-    this.hitGlow.visible = this.hitFlash > 0;
-    this.hitGlow.position.set(c.carX, 0.9, 0);
-    (this.hitGlow.material as THREE.MeshBasicMaterial).opacity = (this.hitFlash / 0.3) * 0.55;
-    this.syncMissiles();
-    this.shake = Math.max(0, this.shake - dt * 3);
     const sx = (Math.random() - 0.5) * this.shake;
     const sy = (Math.random() - 0.5) * this.shake;
     const big = c.boss === 'mothership';
     this.camera.position.set(c.carX * 0.6 + sx, (big ? 8 : 9.5) + sy, 14);
     this.camera.lookAt(c.carX * 0.4, big ? 3 : 0, -22);
-    const boss = c.enemies.find((e) => e.id === c.bossId);
-    this.warning.visible = !!boss?.charging;
-    if (boss?.charging) {
-      this.warning.position.x = boss.targetX;
-      // Pulse faster as the hit gets closer.
-      (this.warning.material as THREE.MeshBasicMaterial).opacity = 0.25 + 0.3 * (0.5 + 0.5 * Math.sin(c.time * (8 + (1.5 - boss.timer) * 14)));
-    }
-    this.updateFx(dt);
-    this.atmosphere.update(dt, this.camera, this.car.position);
-    this.cb.onTick();
-
-    const outcome = this.state.status === 'lost' ? 'wrecked' : combatOutcome(c);
-    if (outcome) {
-      this.done = true;
-      this.state.kills += c.kills;
-      this.cb.onEnd(outcome);
-    }
   }
 
   private groanTimer = 1;
@@ -287,7 +318,7 @@ export class CombatScene implements GameScene {
             const cat = angryCat([0xff9a3c, 0x3a3a3a, 0xf2f2f2, 0xb0b0b0][i % 4]);
             cat.scale.setScalar(1.6);
             cat.position.set(ev.x + (i - ev.cats / 2) * 0.8, 3, ev.z);
-            this.scene.add(cat);
+            this.root.add(cat);
             const v = new THREE.Vector3((i - (ev.cats - 1) / 2) * 5, 11 + i, 6);
             this.fx.push({ obj: cat, life: 1.4, max: 1.4, vel: v });
           }
@@ -339,7 +370,7 @@ export class CombatScene implements GameScene {
         g = buildEnemy(e.type);
         castShadows(g, this.shadows);
         this.meshes.set(e.id, g);
-        this.scene.add(g);
+        this.root.add(g);
       }
       g.position.set(e.x, e.y, e.z);
       animateEnemy(g, e, this.combat.time);
@@ -371,7 +402,7 @@ export class CombatScene implements GameScene {
     }
     for (const [id, g] of this.meshes) {
       if (!alive.has(id)) {
-        this.scene.remove(g);
+        this.root.remove(g);
         disposeTree(g);
         this.meshes.delete(id);
         if (this.lockedTarget === id) this.lockedTarget = null;
@@ -389,7 +420,7 @@ export class CombatScene implements GameScene {
       this.horde = new THREE.InstancedMesh(geo, mat, 48);
       this.horde.frustumCulled = false;
       this.horde.castShadow = this.shadows;
-      this.scene.add(this.horde);
+      this.root.add(this.horde);
     }
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
@@ -417,7 +448,7 @@ export class CombatScene implements GameScene {
       this.swarm = new THREE.InstancedMesh(paperPlaneGeometry(), new THREE.MeshLambertMaterial({ color: 0xffffff, side: THREE.DoubleSide }), 32);
       this.swarm.frustumCulled = false;
       this.swarm.castShadow = this.shadows;
-      this.scene.add(this.swarm);
+      this.root.add(this.swarm);
     }
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
@@ -462,7 +493,7 @@ export class CombatScene implements GameScene {
           pizzaGeometryParts(mesh, 0.55);
         } else mesh = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.6), this.junk);
         this.missiles.set(ms.id, mesh);
-        this.scene.add(mesh);
+        this.root.add(mesh);
       }
       const p = missileAt(ms);
       mesh.position.set(p.x, p.y, p.z);
@@ -471,7 +502,7 @@ export class CombatScene implements GameScene {
     }
     for (const [id, mesh] of this.missiles) {
       if (live.has(id)) continue;
-      this.scene.remove(mesh);
+      this.root.remove(mesh);
       disposeTree(mesh);
       this.missiles.delete(id);
     }
@@ -480,7 +511,7 @@ export class CombatScene implements GameScene {
   private addLine(a: THREE.Vector3, b: THREE.Vector3, color: number, life: number): void {
     const geo = new THREE.BufferGeometry().setFromPoints([a, b]);
     const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color, transparent: true }));
-    this.scene.add(line);
+    this.root.add(line);
     this.fx.push({ obj: line, life, max: life });
   }
 
@@ -490,7 +521,7 @@ export class CombatScene implements GameScene {
     for (let i = 0; i < n; i++) {
       const m = new THREE.Mesh(geo, mat);
       m.position.copy(at);
-      this.scene.add(m);
+      this.root.add(m);
       const v = new THREE.Vector3(Math.random() - 0.5, Math.random() * 0.8 + 0.2, Math.random() - 0.5).multiplyScalar(14);
       this.fx.push({ obj: m, life: 0.7, max: 0.7, vel: v });
     }
@@ -503,7 +534,7 @@ export class CombatScene implements GameScene {
     );
     ring.rotation.x = -Math.PI / 2;
     ring.position.set(x, 0.5, 0);
-    this.scene.add(ring);
+    this.root.add(ring);
     this.fx.push({ obj: ring, life: 0.6, max: 0.6, vel: new THREE.Vector3(0, 0, 0) });
   }
 
@@ -525,7 +556,7 @@ export class CombatScene implements GameScene {
     }
     const dead = this.fx.filter((f) => f.life <= 0);
     for (const f of dead) {
-      this.scene.remove(f.obj);
+      this.root.remove(f.obj);
       const m = f.obj as THREE.Mesh;
       if (!m.isMesh) {
         disposeTree(f.obj);
@@ -556,7 +587,7 @@ export class CombatScene implements GameScene {
     }
     const shoulderMat = new THREE.MeshLambertMaterial({ color: 0x5a5a5e });
     for (const sh of layout.shoulders) lay(new THREE.Mesh(new THREE.PlaneGeometry(sh.width, STRIP_LEN), shoulderMat), sh.x, 0.015);
-    this.scene.add(g);
+    this.root.add(g);
   }
 
   private buildProps(layout: FightRoad, biome: BiomeId): void {
@@ -609,12 +640,13 @@ export class CombatScene implements GameScene {
   }
 
   dispose(): void {
-    this.atmosphere.dispose();
+    if (!this.onRoad) this.atmosphere.dispose();
+    else this.root.parent?.remove(this.root);
     if (this.swarm) {
       this.swarm.geometry.dispose();
       (this.swarm.material as THREE.Material).dispose();
       this.swarm.dispose();
-      this.scene.remove(this.swarm);
+      this.root.remove(this.swarm);
     }
     if (this.horde) {
       if (!this.horde.geometry.userData.shared && this.horde.material !== modelMaterial) {
@@ -622,14 +654,14 @@ export class CombatScene implements GameScene {
         (this.horde.material as THREE.Material).dispose();
       }
       this.horde.dispose();
-      this.scene.remove(this.horde);
+      this.root.remove(this.horde);
     }
     for (const mesh of this.missiles.values()) disposeTree(mesh);
     this.junk.dispose();
     this.trash.dispose();
     for (const g of this.meshes.values()) disposeTree(g);
     for (const f of this.fx) disposeTree(f.obj);
-    disposeTree(this.scene);
+    disposeTree(this.root);
     this.roadTex.dispose();
     for (const r of this.scrolling) if (r.tex !== this.roadTex) r.tex.dispose();
   }
