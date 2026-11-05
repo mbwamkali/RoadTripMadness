@@ -73,6 +73,7 @@ import { gunDamageFor, MAX_LEVEL, ramDamageFor, upgradeCost, UPGRADES, type Upgr
 import { sound } from './audio/sound';
 import { hdModelsReady, loadHdModels } from './scenes/hdModels';
 import { loadHdBuildings } from './scenes/hdBuildings';
+import { PerfMeter } from './ui/perfMeter';
 import { gfx, loadQualityChoice, nextQualityChoice, quality, QUALITY_NAMES, resolveQuality, saveQualityChoice } from './scenes/quality';
 import type { Bloom } from './scenes/bloom';
 
@@ -137,9 +138,11 @@ function resize(): void {
 window.addEventListener('resize', resize);
 
 let last = performance.now();
+const perf = new PerfMeter(renderer);
 function frame(now: number): void {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
+  perf.begin();
   if (active) {
     active.update(dt);
     if (bloom) bloom.render(active.scene, active.camera);
@@ -148,6 +151,7 @@ function frame(now: number): void {
     renderer.setClearColor(0x1b1410);
     renderer.clear();
   }
+  perf.end();
   if (state && state.status === 'driving' && now - lastSave > 3000) {
     saveGame(state);
     lastSave = now;
