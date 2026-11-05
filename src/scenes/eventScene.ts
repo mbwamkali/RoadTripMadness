@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { lit } from './materials';
 import { disposeTree, makeRide } from './common';
 import { modelsWanted } from './models';
 import { sampleCatship, sampleOutlaw, sampleWreck } from './samples';
@@ -48,7 +49,7 @@ export function sceneKindFor(eventId: string): SceneKind {
 
 export const SCENE_SECONDS = 4;
 
-const lam = (color: number, extra: THREE.MeshLambertMaterialParameters = {}) => new THREE.MeshLambertMaterial({ color, ...extra });
+const lam = (color: number, extra: THREE.MeshStandardMaterialParameters = {}) => lit({ color, ...extra });
 function mesh(geo: THREE.BufferGeometry, mat: THREE.Material, x = 0, y = 0, z = 0): THREE.Mesh {
   const m = new THREE.Mesh(geo, mat);
   m.position.set(x, y, z);
@@ -209,7 +210,7 @@ function stage(kind: SceneKind, ride: 'car' | 'motorcycle' | 'truck', up?: Upgra
         puff.visible = p > 0 && p < 2.2;
         puff.position.set(car.position.x + 1.2, 0.2, 1);
         puff.scale.setScalar(1 + Math.max(0, p) * 1.5);
-        for (const m of puff.children) ((m as THREE.Mesh).material as THREE.MeshLambertMaterial).opacity = Math.max(0, 1 - p / 2.2);
+        for (const m of puff.children) ((m as THREE.Mesh).material as THREE.MeshStandardMaterial).opacity = Math.max(0, 1 - p / 2.2);
         // The car sags on the burst tyre and wobbles.
         car.rotation.z = p > 0 ? -0.12 + Math.sin(p * 18) * 0.04 * Math.max(0, 1 - p) : 0;
         car.position.y = p > 0 ? -0.12 : 0;
@@ -490,7 +491,7 @@ function stage(kind: SceneKind, ride: 'car' | 'motorcycle' | 'truck', up?: Upgra
           const k = Math.min(1, Math.max(0, (t - 0.3 - i * 0.12) / 2.2));
           p.position.set(16 + dx - k * (14 + dx) , 2.2 + dy + Math.sin(t * 3 + i) * 0.25, dz);
           p.rotation.x = Math.sin(t * 3 + i) * 0.3;
-          (p.material as THREE.MeshLambertMaterial).color.setHex(0xf4f1e6);
+          (p.material as THREE.MeshStandardMaterial).color.setHex(0xf4f1e6);
         });
       });
       break;

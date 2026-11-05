@@ -87,3 +87,6 @@ export const quality = {
     return QUALITY[this.level];
   },
 };
+
+/** The game's one renderer, for scenes that bake their own lighting (sky reflections). Set by main.ts. */
+export const gfx: { renderer: import('three').WebGLRenderer | null } = { renderer: null };

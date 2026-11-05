@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { lit } from './materials';
 
 /**
  * Sample models built in code, for the things that are still simple box shapes:
@@ -21,7 +22,7 @@ export function lam(color: number, emissive = 0): THREE.Material {
   const key = `l${color}-${emissive}`;
   let m = mats.get(key);
   if (!m) {
-    mats.set(key, (m = new THREE.MeshLambertMaterial({ color, emissive, flatShading: true })));
+    mats.set(key, (m = lit({ color, emissive, flatShading: true })));
     m.userData.shared = true;
   }
   return m;

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { lit } from './materials';
 import { disposeTree, makeCar } from './common';
 import { modelMesh, type ModelName } from './models';
 import { quality } from './quality';
@@ -60,7 +61,7 @@ const STREET_W = 7;
 const ROW = 18;
 const SIDE_X = 10.5;
 
-const lam = (c: number, e = 0) => new THREE.MeshLambertMaterial({ color: c, emissive: e });
+const lam = (c: number, e = 0) => lit({ color: c, emissive: e });
 function box(parent: THREE.Object3D, w: number, h: number, d: number, mat: THREE.Material, x: number, y: number, z: number): THREE.Mesh {
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
   m.position.set(x, y, z);

@@ -71,7 +71,7 @@ import { TownScene } from './scenes/townScene';
 import { openScavengeScene } from './scenes/scavengeScene';
 import { gunDamageFor, MAX_LEVEL, ramDamageFor, upgradeCost, UPGRADES, type UpgradeKind } from './game/upgrades';
 import { sound } from './audio/sound';
-import { loadQualityChoice, nextQualityChoice, quality, QUALITY_NAMES, resolveQuality, saveQualityChoice } from './scenes/quality';
+import { gfx, loadQualityChoice, nextQualityChoice, quality, QUALITY_NAMES, resolveQuality, saveQualityChoice } from './scenes/quality';
 import type { Bloom } from './scenes/bloom';
 
 const canvas = document.getElementById('view') as HTMLCanvasElement;
@@ -80,6 +80,10 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPrefere
 // contexts), ask for it back instead of leaving a white screen; three.js
 // re-uploads everything once it is restored.
 canvas.addEventListener('webglcontextlost', (e) => e.preventDefault());
+// Film-style tone mapping: bright skies and sunlit paint roll off softly instead of clipping.
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+gfx.renderer = renderer;
 let bloom: Bloom | null = null;
 
 /** Applies the graphics quality to the renderer (scenes read it when they're built). */

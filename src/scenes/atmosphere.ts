@@ -1,11 +1,14 @@
 import * as THREE from 'three';
 import { daylight, type Weather } from '../game/time';
+import { gfx, quality } from './quality';
 
 const TINT: Record<Weather, number> = { clear: 0, rain: 0.45, dust: 0.55, fog: 0.6, snow: 0.5 };
 const TINT_COLOR: Record<Weather, number> = { clear: 0x000000, rain: 0x5a6470, dust: 0xc28a4a, fog: 0xb8bcc0, snow: 0xd8dde6 };
 const FOG_SCALE: Record<Weather, number> = { clear: 1, rain: 0.55, dust: 0.25, fog: 0.18, snow: 0.4 };
 const NIGHT = new THREE.Color(0x0b1026);
-const DUSK = new THREE.Color(0xe0784a);
+const DUSK = new THREE.Color(0xe08a5e);
+/** Clear midday sky near the horizon, mixed into the biome's own sky colour. */
+const DAY_BLUE = new THREE.Color(0xbcd6ec);
 const WARM_SUN = new THREE.Color(0xffb070);
 const WHITE = new THREE.Color(0xffffff);
 /** Seconds for weather to blend from one kind to the next. */
@@ -36,7 +39,17 @@ uniform vec3 sunDir;
 uniform vec3 sunColor;
 uniform float sunSize;
 uniform float glow;
+uniform float clouds;
+uniform float time;
+uniform vec3 cloudColor;
 varying vec3 vDir;
+float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float vnoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(h21(i), h21(i + vec2(1.0, 0.0)), f.x), mix(h21(i + vec2(0.0, 1.0)), h21(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+float fbm(vec2 p) { float v = 0.0, a = 0.5; for (int i = 0; i < 5; i++) { v += a * vnoise(p); p *= 2.03; a *= 0.5; } return v; }
 void main() {
   vec3 d = normalize(vDir);
   float up = clamp(d.y, 0.0, 1.0);
@@ -46,6 +59,13 @@ void main() {
   float s = max(dot(d, sunDir), 0.0);
   col += sunColor * glow * pow(s, 8.0) * 0.35;
   col += sunColor * smoothstep(1.0 - sunSize, 1.0 - sunSize * 0.6, s);
+  // Soft clouds drifting overhead, lit by the sun.
+  if (clouds > 0.0 && d.y > 0.0) {
+    vec2 uv = d.xz / (d.y + 0.18) * 1.6 + vec2(time * 0.004, time * 0.0015);
+    float cl = smoothstep(0.62 - clouds * 0.3, 0.88 - clouds * 0.2, fbm(uv + vec2(3.0, 1.0)));
+    vec3 cc = cloudColor * (0.85 + 0.3 * pow(s, 4.0));
+    col = mix(col, cc, cl * smoothstep(0.02, 0.2, d.y) * 0.85);
+  }
   gl_FragColor = vec4(col, 1.0);
   #include <colorspace_fragment>
 }`;
@@ -76,6 +96,14 @@ export class Atmosphere {
   private started = false;
   private sunDir = new THREE.Vector3(0, 1, 0);
   private tmp = new THREE.Color();
+  /** Sky reflections (Medium and High): a blurred copy of the sky, rebaked as the hour and weather change. */
+  private envScene: THREE.Scene | null = null;
+  private envGround: THREE.MeshBasicMaterial | null = null;
+  private envTarget: THREE.WebGLRenderTarget | null = null;
+  private envHour = -99;
+  private envClear = -1;
+  private envAge = 0;
+  private time = 0;
   /** Fog never closes in further than this (combat needs to see the enemies). */
   minFogFar = 0;
   /** Fog distances for clear daytime; weather and night pull them in. */
@@ -98,8 +126,8 @@ export class Atmosphere {
       cam.right = cam.top = shadows.range;
       cam.near = 1;
       cam.far = 500;
-      this.sun.shadow.bias = -0.0008;
-      this.sun.shadow.normalBias = 0.4;
+      this.sun.shadow.bias = -0.0005;
+      this.sun.shadow.normalBias = 0.12;
     }
     this.headlight = new THREE.SpotLight(0xfff1c8, 0, 140, 0.5, 0.45, 1);
     this.stars = makeStars();
@@ -112,6 +140,9 @@ export class Atmosphere {
         sunColor: { value: new THREE.Color() },
         sunSize: { value: 0.0005 },
         glow: { value: 1 },
+        clouds: { value: 0.5 },
+        time: { value: 0 },
+        cloudColor: { value: new THREE.Color(0xffffff) },
       },
       vertexShader: SKY_VERT,
       fragmentShader: SKY_FRAG,
@@ -159,7 +190,7 @@ export class Atmosphere {
     const sky = this.sky;
     // Dawn and dusk get an orange band between night and day.
     if (d < 0.5) sky.copy(NIGHT).lerp(DUSK, d * 2);
-    else sky.copy(DUSK).lerp(this.tmp.setHex(this.daySky), (d - 0.5) * 2);
+    else sky.copy(DUSK).lerp(this.tmp.setHex(this.daySky), (d - 0.5) * 2).lerp(DAY_BLUE, 0.45 * this.clearness * (d - 0.5) * 2);
     if (this.tint > 0.001) sky.lerp(this.tmp.copy(this.tintColor).multiplyScalar(0.3 + d * 0.7), this.tint);
     const fog = this.scene.fog as THREE.Fog;
     fog.color.copy(sky);
@@ -167,9 +198,11 @@ export class Atmosphere {
     fog.far = Math.max(this.minFogFar, this.fogFar * this.fogScale * nightScale);
     fog.near = Math.min(this.fogNear * this.fogScale * nightScale * 0.6, fog.far * 0.5);
     const clear = this.clearness;
-    this.hemi.intensity = 0.25 + d * 1.35 - (1 - clear) * 0.2;
+    // Tuned for film tone mapping plus sky reflections: a strong sun, a softer fill.
+    this.hemi.intensity = (0.25 + d * 1.0 - (1 - clear) * 0.2) * (this.envTarget ? 0.7 : 1);
     this.hemi.color.setHex(d < 0.3 ? 0x8090c0 : 0xfff6e0);
-    this.sun.intensity = 0.1 + d * 1.7 * (0.5 + clear * 0.5);
+    this.sun.intensity = 0.1 + d * 3.0 * (0.5 + clear * 0.5);
+    this.scene.environmentIntensity = 0.12 + d * 0.55;
     if (d < 0.6) this.sun.color.copy(WARM_SUN).lerp(WHITE, d);
     else this.sun.color.copy(WHITE);
     this.headlight.intensity = d < 0.5 ? (1 - d * 2) * 90 : 0;
@@ -179,13 +212,47 @@ export class Atmosphere {
     const u = this.domeMat.uniforms;
     (u.horizon.value as THREE.Color).copy(sky);
     // Overhead the sky is deeper; clouds and dust flatten it out.
-    (u.zenith.value as THREE.Color).copy(sky).multiplyScalar(0.55 + 0.35 * (1 - clear)).lerp(this.tmp.setHex(0x1d3f8c), 0.25 * d * clear);
+    (u.zenith.value as THREE.Color).copy(sky).multiplyScalar(0.55 + 0.35 * (1 - clear)).lerp(this.tmp.setHex(0x2f6fd0), 0.7 * Math.max(0, d - 0.3) / 0.7 * clear);
     const night = this.hour < 6 || this.hour >= 18;
     (u.sunColor.value as THREE.Color).copy(night ? this.tmp.setHex(0xd8e0f0) : this.sun.color).multiplyScalar(night ? 0.8 : 1.2);
     u.sunSize.value = night ? 0.0003 : 0.0005;
     // The disc hides behind heavy weather.
     u.glow.value = (night ? 0.3 : 1) * (0.15 + clear * 0.85);
     (u.sunColor.value as THREE.Color).multiplyScalar(0.25 + clear * 0.75);
+    u.clouds.value = 0.45 + (1 - clear) * 0.5;
+    // White by day, warm at dusk, grey in bad weather, dim at night.
+    const cc = u.cloudColor.value as THREE.Color;
+    cc.copy(WHITE).lerp(this.sun.color, 0.35).lerp(this.tmp.setHex(0x9aa0a8), (1 - clear) * 0.6);
+    cc.multiplyScalar(0.12 + d * 0.88);
+  }
+
+  /** Rebakes the sky reflections when the sky has changed enough to notice. */
+  private bakeEnv(dt: number): void {
+    const r = gfx.renderer;
+    if (!r || quality.level === 'low') return;
+    this.envAge += dt;
+    const dh = Math.abs(((this.hour - this.envHour + 36) % 24) - 12);
+    const changed = 12 - dh > 0.2 || Math.abs(this.clearness - this.envClear) > 0.08;
+    if (!changed || (this.envTarget && this.envAge < 1)) return;
+    if (!this.envScene) {
+      this.envScene = new THREE.Scene();
+      const dome = new THREE.Mesh(new THREE.SphereGeometry(10, 32, 16), this.domeMat);
+      this.envGround = new THREE.MeshBasicMaterial({ color: 0x806040 });
+      const ground = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), this.envGround);
+      ground.rotation.x = -Math.PI / 2;
+      ground.position.y = -1;
+      this.envScene.add(dome, ground);
+    }
+    this.envGround!.color.copy(this.sky).multiplyScalar(0.45);
+    const pm = new THREE.PMREMGenerator(r);
+    const target = pm.fromScene(this.envScene, 0.04);
+    pm.dispose();
+    this.envTarget?.dispose();
+    this.envTarget = target;
+    this.scene.environment = target.texture;
+    this.envHour = this.hour;
+    this.envClear = this.clearness;
+    this.envAge = 0;
   }
 
   /** Puts the shadow-casting sun over a point (the car) so its shadows stay sharp nearby. */
@@ -199,6 +266,9 @@ export class Atmosphere {
   update(dt: number, camera: THREE.PerspectiveCamera, focus?: THREE.Vector3): void {
     this.blendWeather(Math.min(1, dt / WEATHER_BLEND * 3));
     this.apply();
+    this.time += dt;
+    this.domeMat.uniforms.time.value = this.time;
+    this.bakeEnv(dt);
     this.follow(focus ?? camera.position);
     this.dome.position.copy(camera.position);
     this.dome.scale.setScalar(camera.far * 0.9);
@@ -246,6 +316,9 @@ export class Atmosphere {
     (this.stars.material as THREE.Material).dispose();
     this.dome.geometry.dispose();
     this.domeMat.dispose();
+    this.envTarget?.dispose();
+    this.envScene?.traverse((o) => (o as THREE.Mesh).geometry?.dispose());
+    this.envGround?.dispose();
   }
 }
 

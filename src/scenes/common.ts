@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { lit } from './materials';
 import { modelMesh, modelsWanted } from './models';
 import { sampleMotorcycle, sampleTraffic, sampleWreck } from './samples';
 import { textureImage } from './textures';
@@ -174,10 +175,10 @@ export function setBlinkers(car: THREE.Object3D, side: 'L' | 'R' | null, lit: bo
 /** A chunky low-poly muscle car built from boxes. Faces +z. */
 export function makeCar(color = 0xd9482b, up?: Upgrades): THREE.Group {
   const car = new THREE.Group();
-  const paint = new THREE.MeshLambertMaterial({ color });
-  const dark = new THREE.MeshLambertMaterial({ color: 0x1d1d22 });
-  const glass = new THREE.MeshLambertMaterial({ color: 0x8fc6e8, emissive: 0x112233 });
-  const metal = new THREE.MeshLambertMaterial({ color: 0x9a9a9a });
+  const paint = lit({ color });
+  const dark = lit({ color: 0x1d1d22 });
+  const glass = lit({ color: 0x8fc6e8, emissive: 0x112233 });
+  const metal = lit({ color: 0x9a9a9a });
 
   // Side-profile shapes pulled across the car's width: a hood that slopes down
   // to the nose, a raked windshield and a fastback rear window.
@@ -305,10 +306,10 @@ export function makeCar(color = 0xd9482b, up?: Upgrades): THREE.Group {
 export function makeRide(ride: 'car' | 'motorcycle' | 'truck', up?: Upgrades): THREE.Group {
   if (ride === 'car') return makeCar(undefined, up);
   const g = new THREE.Group();
-  const paint = new THREE.MeshLambertMaterial({ color: ride === 'truck' ? 0x2f5d8a : 0xd9482b });
-  const dark = new THREE.MeshLambertMaterial({ color: 0x1d1d22 });
-  const metal = new THREE.MeshLambertMaterial({ color: 0x9a9a9a });
-  const glass = new THREE.MeshLambertMaterial({ color: 0x8fc6e8, emissive: 0x112233 });
+  const paint = lit({ color: ride === 'truck' ? 0x2f5d8a : 0xd9482b });
+  const dark = lit({ color: 0x1d1d22 });
+  const metal = lit({ color: 0x9a9a9a });
+  const glass = lit({ color: 0x8fc6e8, emissive: 0x112233 });
   const head = new THREE.MeshBasicMaterial({ color: 0xfff3b0 });
   const tail = new THREE.MeshBasicMaterial({ color: 0xd8261a });
   const wheel = (r: number, w: number, x: number, z: number) => {
@@ -348,7 +349,7 @@ export function makeRide(ride: 'car' | 'motorcycle' | 'truck', up?: Upgrades): T
     g.add(mesh3(new THREE.BoxGeometry(0.8, 0.06, 0.06), metal, 0, 1.25, 0.55)); // handlebars
     g.add(mesh3(new THREE.BoxGeometry(0.06, 0.6, 0.06), metal, 0, 0.95, 0.65));
     // Rider: leaning forward, arms to the bars.
-    const jacket = new THREE.MeshLambertMaterial({ color: 0x3a2a1a });
+    const jacket = lit({ color: 0x3a2a1a });
     const torso = mesh3(new THREE.BoxGeometry(0.5, 0.7, 0.32), jacket, 0, 1.45, -0.15);
     torso.rotation.x = 0.35;
     g.add(torso);
@@ -417,9 +418,9 @@ export function makeTrafficVehicle(kind: 'car' | 'motorcycle' | 'pickup' | 'van'
       return g;
     }
   }
-  const paint = new THREE.MeshLambertMaterial({ color });
-  const dark = new THREE.MeshLambertMaterial({ color: 0x1d1d22 });
-  const glass = new THREE.MeshLambertMaterial({ color: 0x6f93ad, emissive: 0x0b1620 });
+  const paint = lit({ color });
+  const dark = lit({ color: 0x1d1d22 });
+  const glass = lit({ color: 0x6f93ad, emissive: 0x0b1620 });
   const tail = new THREE.MeshBasicMaterial({ color: 0xc81e14 });
   const head = new THREE.MeshBasicMaterial({ color: 0xfff3c8 });
   const wheel = new THREE.CylinderGeometry(0.4, 0.4, 0.3, 10).rotateZ(Math.PI / 2);
@@ -451,10 +452,10 @@ export function makeTrafficVehicle(kind: 'car' | 'motorcycle' | 'pickup' | 'van'
     lights(2.65, -2.65, 0.85, 0.7);
   } else {
     // Semi: a cab up front and a long box trailer.
-    const cab = new THREE.MeshLambertMaterial({ color });
+    const cab = lit({ color });
     g.add(new THREE.Mesh(profile(2.4, [[4.5, 0.7], [7, 0.7], [7, 2.2], [6.6, 3.2], [4.5, 3.2]]), cab));
     g.add(new THREE.Mesh(profile(2.42, [[6.95, 2.3], [6.6, 3.0], [6.0, 3.0], [6.0, 2.3]]), glass));
-    const trailer = new THREE.MeshLambertMaterial({ color: 0xdedede });
+    const trailer = lit({ color: 0xdedede });
     g.add(mesh3(new THREE.BoxGeometry(2.5, 3.0, 11), trailer, 0, 2.4, -1.2));
     g.add(mesh3(new THREE.BoxGeometry(1.2, 0.4, 13), dark, 0, 0.8, -0.2));
     wheels([6.2, 4.9, -4.5, -5.7], 1.05);
@@ -468,7 +469,7 @@ export function makeTrafficVehicle(kind: 'car' | 'motorcycle' | 'pickup' | 'van'
 /** Things in the road: debris, a lone zombie, a burnt-out wreck or a barricade. */
 export function makeObstacle(kind: 'debris' | 'zombie' | 'wreck' | 'roadblock'): THREE.Group {
   const g = new THREE.Group();
-  const lam = (color: number) => new THREE.MeshLambertMaterial({ color });
+  const lam = (color: number) => lit({ color });
   const box = (w: number, h: number, d: number, mat: THREE.Material, x: number, y: number, z: number, ry = 0) => {
     const m = mesh3(new THREE.BoxGeometry(w, h, d), mat, x, y, z);
     m.rotation.y = ry;
@@ -526,7 +527,7 @@ export function makeObstacle(kind: 'debris' | 'zombie' | 'wreck' | 'roadblock'):
       c.lineTo(i * 10 + 2, 16);
       c.fill();
     }
-    const board = new THREE.MeshLambertMaterial({ map: new THREE.CanvasTexture(stripes) });
+    const board = lit({ map: new THREE.CanvasTexture(stripes) });
     (board.map as THREE.Texture).colorSpace = THREE.SRGBColorSpace;
     box(3.2, 0.35, 0.08, board, 0, 1.0, 0);
     box(3.2, 0.35, 0.08, board, 0, 0.5, 0);
@@ -611,7 +612,7 @@ export function addLights(scene: THREE.Scene): void {
 
 /** Bolts visible upgrades onto the car so players can see what they bought. */
 function addUpgradeParts(car: THREE.Group, up: Upgrades, metal: THREE.Material, dark: THREE.Material): void {
-  const plate = new THREE.MeshLambertMaterial({ color: 0x5d6168 });
+  const plate = lit({ color: 0x5d6168 });
   for (let i = 0; i < up.armor; i++) {
     for (const x of [-1.06, 1.06]) {
       const p = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.5, 1.1), plate);
@@ -620,7 +621,7 @@ function addUpgradeParts(car: THREE.Group, up: Upgrades, metal: THREE.Material, 
     }
   }
   if (up.tank > 0) {
-    const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.35 + up.tank * 0.05, 0.35 + up.tank * 0.05, 1.6, 10), new THREE.MeshLambertMaterial({ color: 0x3f6b3a }));
+    const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.35 + up.tank * 0.05, 0.35 + up.tank * 0.05, 1.6, 10), lit({ color: 0x3f6b3a }));
     drum.rotation.z = Math.PI / 2;
     drum.position.set(0, 1.4, -1.6);
     car.add(drum);

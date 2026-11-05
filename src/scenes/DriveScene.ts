@@ -1,5 +1,6 @@
 import type { BossKind } from '../game/combat';
 import * as THREE from 'three';
+import { lit } from './materials';
 import type { Path, Vec2 } from '../geo/geo';
 import { CRUISE_SPEED, postedLimit, realKmAt } from '../geo/route';
 import { advance, damage, fuelPerUnit, upcomingStop, type GameState } from '../game/state';
@@ -119,15 +120,15 @@ function plantModels(): { geos: Record<string, THREE.BufferGeometry>; mats: Reco
       crops: new THREE.BoxGeometry(1.1, 1.5, 24).translate(0, 0.75, 0),
     },
     mats: {
-      saguaro: new THREE.MeshLambertMaterial({ color: 0x4f8a3c }),
-      shrub: new THREE.MeshLambertMaterial({ color: 0x8a9a6a }),
-      grass: new THREE.MeshLambertMaterial({ color: 0xb3a95a }),
-      oakTop: new THREE.MeshLambertMaterial({ color: 0x3f7a35 }),
-      pineTop: new THREE.MeshLambertMaterial({ color: 0x2f5f35 }),
-      trunk: new THREE.MeshLambertMaterial({ color: 0x6b4a2b }),
-      palmTrunk: new THREE.MeshLambertMaterial({ color: 0x8a6a45 }),
-      palmLeaves: new THREE.MeshLambertMaterial({ color: 0x3f8a3a }),
-      crops: new THREE.MeshLambertMaterial({ color: 0x6f9a3a }),
+      saguaro: lit({ color: 0x4f8a3c }),
+      shrub: lit({ color: 0x8a9a6a }),
+      grass: lit({ color: 0xb3a95a }),
+      oakTop: lit({ color: 0x3f7a35 }),
+      pineTop: lit({ color: 0x2f5f35 }),
+      trunk: lit({ color: 0x6b4a2b }),
+      palmTrunk: lit({ color: 0x8a6a45 }),
+      palmLeaves: lit({ color: 0x3f8a3a }),
+      crops: lit({ color: 0x6f9a3a }),
     },
   };
 }
@@ -211,13 +212,13 @@ export class DriveScene implements GameScene {
   private car: THREE.Group;
   private ground: THREE.Mesh;
   private roadTex = makeRoadTexture();
-  private roadMat: THREE.MeshLambertMaterial;
-  private medianMat: THREE.MeshLambertMaterial;
+  private roadMat: THREE.MeshStandardMaterial;
+  private medianMat: THREE.MeshStandardMaterial;
   /** The main road: plain asphalt with its lines drawn as separate stripes, so they line up through every change of road type. */
   private asphaltTex = makeAsphaltTexture();
   private stripeTex = [makeStripeTexture(false), makeStripeTexture(true)];
-  private asphaltMat: THREE.MeshLambertMaterial;
-  private stripeMats: Record<'white' | 'whiteDash' | 'yellow' | 'yellowDash', THREE.MeshLambertMaterial>;
+  private asphaltMat: THREE.MeshStandardMaterial;
+  private stripeMats: Record<'white' | 'whiteDash' | 'yellow' | 'yellowDash', THREE.MeshStandardMaterial>;
   private segments: RoadSegment[];
   /** Share of cruise speed for the road type (eases between types). */
   private roadSpeed = 1;
@@ -244,11 +245,11 @@ export class DriveScene implements GameScene {
   private solids = new Map<number, Solid[]>();
   /** Current sideways position of the car (eases between lanes when the road changes). */
   private lane = 2;
-  private shoulderMat: THREE.MeshLambertMaterial;
+  private shoulderMat: THREE.MeshStandardMaterial;
   /** Dirt-road shortcuts. */
-  private dirtMat = new THREE.MeshLambertMaterial({ color: 0x9a7650, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
+  private dirtMat = lit({ color: 0x9a7650, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
   /** Sidewalks, the median barrier, guardrails and rumble strips (round five roadside detail). */
-  private roadsideMats: Record<'concrete' | 'barrier' | 'rail' | 'rumble', THREE.MeshLambertMaterial>;
+  private roadsideMats: Record<'concrete' | 'barrier' | 'rail' | 'rumble', THREE.MeshStandardMaterial>;
   /** Town centres along the route (from the town signs), for sidewalks and street lights. */
   private townList: { mid: number; radius: number; big: boolean }[] = [];
   private mats: Record<string, THREE.Material>;
@@ -296,12 +297,12 @@ export class DriveScene implements GameScene {
     this.atmosphere.set(hourOf(state), weatherAt(state));
 
     // Layered flat surfaces: polygon offsets keep road > water > shoulder > ground without z-fighting.
-    this.roadMat = new THREE.MeshLambertMaterial({ map: this.roadTex, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
-    this.asphaltMat = new THREE.MeshLambertMaterial({ map: this.asphaltTex, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
+    this.roadMat = lit({ map: this.roadTex, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
+    this.asphaltMat = lit({ map: this.asphaltTex, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
     const stripe = (color: number, dashed: boolean) =>
-      new THREE.MeshLambertMaterial({ color, map: this.stripeTex[dashed ? 1 : 0], alphaTest: 0.5, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -12 });
+      lit({ color, map: this.stripeTex[dashed ? 1 : 0], alphaTest: 0.5, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -12 });
     this.stripeMats = { white: stripe(0xe8e2cf, false), whiteDash: stripe(0xe8e2cf, true), yellow: stripe(0xf2c230, false), yellowDash: stripe(0xf2c230, true) };
-    this.medianMat = new THREE.MeshLambertMaterial({
+    this.medianMat = lit({
       color: new THREE.Color(groundColorAt(this.biomes, state.distance)).multiplyScalar(0.85),
       polygonOffset: true,
       polygonOffsetFactor: -1,
@@ -336,37 +337,37 @@ export class DriveScene implements GameScene {
         zones.some((z) => d >= z.from && d <= z.to),
     });
     this.roadSpeed = SPEED[classAt(this.segments, state.distance)].factor;
-    this.shoulderMat = new THREE.MeshLambertMaterial({ color: groundColorAt(this.biomes, state.distance, 'shoulder'), polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
+    this.shoulderMat = lit({ color: groundColorAt(this.biomes, state.distance, 'shoulder'), polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
     // Photo grain on Medium/High (the colours still come from the climate).
     this.shoulderMat.map = detailTexture('gravel', 1, 1 / 6);
     this.medianMat.map = detailTexture('ground', 0.12, 1 / 60);
     const flat = { polygonOffset: true, polygonOffsetFactor: -5, polygonOffsetUnits: -10 };
     const rumble = rumbleTexture();
     this.roadsideMats = {
-      concrete: new THREE.MeshLambertMaterial({ color: 0xbdb8ad, side: THREE.DoubleSide }),
-      barrier: new THREE.MeshLambertMaterial({ color: 0xcfcabe, side: THREE.DoubleSide }),
-      rail: new THREE.MeshLambertMaterial({ color: 0xaab2b8, side: THREE.DoubleSide }),
-      rumble: new THREE.MeshLambertMaterial({ map: rumble, transparent: true, depthWrite: false, ...flat }),
+      concrete: lit({ color: 0xbdb8ad, side: THREE.DoubleSide }),
+      barrier: lit({ color: 0xcfcabe, side: THREE.DoubleSide }),
+      rail: lit({ color: 0xaab2b8, side: THREE.DoubleSide }),
+      rumble: lit({ map: rumble, transparent: true, depthWrite: false, ...flat }),
     };
     const plants = plantModels();
     const lamp = lampGeometries();
     this.mats = {
       ...plants.mats,
-      rock: new THREE.MeshLambertMaterial({ color: 0x9c8a78 }),
-      pole: new THREE.MeshLambertMaterial({ color: 0x5a4632 }),
+      rock: lit({ color: 0x9c8a78 }),
+      pole: lit({ color: 0x5a4632 }),
       // Walls with rows of windows; some light up after dark.
-      building: new THREE.MeshLambertMaterial({ color: 0xffffff, map: windowTexture(false), emissive: 0xffd890, emissiveMap: windowTexture(true), emissiveIntensity: 0 }),
-      roof: new THREE.MeshLambertMaterial({ color: 0x5b3b33 }),
-      canopy: new THREE.MeshLambertMaterial({ color: 0xc8302c }),
-      white: new THREE.MeshLambertMaterial({ color: 0xeeeeee }),
-      delineator: new THREE.MeshLambertMaterial({ color: 0xe8e8e8 }),
+      building: lit({ color: 0xffffff, map: windowTexture(false), emissive: 0xffd890, emissiveMap: windowTexture(true), emissiveIntensity: 0 }),
+      roof: lit({ color: 0x5b3b33 }),
+      canopy: lit({ color: 0xc8302c }),
+      white: lit({ color: 0xeeeeee }),
+      delineator: lit({ color: 0xe8e8e8 }),
       // Unlit, so the reflectors catch the headlights' eye at night.
       reflector: new THREE.MeshBasicMaterial({ color: 0xffb030 }),
       // Street lights: the head glows after dark, with a pool of light on the road (not on Low).
-      lampPost: new THREE.MeshLambertMaterial({ color: 0x6d737a }),
-      lampHead: new THREE.MeshLambertMaterial({ color: 0xfff4d8, emissive: 0xffd890, emissiveIntensity: 0 }),
+      lampPost: lit({ color: 0x6d737a }),
+      lampHead: lit({ color: 0xfff4d8, emissive: 0xffd890, emissiveIntensity: 0 }),
       lampGlow: new THREE.MeshBasicMaterial({ color: 0xffd28a, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }),
-      railPost: new THREE.MeshLambertMaterial({ color: 0x8a9096 }),
+      railPost: lit({ color: 0x8a9096 }),
     };
     this.geos = {
       ...plants.geos,
@@ -391,7 +392,7 @@ export class DriveScene implements GameScene {
 
     this.ground = new THREE.Mesh(
       new THREE.PlaneGeometry(GROUND_SIZE, GROUND_SIZE),
-      new THREE.MeshLambertMaterial({
+      lit({
         color: groundColorAt(this.biomes, state.distance),
         map: detailTexture('ground', GROUND_SIZE / GROUND_TILE, GROUND_SIZE / GROUND_TILE),
         polygonOffset: true,
@@ -645,7 +646,7 @@ export class DriveScene implements GameScene {
   /** The land changes colour gradually as you drive from one climate into another. */
   private applyBiomeColours(): void {
     const d = this.state.distance;
-    (this.ground.material as THREE.MeshLambertMaterial).color.setHex(groundColorAt(this.biomes, d));
+    (this.ground.material as THREE.MeshStandardMaterial).color.setHex(groundColorAt(this.biomes, d));
     this.medianMat.color.setHex(groundColorAt(this.biomes, d)).multiplyScalar(0.85);
     this.shoulderMat.color.setHex(groundColorAt(this.biomes, d, 'shoulder'));
     this.atmosphere.daySky = groundColorAt(this.biomes, d, 'sky');
@@ -753,8 +754,8 @@ export class DriveScene implements GameScene {
       this.skyTimer = 0.25;
       this.applyBiomeColours();
       const night = Math.max(0, 1 - daylight(hourOf(this.state)) * 2.5);
-      (this.mats.building as THREE.MeshLambertMaterial).emissiveIntensity = night;
-      (this.mats.lampHead as THREE.MeshLambertMaterial).emissiveIntensity = night * 1.6;
+      (this.mats.building as THREE.MeshStandardMaterial).emissiveIntensity = night;
+      (this.mats.lampHead as THREE.MeshStandardMaterial).emissiveIntensity = night * 1.6;
       (this.mats.lampGlow as THREE.MeshBasicMaterial).opacity = night * 0.32;
     }
     // The clock moves every frame so dawn and dusk come on smoothly.
@@ -1335,7 +1336,7 @@ export class DriveScene implements GameScene {
     }
     this.ground.position.set(p.x, 0, p.z);
     // The ground follows the car; shift its texture back so the grain stays put in the world.
-    const gmap = (this.ground.material as THREE.MeshLambertMaterial).map;
+    const gmap = (this.ground.material as THREE.MeshStandardMaterial).map;
     if (gmap) gmap.offset.set((p.x / GROUND_TILE) % 1, (-p.z / GROUND_TILE) % 1);
     if (snap) {
       this.camPos.copy(p).addScaledVector(fwd, -14).setY(7);
@@ -1822,7 +1823,7 @@ export class DriveScene implements GameScene {
       }
       const box = new THREE.Mesh(
         new THREE.BoxGeometry(w, h, 8 + rng() * 6),
-        new THREE.MeshLambertMaterial({ color: new THREE.Color().setHSL(rng(), 0.3, 0.6) }),
+        lit({ color: new THREE.Color().setHSL(rng(), 0.3, 0.6) }),
       );
       (box.material as THREE.Material).userData.chunkOwned = true;
       box.position.copy(to3({ x: p.x + side.x * out + f.x * along, y: p.y + side.y * out + f.y * along }, h / 2));
@@ -1869,11 +1870,11 @@ export class DriveScene implements GameScene {
     this.chunks.clear();
     disposeTree(this.car);
     this.ground.geometry.dispose();
-    const gm = this.ground.material as THREE.MeshLambertMaterial;
+    const gm = this.ground.material as THREE.MeshStandardMaterial;
     for (const m of [gm, this.medianMat, this.shoulderMat]) m.map?.dispose();
     gm.dispose();
     Object.values(this.geos).forEach((x) => !x.userData.shared && x.dispose());
-    const bm = this.mats.building as THREE.MeshLambertMaterial;
+    const bm = this.mats.building as THREE.MeshStandardMaterial;
     bm.map?.dispose();
     bm.emissiveMap?.dispose();
     Object.values(this.mats).forEach((x) => !x.userData.shared && x.dispose());
@@ -1935,7 +1936,7 @@ function disposeChunk(g: THREE.Group): void {
   });
 }
 
-const STICK_MAT = new THREE.MeshLambertMaterial({ color: 0x8a8f96 });
+const STICK_MAT = lit({ color: 0x8a8f96 });
 
 /** A small green mile-marker post: "MILE" over the number. */
 function mileMarker(mile: number): THREE.Group {

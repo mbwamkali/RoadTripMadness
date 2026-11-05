@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { lit } from './materials';
 import type { Path } from '../geo/geo';
 
 /**
@@ -115,7 +116,7 @@ function canvasTexture(w: number, h: number, draw: (g: CanvasRenderingContext2D)
   return tex;
 }
 
-const POST_MAT = new THREE.MeshLambertMaterial({ color: 0x8a8f96 });
+const POST_MAT = lit({ color: 0x8a8f96 });
 POST_MAT.userData.shared = true;
 
 /** A sign face on one or two posts, facing back down the road toward the car (+z toward the car once placed). */

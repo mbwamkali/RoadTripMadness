@@ -36,7 +36,7 @@ try {
       s.hoursSpent = (s.hoursSpent || 0) + ((h - base + 48) % 24);
     }, h);
     await page.waitForTimeout(6000);
-    await page.screenshot({ path: `${OUT}/drive-${Q}-${String(h).replace('.', '_')}.png` });
+    await page.screenshot({ path: `${OUT}/drive-${Q}-${String(h).replace('.', '_')}.png`, timeout: 240000 });
     console.log('shot', h);
   }
 } finally {

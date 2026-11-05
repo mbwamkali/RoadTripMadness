@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { lit } from './materials';
 import { disposeTree, makeObstacle } from './common';
 import { modelMesh } from './models';
 import { quality } from './quality';
@@ -52,7 +53,7 @@ export interface ScavengeSceneOptions {
   sfx?: { coin(): void; bad(): void; click(): void };
 }
 
-const lam = (color: number, emissive = 0) => new THREE.MeshLambertMaterial({ color, emissive });
+const lam = (color: number, emissive = 0) => lit({ color, emissive });
 function box(parent: THREE.Object3D, w: number, h: number, d: number, mat: THREE.Material, x: number, y: number, z: number): THREE.Mesh {
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
   m.position.set(x, y, z);
@@ -158,7 +159,7 @@ export function openScavengeScene(root: HTMLElement, o: ScavengeSceneOptions): (
   box(scene, 0.4, 16, 16, lam(room.wall, 0x080808), -8, 8, 0);
   box(scene, 0.4, 16, 16, lam(room.wall, 0x080808), 8, 8, 0);
   box(scene, 16.2, 0.5, 0.5, lam(room.accent), 0, 9.0, -6.7);
-  const glass = box(scene, 5, 2.2, 0.15, new THREE.MeshLambertMaterial({ color: o.night ? 0x1d2a44 : 0x8fc6e8, transparent: true, opacity: 0.4 }), 0, 7.6, -6.75);
+  const glass = box(scene, 5, 2.2, 0.15, lit({ color: o.night ? 0x1d2a44 : 0x8fc6e8, transparent: true, opacity: 0.4 }), 0, 7.6, -6.75);
   glass.renderOrder = 5;
   box(scene, 16, 2.2, 0.3, lam(o.night ? 0x14182a : 0x9fb7c9), 0, 7.6, -8.8);
   const shelfMat = lam(room.shelf);
@@ -290,7 +291,7 @@ export function openScavengeScene(root: HTMLElement, o: ScavengeSceneOptions): (
     tapped = true;
     const c = crates[i];
     c.open = performance.now();
-    (c.body.material as THREE.MeshLambertMaterial).emissive.setHex(0);
+    (c.body.material as THREE.MeshStandardMaterial).emissive.setHex(0);
     const res = o.open(i);
     setMeter(res.noise);
     if (res.ambush) {
@@ -341,7 +342,7 @@ export function openScavengeScene(root: HTMLElement, o: ScavengeSceneOptions): (
       if (c.open < 0) {
         // Unopened crates pulse gently so a kid knows what to tap.
         const k = 0.5 + 0.5 * Math.sin(t * 4 + c.g.position.x);
-        (c.body.material as THREE.MeshLambertMaterial).emissive.setRGB(0.25 * k, 0.15 * k, 0);
+        (c.body.material as THREE.MeshStandardMaterial).emissive.setRGB(0.25 * k, 0.15 * k, 0);
       } else {
         const a = Math.min(1, (now - c.open) / 250);
         c.lid.parent!.rotation.x = -2.5 * a;

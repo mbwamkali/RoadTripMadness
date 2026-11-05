@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { lit } from './materials';
 import type { Path } from '../geo/geo';
 import { LANDMARK_TITLES, type Landmark } from '../game/landmarks';
 import { hashString, makeRng, range } from '../game/rng';
@@ -11,8 +12,8 @@ import { textSprite, to3 } from './common';
 
 const ROAD_HALF = 4.5;
 
-function mat(color: number, extra: THREE.MeshLambertMaterialParameters = {}): THREE.MeshLambertMaterial {
-  const m = new THREE.MeshLambertMaterial({ color, ...extra });
+function mat(color: number, extra: THREE.MeshStandardMaterialParameters = {}): THREE.MeshStandardMaterial {
+  const m = lit({ color, ...extra });
   m.userData.chunkOwned = true;
   return m;
 }
