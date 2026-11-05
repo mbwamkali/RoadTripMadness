@@ -36,14 +36,13 @@ for (const size of sizes) {
     else if (shot === 'horde') await page.evaluate(() => window.rtm.fight('zombie', true));
     else if (shot === 'cats') await page.evaluate(() => window.rtm.fight('catship', false));
     else {
-      await page.evaluate((b) => { window.rtm.drive.paused = true; window.rtm.bossIntro(b); }, shot);
-      await page.waitForTimeout(400);
-      await page.getByText('Bring it on').click();
+      await page.evaluate((b) => window.rtm.boss(b), shot);
     }
     // Headless rendering is slow: step the fight to a set time, then let a few frames draw.
     const want = Number(process.env.FIGHT_T || 10);
+    const settle = Number(process.env.SETTLE_MS || 1500);
     await page.evaluate((t) => { const f = window.rtm.combat; while (f && f.combat.time < t && !f.done) f.update(1 / 30); }, want);
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(settle);
     console.log(shot, await page.evaluate(() => { const c = window.rtm.combat?.combat; return c ? JSON.stringify({ t: +c.time.toFixed(1), q: c.queue.length, e: c.enemies.slice(0, 5).map((e) => [e.type, +e.x.toFixed(1), +e.z.toFixed(1)]) }) : 'no fight'; }));
     await page.screenshot({ path: `${OUT}/${size}${kid ? '-kid' : ''}-${shot}.png` });
     await page.close();

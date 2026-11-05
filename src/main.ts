@@ -637,7 +637,8 @@ function startTripNow(s: GameState): void {
     onLandmark: (l) => showLandmarkToast(l),
     onBiome: (icon, name) => showToast(icon, 'Now entering', name),
     onRoadEvent: () => showRoadEvent(rollEvent(s)),
-    onBoss: (boss) => showBossIntro(boss),
+    // Bosses arrive right on the road (a name banner and the narrator); the old intro card stays for the fight view.
+    onBoss: (boss) => (roadFights ? startCombat(false, undefined, undefined, boss) : showBossIntro(boss)),
     onTick: () => hudTick?.(),
     onRam: (kind, cost) => {
       const what = { debris: 'You plough through the junk', zombie: 'Splat! You run down a zombie', wreck: 'You shove a wreck aside', roadblock: 'You smash through the roadblock' }[kind];
@@ -1801,8 +1802,19 @@ function fightControls(c: CombatState): { banner: HTMLElement; pad: HTMLElement;
   const s = state!;
   narrator.say(c.title);
   const hint = kidMode.on ? 'Tap the bad guys!' : c.boss ? 'Tap the boss to shoot. Swipe to change lanes out of the red strip!' : 'Tap enemies to shoot. Swipe sideways to dodge.';
-  const banner = h('div', { class: `fight-banner ${c.boss ? 'boss' : ''}` }, c.title, h('small', {}, hint));
-  setTimeout(() => banner.classList.add('gone'), 4000);
+  // A boss arrives with its picture and name, read out, so pre-readers know who it is.
+  if (c.boss) {
+    narrator.say(BOSS_INFO[c.boss].intro);
+    if (c.boss === 'mothership' && s.karenBeaten) narrator.say(KAREN_STORY.queen);
+  }
+  const banner = h(
+    'div',
+    { class: `fight-banner ${c.boss ? 'boss' : ''}` },
+    c.boss && h('span', { class: 'boss-icon' }, BOSS_INFO[c.boss].icon),
+    c.boss ? ENEMY_STATS[c.boss].name : c.title,
+    h('small', {}, hint),
+  );
+  setTimeout(() => banner.classList.add('gone'), c.boss ? 6000 : 4000);
   const weapons: WeaponKind[] = ['bullets', 'shells', 'catnip'];
   const wbtns = weapons.map((w) => h('button', { class: 'btn weapon', onclick: () => ((c.weapon = w), sync()) }, h('b', {}, WEAPONS[w].name), h('span', {}, '')));
   const lane = (dir: -1 | 1, label: string) => {
@@ -2203,6 +2215,10 @@ registerServiceWorker(() => {
   end(won = true) {
     state!.status = won ? 'won' : 'lost';
     showEnd();
+  },
+  /** Starts a boss fight on the spot (on the road, as when you reach the boss). */
+  boss(boss: BossKind) {
+    startCombat(false, undefined, undefined, boss);
   },
   /** Starts a fight on the spot; `horde` forces (true) or blocks (false) a zombie horde. */
   fight(theme?: EnemyType, horde?: boolean) {

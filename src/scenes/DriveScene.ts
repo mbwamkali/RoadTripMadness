@@ -194,6 +194,9 @@ export interface RoadFight {
   boss: boolean;
 }
 
+/** A boss fight never rolls you over the finish: the car stops this far short of it. */
+const BOSS_HOLD = 40;
+
 /** How much a fight's nitro boost speeds the car up. */
 export const FIGHT_BOOST_SPEED = 1.6;
 
@@ -831,6 +834,14 @@ export class DriveScene implements GameScene {
     this.speed = speed;
     this.announceAnimals();
     let step = speed * dt;
+    // A boss still fighting at the end of the trip: the car pulls up short of the finish and waits.
+    if (this.fight?.boss) {
+      const room = Math.max(0, this.path.length - BOSS_HOLD - s.distance);
+      if (step >= room) {
+        step = room;
+        this.fight.setPace(0);
+      }
+    }
     if (this.pendingTurn && s.distance + step >= this.pendingTurn.at) {
       step = Math.max(0, this.pendingTurn.at - s.distance);
     }

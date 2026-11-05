@@ -2452,3 +2452,13 @@ body.kid .howto-tip b {
     flex: 1;
   }
 }
+.fight-banner .boss-icon {
+  display: block;
+  font-size: 56px;
+  line-height: 1.1;
+}
+@media (max-height: 500px) {
+  .fight-banner .boss-icon {
+    font-size: 34px;
+  }
+}
