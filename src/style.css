@@ -2326,3 +2326,55 @@ body.kid .howto-tip b {
 .btn.big-tap {
   min-height: 64px;
 }
+
+/* About and credits (title menu). */
+.screen.about {
+  background: var(--bg);
+}
+.about-section h3 {
+  margin: 10px 0 6px;
+}
+.about-section p {
+  margin: 4px 0 8px;
+  line-height: 1.4;
+}
+.about-section a {
+  color: var(--accent);
+}
+.about-credits {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.about-credits li {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  background: var(--panel);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 10px 12px;
+}
+.about-credits li > span:last-child {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.about-credits .muted,
+.about-links {
+  font-size: 14px;
+}
+.about-icon {
+  font-size: 28px;
+  line-height: 1;
+  flex: 0 0 36px;
+  text-align: center;
+}
+.about .build-line {
+  align-items: flex-start;
+}

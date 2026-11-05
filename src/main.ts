@@ -12,6 +12,7 @@ import { loadRide, RIDE_IDS, RIDES, rideOf, saveRide, type Ride } from './game/r
 import { addStateLines, buildRouteData, pathFromRoute, realKmAt, type RawRoute, type RouteData } from './geo/route';
 import { latLngAt, loadStateMap } from './geo/states';
 import { COVERAGE_NOTE, inPlayArea } from './geo/coverage';
+import { showAbout } from './ui/about';
 import { overpassStreets } from './geo/streets';
 import { fetchLiveConditions, liveEnabled, setLiveEnabled, type LiveConditions } from './geo/liveWeather';
 import { isOffline, planTrip, prefetchStreets, searchAnywhere, type PlanStep, type StepId } from './offline/planner';
@@ -179,13 +180,13 @@ function showTitle(): void {
       voiceButton(),
       installButton(),
       isOffline() && h('div', { class: 'offline-badge' }, 'Offline: classic, saved and atlas trips still work'),
-      buildLine(),
+      h('button', { class: 'btn ghost', onclick: () => showAbout(showTitle, buildLine) }, 'ℹ️ About and credits'),
       h(
         'p',
         { class: 'fine' },
         'Maps © ',
         h('a', { href: 'https://www.openstreetmap.org/copyright', target: '_blank', rel: 'noopener' }, 'OpenStreetMap'),
-        ' contributors (ODbL). Offline atlas from Natural Earth.',
+        ' contributors (ODbL). More in About.',
       ),
     ),
   );

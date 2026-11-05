@@ -126,6 +126,7 @@ const STEPS = [
   ['voice', async (p) => p.getByText('Narrator voice', { exact: false }).first().click()],
   ['howto', async (p) => (await p.goto(`http://localhost:${PORT}/`), p.getByText('How to play').click())],
   ['scores', async (p) => (await p.goto(`http://localhost:${PORT}/`), p.getByText('High scores').click())],
+  ['about', async (p) => (await p.goto(`http://localhost:${PORT}/`), p.getByText('About and credits').click())],
   ['classics', async (p) => (await p.goto(`http://localhost:${PORT}/`), p.getByText('Classic road trips').click())],
   ['setup', async (p) => (await p.goto(`http://localhost:${PORT}/`), p.getByText('Plan a new trip').click())],
   ['preview', async (p) => (await p.goto(`http://localhost:${PORT}/`), p.getByText('Quick demo trip').click())],
