@@ -1,0 +1,84 @@
+/* Prototype HUD for town-proto.html. Same palette and buttons as the game. */
+.p-top {
+  position: absolute;
+  top: max(10px, env(safe-area-inset-top));
+  left: 10px;
+  right: 10px;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  pointer-events: none;
+}
+.p-meters,
+.p-chip {
+  background: rgba(30, 22, 16, 0.82);
+  border-radius: 14px;
+  padding: 8px 10px;
+  color: #fff;
+}
+.p-meters { min-width: 150px; display: grid; gap: 4px; font-size: 14px; }
+.p-chip { text-align: right; align-self: flex-start; }
+.p-chip b { display: block; font-size: 18px; }
+.p-chip small { opacity: 0.8; }
+.p-bar { display: flex; align-items: center; gap: 6px; }
+.p-bar .track { flex: 1; height: 9px; background: rgba(255, 255, 255, 0.15); border-radius: 5px; overflow: hidden; }
+.p-bar .track span { display: block; height: 100%; background: #ffc94a; }
+.p-bar .track.hp span { background: #4fd17a; }
+.p-bar .track.me span { background: #ff5a6a; }
+.p-inv { font-size: 13px; opacity: 0.9; white-space: nowrap; }
+.p-say {
+  position: absolute;
+  left: 50%;
+  top: 34%;
+  transform: translateX(-50%) scale(0.9);
+  background: rgba(30, 22, 16, 0.85);
+  color: #fff;
+  padding: 10px 16px;
+  border-radius: 16px;
+  font-size: 18px;
+  font-weight: 700;
+  max-width: 80%;
+  text-align: center;
+  opacity: 0;
+  transition: opacity 0.2s, transform 0.2s;
+  pointer-events: none !important;
+}
+.p-say.on { opacity: 1; transform: translateX(-50%) scale(1); }
+.p-bottom {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: max(12px, env(safe-area-inset-bottom));
+  display: grid;
+  gap: 8px;
+  pointer-events: none;
+}
+.p-bottom > * { pointer-events: auto; }
+.p-row { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; align-items: center; }
+.p-row .btn { min-height: 56px; font-size: 18px; padding: 8px 18px; }
+.p-row .btn.ghost { background: rgba(30, 22, 16, 0.75); }
+.p-hint {
+  width: 100%;
+  text-align: center;
+  color: #fff;
+  font-weight: 700;
+  text-shadow: 0 1px 3px #000, 0 0 8px #000;
+  font-size: 17px;
+}
+.p-noise { display: flex; align-items: center; gap: 8px; background: rgba(30, 22, 16, 0.8); border-radius: 14px; padding: 6px 10px; }
+.p-noise .track { flex: 1; height: 12px; background: rgba(255, 255, 255, 0.15); border-radius: 6px; overflow: hidden; }
+.p-noise .fill { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #4fd17a, #ffc94a, #ff5a3a); transition: width 0.3s; }
+.p-noise[hidden] { display: none; }
+.btn.pulse { animation: p-pulse 0.8s ease-in-out infinite alternate; }
+@keyframes p-pulse { to { transform: scale(1.07); box-shadow: 0 0 18px #ffc94a; } }
+body.kid .p-row .btn { min-height: 76px; min-width: 96px; font-size: 26px; }
+body.kid .p-row .btn .big-icon { font-size: 36px; }
+body.kid .p-hint { font-size: 22px; }
+@media (orientation: landscape) and (max-height: 500px) {
+  .p-meters { min-width: 130px; font-size: 12px; padding: 6px 8px; }
+  .p-row .btn { min-height: 48px; }
+  body.kid .p-row .btn { min-height: 64px; }
+  .p-say { top: 22%; }
+}
+#view { width: 100%; height: 100%; }
+.p-row .btn.ghost { color: #fff; }
