@@ -2462,3 +2462,9 @@ body.kid .howto-tip b {
     font-size: 34px;
   }
 }
+@media (orientation: landscape) and (max-height: 500px) {
+  /* Kid mode's big Shoot button sits above the dodge arrows in a fight, not on them. */
+  body.kid .hud.fighting .shoot-row .btn.shoot {
+    bottom: 72px;
+  }
+}

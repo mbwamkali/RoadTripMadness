@@ -20,7 +20,8 @@ describe('boss fights', () => {
       if (r.boss) bosses.push(`${r.boss}@${Math.round(s.distance)}`);
     }
     expect(bosses).toHaveLength(2);
-    const [half, end] = bossPoints(path.length);
+    // The halfway boss slides clear of turn-offs (fights play on the road).
+    const [half, end] = bossPoints(path.length, s.stops);
     expect(bosses[1]).toBe(`mothership@${Math.round(end + 0.001)}`);
     expect(Number(bosses[0].split('@')[1])).toBeCloseTo(half, -1);
     expect(s.status).toBe('won');

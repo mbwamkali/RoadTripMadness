@@ -35,7 +35,7 @@ src/
     rng.ts             Seeded random numbers, so runs are reproducible
   scenes/
     DriveScene.ts      On-rails driving view; streams road and scenery in chunks
-    CombatScene.ts     Action view; enemy models, tap-to-target, effects
+    CombatScene.ts     Fight layer: enemy models, tap-to-target, effects (runs inside DriveScene on the road; own view only for town ambushes)
     common.ts          Car model, road texture, signs, helpers
     landmarkModels.ts  3D models for landmarks
     atmosphere.ts      Sky, fog, sun, headlights, stars, weather particles
