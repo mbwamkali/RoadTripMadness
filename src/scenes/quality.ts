@@ -80,11 +80,21 @@ export function resolveQuality(c: QualityChoice = loadQualityChoice()): QualityL
   return c === 'auto' ? autoQuality(deviceHints()) : c;
 }
 
+/** A phone or tablet: High there skips the corner shadows (ambient occlusion) and stays at 1.5x sharpness. */
+export const onPhone = !!deviceHints().mobile;
+
+/**
+ * High on a phone, measured on a Pixel 6 Pro (2026-11-06): full-sharpness High with
+ * ambient occlusion ran at 10 fps; Medium held 60. This keeps High's glow, colour
+ * grade, bigger shadows and longer view, but not the two costliest parts.
+ */
+const PHONE_HIGH: QualityProfile = { ...QUALITY.high, pixelRatio: 1.5 };
+
 /** The quality in use right now (scenes read this when they build). */
 export const quality = {
   level: resolveQuality() as QualityLevel,
   get profile(): QualityProfile {
-    return QUALITY[this.level];
+    return this.level === 'high' && onPhone ? PHONE_HIGH : QUALITY[this.level];
   },
 };
 

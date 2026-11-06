@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { onPhone } from './quality';
 import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
@@ -40,20 +41,23 @@ const GRADE = {
 export class Bloom {
   private composer: EffectComposer;
   private pass: RenderPass;
-  private ao: GTAOPass;
+  private ao: GTAOPass | null = null;
   private bloom: UnrealBloomPass;
 
   constructor(renderer: THREE.WebGLRenderer) {
     // Half-float with multisampling keeps edges smooth and lets bright spots glow.
-    const rt = new THREE.WebGLRenderTarget(2, 2, { type: THREE.HalfFloatType, samples: 4 });
+    // Phones: fewer edge samples and no ambient occlusion (see PHONE_HIGH in quality.ts).
+    const rt = new THREE.WebGLRenderTarget(2, 2, { type: THREE.HalfFloatType, samples: onPhone ? 2 : 4 });
     this.composer = new EffectComposer(renderer, rt);
     this.pass = new RenderPass(new THREE.Scene(), new THREE.PerspectiveCamera());
     this.composer.addPass(this.pass);
     this.composer.addPass(new ShaderPass(CLEAN));
-    this.ao = new GTAOPass(new THREE.Scene(), new THREE.PerspectiveCamera(), 2, 2);
-    this.ao.blendIntensity = 0.85;
-    this.ao.updateGtaoMaterial({ radius: 1.2, distanceExponent: 1.6, thickness: 1.5, scale: 1.1, samples: 12 });
-    this.composer.addPass(this.ao);
+    if (!onPhone) {
+      this.ao = new GTAOPass(new THREE.Scene(), new THREE.PerspectiveCamera(), 2, 2);
+      this.ao.blendIntensity = 0.85;
+      this.ao.updateGtaoMaterial({ radius: 1.2, distanceExponent: 1.6, thickness: 1.5, scale: 1.1, samples: 12 });
+      this.composer.addPass(this.ao);
+    }
     // Bloom is worked out at half size; it's a blur, so nobody can tell and it's much cheaper.
     this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.35, 0.55, 0.88);
     this.composer.addPass(this.bloom);
@@ -70,7 +74,7 @@ export class Bloom {
   render(scene: THREE.Scene, camera: THREE.Camera): void {
     this.pass.scene = scene;
     this.pass.camera = camera;
-    if (this.ao.scene !== scene || this.ao.camera !== camera) {
+    if (this.ao && (this.ao.scene !== scene || this.ao.camera !== camera)) {
       this.ao.scene = scene;
       this.ao.camera = camera;
       // The AO pass keeps its own copies of the camera's matrices; refresh them for the new camera.
@@ -80,7 +84,7 @@ export class Bloom {
   }
 
   dispose(): void {
-    this.ao.dispose();
+    this.ao?.dispose();
     this.bloom.dispose();
     this.composer.dispose();
   }
