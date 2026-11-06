@@ -4,7 +4,7 @@ import { lit } from './materials';
 import type { Path, Vec2 } from '../geo/geo';
 import { CRUISE_SPEED, postedLimit, realKmAt } from '../geo/route';
 import { advance, damage, fuelPerUnit, upcomingStop, type GameState } from '../game/state';
-import { brakeRange, crashScale, speedFuelFactor } from '../game/driving';
+import { BOOST_MPH, brakeRange, CRUISE_MPH, crashScale, FREE_OVER, SPEED_STEP, speedCap, speedFuelFactor, targetMph, topSpeed } from '../game/driving';
 import { structureAt, type Structure } from '../game/structures';
 import { buildStructurePart } from './structures';
 import { coolRage, HOSTILE_RANGE, hostileShot, rageOf, rollHostile, shootVehicle } from '../game/rage';
@@ -193,7 +193,8 @@ export interface RoadFight {
 const BOSS_HOLD = 40;
 
 /** How much a fight's nitro boost speeds the car up. */
-export const FIGHT_BOOST_SPEED = 1.6;
+/** Game units per second for each mph (65 mph = cruise speed). */
+export const UNITS_PER_MPH = CRUISE_SPEED / CRUISE_MPH;
 
 export class DriveScene implements GameScene {
   scene = new THREE.Scene();
@@ -225,13 +226,15 @@ export class DriveScene implements GameScene {
   private asphaltMat: THREE.MeshStandardMaterial;
   private stripeMats: Record<'white' | 'whiteDash' | 'yellow' | 'yellowDash', THREE.MeshStandardMaterial>;
   private segments: RoadSegment[];
-  /** Share of cruise speed for the road type (eases between types). */
+  /** Knock-back after hitting things: 1 = full speed, eases back to 1. */
   private roadSpeed = 1;
   /** The player's lane (see game/traffic.ts for the numbering). */
   private playerLane = 0;
   private laneClass: RoadClass = 'local';
-  /** Player's speed choice: 0.6 (slow) to 1.3 (fast). */
-  throttle = 1;
+  /** Player's speed choice: mph over (or under, down to a stop) the speed limit, in 5 mph steps. */
+  over = 0;
+  /** The speed the car has picked up to, in mph (eases toward the target). */
+  private paceMph = 0;
   private readonly fuelRate: number;
   private traffic: Traffic;
   private vehicleMeshes = new Map<number, THREE.Group>();
@@ -327,6 +330,7 @@ export class DriveScene implements GameScene {
     const zones = urbanZones(state.route, path.length);
     this.traffic = new Traffic(this.segments, path.length, CRUISE_SPEED, state.seed ^ Math.floor(state.distance), {
       urbanAt: (d) => (zones.some((z) => d >= z.from && d <= z.to) ? 1 : 0),
+      paceAt: (d) => this.speedLimit(d) * UNITS_PER_MPH,
     });
     this.obstacles = new Obstacles(this.segments, path.length, state.seed ^ Math.floor(state.distance), state.distance, DIFFICULTIES[state.difficulty].gap);
     // Animals cross more often in Texas and the desert; never in towns or on bridges and in tunnels.
@@ -345,7 +349,7 @@ export class DriveScene implements GameScene {
         state.stops.some((st) => Math.abs(st.at - d) < 250) ||
         zones.some((z) => d >= z.from && d <= z.to),
     });
-    this.roadSpeed = SPEED[classAt(this.segments, state.distance)].factor;
+    this.paceMph = this.speedLimit(state.distance);
     this.shoulderMat = lit({ color: groundColorAt(this.biomes, state.distance, 'shoulder'), polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
     // Photo grain on Medium/High (the colours still come from the climate).
     this.shoulderMat.map = detailTexture('gravel', 1, 1 / 6);
@@ -581,7 +585,7 @@ export class DriveScene implements GameScene {
   private crashInto(what: SolidKind, solid?: Solid): void {
     const s = this.state;
     const big = SOLIDS[what].big;
-    const cost = crashCost(what, { dmg: DIFFICULTIES[s.difficulty].dmg, speed: crashScale(this.throttle), ram: rideOf(s).ram, kid: kidMode.on });
+    const cost = crashCost(what, { dmg: DIFFICULTIES[s.difficulty].dmg, speed: crashScale(this.mph), ram: rideOf(s).ram, kid: kidMode.on });
     if (cost) damage(s, cost);
     if (s.status === 'lost') s.lostReason = offRoadWreckReason(this.urbanAt(s.distance) > 0.4);
     if (solid) this.knockOver(solid);
@@ -646,9 +650,32 @@ export class DriveScene implements GameScene {
     }
   }
 
-  /** Speed up (1) or ease off (-1). */
+  /** Speed up (1) or ease off (-1) by 5 mph, from a full stop up to the vehicle's top speed. */
   pedal(dir: -1 | 1): void {
-    this.throttle = Math.max(0.6, Math.min(1.3, Math.round((this.throttle + dir * 0.15) * 100) / 100));
+    const limit = this.speedLimit();
+    const want = targetMph(limit, this.over, this.cap(limit)) + dir * SPEED_STEP;
+    this.over = Math.max(0, Math.min(this.cap(limit), want)) - limit;
+  }
+
+  /** The fastest the player may go here (top speed; the limit on autopilot; limit + 10 in kid mode). */
+  private cap(limit: number): number {
+    return speedCap(limit, topSpeed(this.state), { kid: kidMode.on, autopilot: this.autopilot });
+  }
+
+  /** The speed the car is aiming for right now, in mph. */
+  get targetMph(): number {
+    const limit = this.speedLimit();
+    return targetMph(limit, this.over, this.cap(limit));
+  }
+
+  /** How fast the car is really going, in mph (after braking, bumps and boosts). */
+  get mph(): number {
+    return this.speed / UNITS_PER_MPH;
+  }
+
+  /** Going more than 5 mph over the limit (costs fuel, crashes hurt more). */
+  get speeding(): boolean {
+    return this.mph > this.speedLimit() + FREE_OVER + 0.5;
   }
 
   /** In an oncoming lane (for the HUD warning). */
@@ -826,29 +853,41 @@ export class DriveScene implements GameScene {
 
   private drive(dt: number): void {
     const s = this.state;
-    // Faster on interstates, slower through towns; eases between road types.
-    const want = SPEED[classAt(this.segments, s.distance)].factor;
-    this.roadSpeed += (want - this.roadSpeed) * Math.min(1, dt * 0.8);
+    // Recover from knocks; pick up or lose speed smoothly toward the limit plus your choice.
+    this.roadSpeed += (1 - this.roadSpeed) * Math.min(1, dt * 0.8);
     this.followRoadChanges();
     this.crashCooldown -= dt;
     if (this.autopilot) {
       // Autopilot drives at the limit on its own side of the road (and back onto it).
       this.off = null;
-      this.throttle = Math.min(this.throttle, 1);
+      if (this.over > 0 || this.speedLimit() + this.over < SPEED_STEP) this.over = 0;
       if (oncoming(this.playerLane)) this.playerLane = clampLane(this.laneClass, 0);
     }
-    let speed = CRUISE_SPEED * rideOf(s).speed * this.roadSpeed * this.throttle;
+    const limit = this.speedLimit();
+    const top = topSpeed(s);
+    const want = targetMph(limit, this.over, this.cap(limit));
+    // About 0 to 60 in four seconds; braking is quicker.
+    this.paceMph = want > this.paceMph ? Math.min(want, this.paceMph + 15 * dt) : Math.max(want, this.paceMph - 30 * dt);
+    let speed = this.paceMph * UNITS_PER_MPH * this.roadSpeed;
     if (this.promptStop) speed = Math.min(speed, CRUISE_SPEED * 0.7);
     // Off the road: slower on the shoulder, slower still on the sidewalk, and slowest on grass and dirt.
     if (this.off) speed *= this.offSurface() === 'paved' ? OFFROAD_SPEED.paved : this.offSurface() === 'sidewalk' ? OFFROAD_SPEED.sidewalk : OFFROAD_SPEED.rough;
     // Brake behind a slower vehicle in your lane.
     if (!oncoming(this.playerLane)) {
       // Speeding leaves less time to react: the car notices slower traffic later.
-      const v = this.traffic.ahead(s.distance, this.playerLane, brakeRange(this.throttle));
-      if (v) speed = Math.min(speed, v.speed * (1 - Math.max(0, 8 - (v.d - s.distance)) * 0.08));
+      const v = this.traffic.ahead(s.distance, this.playerLane, brakeRange(this.paceMph, limit));
+      if (v) {
+        const behind = v.speed * (1 - Math.max(0, 8 - (v.d - s.distance)) * 0.08);
+        if (behind < speed) {
+          speed = behind;
+          // Pull away smoothly once the lane clears.
+          this.paceMph = Math.min(this.paceMph, Math.max(0, behind) / UNITS_PER_MPH);
+        }
+      }
     }
     if (this.autopilot) speed = this.autopilotAnimals(speed);
-    if (this.fight?.boosting()) speed *= FIGHT_BOOST_SPEED;
+    // Boost: a burst of extra speed, never past the vehicle's top speed.
+    if (this.fight?.boosting()) speed = Math.max(speed, Math.min(speed + BOOST_MPH * UNITS_PER_MPH, top * UNITS_PER_MPH));
     speed = Math.max(0, speed);
     this.fight?.setPace(speed / CRUISE_SPEED);
     this.speed = speed;
@@ -865,7 +904,7 @@ export class DriveScene implements GameScene {
     if (this.pendingTurn && s.distance + step >= this.pendingTurn.at) {
       step = Math.max(0, this.pendingTurn.at - s.distance);
     }
-    const res = advance(s, this.path, step, this.fuelRate * speedFuelFactor(this.throttle));
+    const res = advance(s, this.path, step, this.fuelRate * speedFuelFactor(this.mph, limit));
     this.spinWheels(step);
     coolRage(s, step);
     this.roadRage(dt, speed);
@@ -1002,7 +1041,7 @@ export class DriveScene implements GameScene {
     const headOn = oncoming(v.lane);
     const base = v.kind === 'truck' ? 18 : 10;
     // The ram plate softens it.
-    const amount = Math.round(base * (headOn ? 1.6 : 1) * Math.max(0.4, 1 - this.state.upgrades.ram * 0.2) * rideOf(this.state).ram * crashScale(this.throttle));
+    const amount = Math.round(base * (headOn ? 1.6 : 1) * Math.max(0.4, 1 - this.state.upgrades.ram * 0.2) * rideOf(this.state).ram * crashScale(this.mph));
     damage(this.state, amount);
     sound.carHit();
     this.traffic.remove(v);

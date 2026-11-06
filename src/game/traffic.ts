@@ -77,6 +77,8 @@ export interface TrafficOptions {
   density?: number;
   /** Extra traffic near the start, end and cities: 1 inside a city zone, 0 in the country. */
   urbanAt?: (d: number) => number;
+  /** Speed (units per second) of a car driving the limit here; defaults to cruise speed by road type. */
+  paceAt?: (d: number) => number;
 }
 
 export class Traffic {
@@ -113,7 +115,7 @@ export class Traffic {
     const lane = dir === 1 ? i : -i - 1;
     const r = this.rng();
     const kind: VehicleKind = r < 0.5 ? 'car' : r < 0.55 ? 'motorcycle' : r < 0.72 ? 'pickup' : r < 0.84 ? 'van' : 'truck';
-    const road = this.baseSpeed * SPEED[cls].factor;
+    const road = this.opts.paceAt?.(d) ?? this.baseSpeed * SPEED[cls].factor;
     // Your direction drives a bit slower than you so you pass them; trucks are slowest.
     const cruise = dir === 1 ? road * range(this.rng, 0.55, 0.8) * (kind === 'truck' ? 0.85 : 1) : road * range(this.rng, 0.8, 1.05);
     // Don't drop one on top of another.

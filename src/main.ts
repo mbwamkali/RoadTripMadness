@@ -152,7 +152,7 @@ const perf = new PerfMeter(renderer, () => {
     weather: weatherAt(s),
     biome: drive.biomeId,
     road: drive.roadClass,
-    mph: Math.round(drive.speedLimit() * drive.throttle),
+    mph: Math.round(drive.mph),
     limit: drive.speedLimit(),
     ride: s.ride ?? 'car',
     kid: kidMode.on,
@@ -531,7 +531,7 @@ function previewRoute(route: RouteData, note?: string, back: () => void = showSe
   const rideBlurb = h('p', { class: 'ride-blurb muted' }, '');
   const syncRide = () => {
     rideBtns.forEach((b, i) => b.classList.toggle('selected', RIDE_IDS[i] === ride));
-    rideBlurb.textContent = RIDES[ride].blurb;
+    rideBlurb.textContent = `${RIDES[ride].blurb} Top speed ${RIDES[ride].topMph} mph.`;
   };
   syncRide();
   const p = pathFromRoute(route);
@@ -1084,19 +1084,18 @@ function showDriveHud(fight?: CombatState): void {
     if (drive) {
       const limit = drive.speedLimit();
       if (fight) {
-        dashSpeed.textContent = String(Math.round(limit * drive.throttle * (fight.boostTime > 0 ? 1.6 : 1)));
-        dashMpg.textContent = String(Math.round(mpg(s, drive.throttle)));
+        dashSpeed.textContent = String(Math.round(drive.mph));
+        dashMpg.textContent = String(Math.round(mpg(s, drive.mph, limit)));
         return;
       }
-      const mph = Math.round(limit * drive.throttle);
       speedText.textContent = `Limit ${limit}`;
-      dashSpeed.textContent = String(mph);
-      dash.classList.toggle('fast', drive.throttle > 1);
-      if (drive.throttle > 1 && !warnedSpeeding) {
+      dashSpeed.textContent = String(Math.round(drive.mph));
+      dash.classList.toggle('fast', drive.speeding);
+      if (drive.speeding && !warnedSpeeding) {
         warnedSpeeding = true;
         showToast('⛽', 'Speeding burns gas', 'Faster empties the tank sooner and gives you less time to react');
       }
-      dashMpg.textContent = String(Math.round(mpg(s, drive.throttle)));
+      dashMpg.textContent = String(Math.round(mpg(s, drive.mph, limit)));
       controls.classList.toggle('wrong-side', drive.wrongSide);
       // The horn steps aside for a turn prompt too, so it never catches a tap meant for the exit.
       hornRow.classList.toggle('show', !!drive.animalAhead && !promptEl?.classList.contains('show'));
