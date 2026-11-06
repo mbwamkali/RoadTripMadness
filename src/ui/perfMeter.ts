@@ -1,5 +1,5 @@
 import type * as THREE from 'three';
-import { quality } from '../scenes/quality';
+import { loadAutoCap, onPhone, quality } from '../scenes/quality';
 import { BUILD } from '../build';
 import { devClock } from '../game/time';
 import { loadStats } from '../game/loadStats';
@@ -27,7 +27,7 @@ export interface GameInfo {
  *   P   a avg frame ms, w slowest, s fps over the last 30 s (min-max, first 10 s > last 10 s:
  *       a falling trend means the phone is heating up), d draws, t triangles (k), g models,
  *       x textures, m JS memory MB (Chrome only)
- *   D   phone model, graphics chip, system, browser, cores, memory GB, quality choice,
+ *   D   phone model, graphics chip, system, browser, cores, memory GB, quality choice (auto>m = Auto stepped down to Medium), ph or pc (counted as phone or computer),
  *       os/v exact versions, screen WxH, P/L orientation, r pixel ratio, battery % (+ charging), on/off line
  *   G   screen (road, roadfight, fight, town, bldg, menu), h hour, weather (* = set in the test panel),
  *       biome, road type, mph/limit, ride, kid mode, km into the trip
@@ -135,7 +135,7 @@ export class PerfMeter {
     this.el.textContent = [
       `${fps.toFixed(0)} fps · ${mode} · build ${BUILD.number}`,
       `P a${(this.sum / this.frames).toFixed(1)} w${this.worst.toFixed(0)} s${trend} d${i.render.calls} t${Math.round(i.render.triangles / 1000)} g${i.memory.geometries} x${i.memory.textures} m${mem ? Math.round(mem.usedJSHeapSize / 1048576) : '-'}`,
-      `D ${this.device} ${innerWidth}x${innerHeight}${innerWidth > innerHeight ? 'L' : 'P'} r${this.renderer.getPixelRatio().toFixed(1)}/${devicePixelRatio.toFixed(1)}${this.battery} ${navigator.onLine ? 'on' : 'off'}`,
+      `D ${this.device} ${qualityCode()} ${innerWidth}x${innerHeight}${innerWidth > innerHeight ? 'L' : 'P'} r${this.renderer.getPixelRatio().toFixed(1)}/${devicePixelRatio.toFixed(1)}${this.battery} ${navigator.onLine ? 'on' : 'off'}`,
       `G ${gameLine}`,
       `L t${Math.round(loadStats.tripWait)} hd${at(loadStats.hd)} b${at(loadStats.buildings)} c${BUILD.commit}`,
     ].join('\n');
@@ -148,7 +148,7 @@ export class PerfMeter {
 
 /**
  * Line 3 of the readout: the phone's graphics chip, system and browser,
- * CPU cores, memory and quality choice, e.g. "Pixel8 Mali-G715 And14 Chr131 8c 8g auto os14.0.0 v131.0.6778"
+ * CPU cores and memory, e.g. "Pixel8 Mali-G715 And14 Chr131 8c 8g os14.0.0 v131.0.6778" (then the graphics choice, see qualityCode)
  * (the phone model and exact versions arrive a moment later, where the browser shares them).
  */
 function deviceCode(renderer: THREE.WebGLRenderer): string {
@@ -167,11 +167,20 @@ function deviceCode(renderer: THREE.WebGLRenderer): string {
   const os = /Android (\d+)/.exec(ua)?.[1] ? `And${/Android (\d+)/.exec(ua)![1]}` : /iPhone|iPad/.test(ua) ? 'iOS' : /Windows/.test(ua) ? 'Win' : /Mac/.test(ua) ? 'Mac' : /Linux/.test(ua) ? 'Lin' : '?';
   const br = /Edg\/(\d+)/.exec(ua) ? `Edg${/Edg\/(\d+)/.exec(ua)![1]}` : /Chrome\/(\d+)/.exec(ua) ? `Chr${/Chrome\/(\d+)/.exec(ua)![1]}` : /Firefox\/(\d+)/.exec(ua) ? `Ffx${/Firefox\/(\d+)/.exec(ua)![1]}` : /Safari/.test(ua) ? 'Saf' : '?';
   const nav = navigator as Navigator & { deviceMemory?: number };
+  return `${gpu} ${os} ${br} ${nav.hardwareConcurrency ?? '?'}c ${nav.deviceMemory ?? '?'}g`;
+}
+
+/**
+ * Graphics choice, read fresh each refresh: "auto>m" means Auto measured this
+ * device down to Medium; "ph"/"pc" means it was counted as a phone or a computer.
+ */
+function qualityCode(): string {
   let choice = 'auto';
   try {
     choice = localStorage.getItem('rtm-quality') ?? 'auto';
   } catch {
     /* storage blocked */
   }
-  return `${gpu} ${os} ${br} ${nav.hardwareConcurrency ?? '?'}c ${nav.deviceMemory ?? '?'}g ${choice}`;
+  const cap = choice === 'auto' ? loadAutoCap() : null;
+  return `${choice}${cap ? `>${cap[0]}` : ''} ${onPhone ? 'ph' : 'pc'}`;
 }

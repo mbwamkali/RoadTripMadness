@@ -76,7 +76,8 @@ import { loadHdBuildings } from './scenes/hdBuildings';
 import { PerfMeter } from './ui/perfMeter';
 import { loadStats } from './game/loadStats';
 import { mountDevPanel } from './ui/devPanel';
-import { gfx, loadQualityChoice, nextQualityChoice, quality, QUALITY_NAMES, resolveQuality, saveQualityChoice } from './scenes/quality';
+import { devGfx, gfx, loadQualityChoice, nextQualityChoice, quality, QUALITY_NAMES, resolveQuality, saveAutoCap, saveQualityChoice } from './scenes/quality';
+import { AutoTune } from './scenes/autoTune';
 import type { Bloom } from './scenes/bloom';
 
 const canvas = document.getElementById('view') as HTMLCanvasElement;
@@ -162,9 +163,34 @@ mountDevPanel(() => {
   applyQuality();
   resize();
 });
+const autoTune = new AutoTune();
+
+/** Auto graphics: time the first stretch of plain driving and step down if it's slow (autoTune.ts). */
+function tuneQuality(gapMs: number): void {
+  if (autoTune.settled) return;
+  const counting =
+    !!drive && active === drive && !drive.paused && !drive.fightOn && !document.hidden &&
+    state?.status === 'driving' && loadQualityChoice() === 'auto' &&
+    devGfx.post === undefined && devGfx.ratio === undefined &&
+    !document.querySelector('.town3d, .scavenge, .modal');
+  const next = autoTune.frame(gapMs, counting, quality.level);
+  if (!next) return;
+  saveAutoCap(next);
+  quality.level = next;
+  applyQuality();
+  // Shadows, draw distance and scenery are built with the scene, so rebuild it (after this frame).
+  setTimeout(() => {
+    if (state?.status !== 'driving') return;
+    startTrip(state);
+    showToast('⚙️', `Graphics set to ${QUALITY_NAMES[next]}`, 'So the game runs smoother');
+  }, 0);
+}
+
 function frame(now: number): void {
-  const dt = Math.min(0.05, (now - last) / 1000);
+  const gap = now - last;
+  const dt = Math.min(0.05, gap / 1000);
   last = now;
+  tuneQuality(gap);
   perf.begin();
   if (active) {
     active.update(dt);
@@ -668,6 +694,7 @@ function startTrip(s: GameState): void {
 
 function startTripNow(s: GameState): void {
   disposeAll();
+  autoTune.reset();
   state = s;
   path = pathFromRoute(s.route);
   saveGame(s);
@@ -1282,6 +1309,11 @@ function showPauseMenu(): void {
           onclick: (e: Event) => {
             const c = nextQualityChoice(loadQualityChoice());
             saveQualityChoice(c);
+            // Picking Auto again times this device afresh.
+            if (c === 'auto') {
+              saveAutoCap(null);
+              autoTune.settled = false;
+            }
             quality.level = resolveQuality(c);
             applyQuality();
             (e.currentTarget as HTMLElement).textContent = qualityText();
