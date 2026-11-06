@@ -1227,7 +1227,7 @@ ol.scores li.new {
 
 .shoot-row .btn.shoot {
   position: relative;
-  bottom: 60px;
+  bottom: calc(60px + var(--prompt-lift, 0px));
   width: auto;
   height: 48px;
   padding: 0 16px;
@@ -1441,7 +1441,7 @@ ol.scores li.new {
 
 .shoot-row .btn.honk {
   position: relative;
-  bottom: 60px;
+  bottom: calc(60px + var(--prompt-lift, 0px));
   width: auto;
   height: 48px;
   padding: 0 16px;
@@ -1467,7 +1467,7 @@ body.kid .shoot-row .btn.honk {
   height: 76px;
   min-width: 140px;
   font-size: 24px;
-  bottom: 80px;
+  bottom: calc(80px + var(--prompt-lift, 0px));
   border-radius: 38px;
 }
 
@@ -1475,7 +1475,7 @@ body.kid .shoot-row .btn.shoot {
   height: 76px;
   min-width: 140px;
   font-size: 24px;
-  bottom: 80px;
+  bottom: calc(80px + var(--prompt-lift, 0px));
   border-radius: 38px;
 }
 
@@ -1488,9 +1488,10 @@ body.kid .shoot-row .btn.shoot {
   text-align: left;
 }
 
-/* `.hud button` turns taps back on for every HUD button; a hidden shoot button must not take them,
-   or it swallows taps on "Take the exit" underneath it (kid mode). */
-.hud .shoot-row:not(.show) .btn.shoot {
+/* `.hud button` turns taps back on for every HUD button; a hidden shoot or horn button must not take them,
+   or it swallows taps on "Take the exit" or "Turn left" underneath it (kid mode). */
+.hud .shoot-row:not(.show) .btn.shoot,
+.hud .shoot-row:not(.show) .btn.honk {
   pointer-events: none;
   visibility: hidden;
 }

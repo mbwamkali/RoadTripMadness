@@ -504,7 +504,8 @@ export class DriveScene implements GameScene {
 
   /** Change lanes: -1 = left, 1 = right. On two-way roads you can pull into the oncoming lane to pass. */
   steer(dir: -1 | 1): void {
-    if (this.paused || this.stopping || this.turning || this.pendingTurn) return;
+    // Signalling for a turn still lets you change lanes (to dodge things); only the turn itself is automatic.
+    if (this.paused || this.stopping || this.turning) return;
     if (this.fight) {
       this.fight.changeLane(dir);
       sound.click();
@@ -519,8 +520,11 @@ export class DriveScene implements GameScene {
       { divided: isDivided(cls), barrierMedian: medianKind(cls) === 'barrier' && this.section(d).median > 1, atEdge: next === this.playerLane },
       this.off?.step === 2 ? this.bigThingOutside(this.off.side) : null,
     );
-    // Autopilot keeps to the road.
-    if (this.autopilot && !this.off && res.kind !== 'lane') return;
+    // Autopilot keeps to the road, and so does a car signalling for a turn (it turns in from its lane).
+    if ((this.autopilot || this.pendingTurn) && !this.off && res.kind !== 'lane') {
+      if (this.pendingTurn) sound.click();
+      return;
+    }
     switch (res.kind) {
       case 'lane':
         if (next !== this.playerLane) {

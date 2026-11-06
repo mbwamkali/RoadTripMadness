@@ -1097,12 +1097,17 @@ function showDriveHud(fight?: CombatState): void {
       }
       dashMpg.textContent = String(Math.round(mpg(s, drive.mph, limit)));
       controls.classList.toggle('wrong-side', drive.wrongSide);
-      // The horn steps aside for a turn prompt too, so it never catches a tap meant for the exit.
-      hornRow.classList.toggle('show', !!drive.animalAhead && !promptEl?.classList.contains('show'));
+      // The horn and big shoot button sit just above the stop prompt. They step aside while the turn buttons
+      // are on offer, or they would catch taps meant for "Take the exit", and come back once the car is
+      // signalling so you can still clear the road on the way to the turn.
+      const turnOnOffer = !!promptEl?.classList.contains('show') && !promptEl.classList.contains('signalling');
+      // While signalling, the "Turning…" bar (with its Cancel button) stays up, so the buttons ride above it.
+      const signalBar = !!promptEl?.classList.contains('show') && promptEl.classList.contains('signalling');
+      const lift = signalBar ? `${promptEl!.offsetHeight + 6}px` : '0px';
+      if (hornRow.parentElement && hornRow.parentElement.style.getPropertyValue('--prompt-lift') !== lift) hornRow.parentElement.style.setProperty('--prompt-lift', lift);
+      hornRow.classList.toggle('show', !!drive.animalAhead && !turnOnOffer);
       const t = drive.target;
-      // The big shoot button sits just above the stop prompt; it steps aside while a turn is on offer,
-      // or it would catch taps meant for "Take the exit".
-      shootRow.classList.toggle('show', !!t && !promptEl?.classList.contains('show'));
+      shootRow.classList.toggle('show', !!t && !turnOnOffer);
       if (t && !bigShoot) tapHint();
       if (t) {
         const label = t.type === 'obstacle' ? `🔫 ${OBSTACLE_LABEL[t.o.kind]}` : `🔫 ${t.v.hostile ? '😠 ' : ''}${VEHICLE_LABEL[t.v.kind]}`;
