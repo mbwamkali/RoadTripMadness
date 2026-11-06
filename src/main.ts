@@ -153,6 +153,7 @@ const perf = new PerfMeter(renderer, () => {
     ride: s.ride ?? 'car',
     kid: kidMode.on,
     km: Math.round(realKmAt(s.route, s.distance)),
+    turn: drive.turnInfo,
   };
 });
 mountDevPanel(() => {
@@ -1648,6 +1649,7 @@ function showTown(stop: Stop): void {
         b.push(button('⬆️', 'Upgrades', () => showUpgrades(s, (r) => say(r.message))));
       }
       b.push(button('🚶', 'Get out', () => p.getOut(), at !== 'pumps' && at !== 'garage'));
+      b.push(button('🏘️', 'Main Street', () => p.toStreet()));
       b.push(driveOn());
       tip = kid ? '' : near ? 'Zombies! Drive on, or tap them to shoot.' : 'Get out to look inside, or tap another sign.';
     } else if (p.phase === 'walking') {
@@ -2156,6 +2158,10 @@ function endCombat(c: CombatState, outcome: 'cleared' | 'escaped' | 'wrecked'): 
 function showEnd(): void {
   const s = state!;
   clearSave();
+  // The trip is over: stop drawing the road (a plain background) and free it, so the end screen never sits on a stalled scene.
+  townPlay = null;
+  setScene(null);
+  disposeAll();
   const won = s.status === 'won';
   sound.stopMusic();
   sound.engine(0);

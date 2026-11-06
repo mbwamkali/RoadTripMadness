@@ -394,6 +394,24 @@ export class TownPlay {
     this.backOut(go);
   }
 
+  /** Out of the lot and back onto Main Street, stopped in the lane, so every sign is in reach again. */
+  toStreet(): void {
+    if (this.move || this.phase !== 'parked') return;
+    this.backOut(() => {
+      const now = this.host.car.position.clone();
+      const i = this.alongIdx(this.laneIn, now);
+      const j = Math.min(this.laneIn.length - 1, i + 3);
+      this.at = null;
+      this.phase = 'driving';
+      this.hooks.changed();
+      this.driveCurve(dedupe([now, this.laneIn[Math.min(j, i + 1)], this.laneIn[j]]), false, () => {
+        this.phase = 'street';
+        this.hooks.say(this.hooks.kid ? 'Tap a sign!' : 'Back on Main Street. Tap a sign to pull in.', false);
+        this.hooks.changed();
+      });
+    });
+  }
+
   /** Back on the highway: out of the lot, down Main Street, and onto the road. */
   leave(): void {
     if (this.move) return;
@@ -661,9 +679,17 @@ export class TownPlay {
     const busy = this.nearZombies(20) > 0;
     if (this.phase === 'inside' && this.at) {
       // The dollhouse: roof and front off, looking down into the room from the street side.
+      // Far enough back that the whole room (every crate) fits the screen, tall phone or sideways.
       const sp = this.at;
-      wantPos.copy(sp.centre).addScaledVector(sp.facing, sp.size.z / 2 + 8).setY(sp.centre.y + 11);
-      wantLook.copy(sp.centre).addScaledVector(sp.facing, 1).setY(sp.centre.y + 0.5);
+      const cam = this.host.camera;
+      const vHalf = THREE.MathUtils.degToRad(cam.fov / 2);
+      const hHalf = Math.atan(Math.tan(vHalf) * cam.aspect);
+      const tilt = THREE.MathUtils.degToRad(58);
+      const across = (sp.size.x / 2 + 1.5) / Math.tan(hHalf);
+      const deep = (sp.size.z / 2 + 1.5) * Math.sin(tilt) / Math.tan(vHalf) + (sp.size.z / 2) * Math.cos(tilt);
+      const dist = Math.max(12, across, deep);
+      wantLook.copy(sp.centre).setY(sp.centre.y + 0.5);
+      wantPos.copy(wantLook).addScaledVector(sp.facing, Math.cos(tilt) * dist).setY(wantLook.y + Math.sin(tilt) * dist);
     } else if (this.phase === 'walking') {
       // Third person behind the walker: a close-up of the road's chase camera.
       const w = this.walker.position;
@@ -689,6 +715,10 @@ export class TownPlay {
       const along = new THREE.Vector3(sp.facing.z, 0, -sp.facing.x);
       wantPos.addScaledVector(along, -8).setY(car.y + 7.5);
       wantLook.copy(mid).setY(car.y + 2);
+    } else if (this.phase === 'street' && !busy) {
+      // Waiting on Main Street: higher and further back, so the whole street and its signs are in view.
+      wantPos.copy(car).addScaledVector(fwd, -16).setY(car.y + 12);
+      wantLook.copy(car).addScaledVector(fwd, 34).setY(car.y);
     } else {
       // Driving: the road's chase camera, a bit higher and closer when zombies are about (as in road fights).
       wantPos.copy(car).addScaledVector(fwd, busy ? -11.5 : -14).setY(car.y + (busy ? 8.5 : 7));

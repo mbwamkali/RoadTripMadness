@@ -204,9 +204,10 @@ export function buildTownWorld(layout: TownLayout, mats: TownMaterials, seed: nu
   }
   for (const [a, b] of dashes) group.add(strip([a, b], -0.12, 0.12, 0.13, mats.lineYellow, 1));
   for (const s of [-1, 1]) {
-    const sw = strip(line, s * STREET_HALF, s * (STREET_HALF + SIDEWALK), 0.22, concrete);
+    // Flush with the street, like the highway's sidewalks: a raised slab with no side reads as floating.
+    const sw = strip(line, s * STREET_HALF, s * (STREET_HALF + SIDEWALK), 0.12, concrete);
     group.add(sw);
-    group.add(strip(line, s * STREET_HALF, s * (STREET_HALF + 0.25), 0.26, curb, 1));
+    group.add(strip(line, s * STREET_HALF, s * (STREET_HALF + 0.25), 0.14, curb, 1));
   }
   // Street lights every 30 m, on alternating sides.
   const postMat = mat({ color: 0x6c7076, metalness: 0.5, roughness: 0.5 });

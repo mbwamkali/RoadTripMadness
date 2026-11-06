@@ -17,6 +17,8 @@ export interface GameInfo {
   ride?: string;
   kid?: boolean;
   km?: number;
+  /** The turn-off state (DriveScene.turnInfo). */
+  turn?: string;
 }
 
 /**
@@ -31,7 +33,8 @@ export interface GameInfo {
  *   D   phone model, graphics chip, system, browser, cores, memory GB, quality choice (auto>m = Auto stepped down to Medium), ph or pc (counted as phone or computer),
  *       os/v exact versions, screen WxH, P/L orientation, r pixel ratio, battery % (+ charging), on/off line
  *   G   screen (road, roadfight, fight, town, bldg, menu), h hour, weather (* = set in the test panel),
- *       biome, road type, mph/limit, ride, kid mode, km into the trip
+ *       biome, road type, mph/limit, ride, kid mode, km into the trip; second item: turn-off state
+ *       (S<stop>:<units to go> while signalling, flags t turning, s stopped, p paused, f fight, o off road; x = none)
  *   L   load: trip wait ms, detailed models ok/fail at ms, buildings ok/fail at ms, c commit
  *   E   only after something went wrong: how many errors, the last one and where (game/errors.ts)
  *
@@ -124,6 +127,8 @@ export class PerfMeter {
     const n = (x: number | undefined, d = 0) => (x == null ? '-' : x.toFixed(d));
     const gameLine = [
       g.screen,
+      // Right after the screen, so it's on screen on a narrow phone.
+      g.turn ?? '-',
       `h${n(g.hour, 1)}${devClock.hour != null ? '*' : ''}`,
       `${g.weather ?? '-'}${devClock.weather ? '*' : ''}`,
       g.biome ?? '-',

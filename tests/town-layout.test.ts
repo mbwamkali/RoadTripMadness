@@ -49,11 +49,14 @@ describe('town layout', () => {
     expect(t.line[t.line.length - 1].y).toBeGreaterThan(100);
   });
 
-  it('keeps lots apart and on the street, real map or not', () => {
+  it('keeps lots apart, on the street and clear of cross streets, real map or not', () => {
     for (const map of [parseTownOsm(osm, o), null]) {
-      for (let seed = 0; seed < 20; seed++) {
-        const t = layoutTown({ name: 'X', places: ['pumps', 'garage', 'grocery', 'police'], seed, map });
-        expect(t.lots).toHaveLength(4);
+      for (let seed = 0; seed < 40; seed++) {
+        const places = (['pumps', 'garage', 'grocery', 'police', 'motel', 'pharmacy'] as const).slice(0, 1 + (seed % 6));
+        const t = layoutTown({ name: 'X', places: [...places], seed, map });
+        expect(t.lots).toHaveLength(places.length);
+        // Cross streets never run through a lot.
+        for (const c of t.crossings) for (const l of t.lots) expect(Math.abs(c.along - l.along)).toBeGreaterThanOrEqual(20);
         for (const l of t.lots) {
           expect(l.along).toBeGreaterThanOrEqual(FIRST_LOT);
           expect(l.along).toBeLessThanOrEqual(t.length);

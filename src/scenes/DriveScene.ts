@@ -811,6 +811,8 @@ export class DriveScene implements GameScene {
 
   resume(): void {
     this.turning = null;
+    // A turn that didn't happen must not leave "Turning..." showing.
+    if (this.pendingTurn) this.cb.onPrompt(null, 0);
     this.pendingTurn = null;
     this.stopping = false;
     this.paused = false;
@@ -851,8 +853,7 @@ export class DriveScene implements GameScene {
       if (!this.paused) this.town.update(dt);
       this.traffic.step(dt, this.state.distance);
       this.placeTraffic();
-      const c = this.car.position;
-      this.ground.position.set(c.x, 0, c.z);
+      this.followGround(this.car.position);
       return;
     }
     if (this.turning) {
@@ -1435,15 +1436,19 @@ export class DriveScene implements GameScene {
       this.car.position.y = Math.abs(Math.sin(this.clock * 17)) * 0.09;
       this.car.rotateZ(Math.sin(this.clock * 11) * 0.025);
     }
-    this.ground.position.set(p.x, 0, p.z);
-    // The ground follows the car; shift its texture back so the grain stays put in the world.
-    const gm = this.ground.material as THREE.MeshStandardMaterial;
-    for (const t of [gm.map, gm.normalMap]) t?.offset.set((p.x / GROUND_TILE) % 1, (-p.z / GROUND_TILE) % 1);
+    this.followGround(p);
     if (snap) {
       this.camPos.copy(p).addScaledVector(fwd, -14).setY(7);
       this.camLook.copy(p).addScaledVector(fwd, 20);
     }
     this.followCamera(p, fwd, snap ? 1 : dt);
+  }
+
+  /** The ground follows the car; its texture shifts back so the grain stays put in the world (on the road and in towns). */
+  private followGround(p: THREE.Vector3): void {
+    this.ground.position.set(p.x, 0, p.z);
+    const gm = this.ground.material as THREE.MeshStandardMaterial;
+    for (const t of [gm.map, gm.normalMap]) t?.offset.set((p.x / GROUND_TILE) % 1, (-p.z / GROUND_TILE) % 1);
   }
 
   /** The middle of your side of the road (where a fight centres its lanes). */
@@ -2021,6 +2026,16 @@ export class DriveScene implements GameScene {
     this.placeCar(true);
     this.streamChunks();
     this.startTurn(stop);
+  }
+
+  /**
+   * The turn's state for the ?perf=1 readout: S<stop>:<units to go> while signalling,
+   * plus t (turning in), s (stopped), p (paused), f (fight), o (off the road), x (no turn).
+   */
+  get turnInfo(): string {
+    const sig = this.pendingTurn ?? this.turning?.stop ?? null;
+    const flags = `${this.turning ? 't' : ''}${this.stopping ? 's' : ''}${this.paused ? 'p' : ''}${this.fight ? 'f' : ''}${this.off ? 'o' : ''}`;
+    return `${sig ? `S${sig.id.replace('stop-', '')}:${Math.round(sig.at - this.state.distance)}` : 'x'}${flags}`;
   }
 
   /** The town you're in, for the HUD. */

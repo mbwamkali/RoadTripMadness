@@ -51,6 +51,8 @@ export const STREET_MIN = 150;
 export const LOT_GAP = 36;
 /** The first lot starts this far from the highway, so the turn-in has room. */
 export const FIRST_LOT = 34;
+/** A lot's width along the street (world.ts LOT_ALONG). */
+const LOT_ALONG_M = 30;
 
 // ------------------------------------------------------------------ the lookup
 
@@ -251,6 +253,15 @@ export function layoutTown(opts: { name: string; places: PlaceKind[]; seed: numb
     for (let y = 0; y <= STREET_MAX * 0.8; y += 6) line.push({ x: bend * y * y * 0.5, y });
   }
   if (!streetName) streetName = pick(rng, MADE_UP_STREETS);
+  // A real street too short for every place (alternating sides, LOT_GAP apart) carries on straight past its end.
+  const needed = FIRST_LOT + Math.ceil(opts.places.length / 2) * LOT_GAP + 40;
+  const have = polyLength(line);
+  if (have < needed && line.length >= 2) {
+    const a = line[line.length - 2];
+    const b = line[line.length - 1];
+    const l = len(a, b) || 1;
+    for (let d = 6; d <= needed - have + 6; d += 6) line.push({ x: b.x + ((b.x - a.x) / l) * d, y: b.y + ((b.y - a.y) / l) * d });
+  }
   // Real businesses, placed along Main Street in the same frame.
   const pois = frame && map
     ? map!.pois
@@ -259,8 +270,23 @@ export function layoutTown(opts: { name: string; places: PlaceKind[]; seed: numb
         .sort((a, b) => a.n.dist - b.n.dist)
     : [];
   const lots: TownLot[] = [];
-  const taken = (along: number, side: number) => lots.some((l) => l.side === side && Math.abs(l.along - along) < LOT_GAP);
   const lineLen = polyLength(line);
+  // Real cross streets first: lots keep clear of them (a cross street runs 60 m out each side).
+  const crossings: { along: number; name: string }[] = [];
+  if (frame) {
+    for (const s of streets) {
+      if (!s.name || s.name === streetName) continue;
+      for (const q of resampleLine(s.pts, 4)) {
+        const n = nearestOn(line, frame(q));
+        if (n.dist < 12 && n.along > 20 && n.along < Math.min(lineLen, STREET_MAX) - 10 && !crossings.some((c) => Math.abs(c.along - n.along) < 30)) {
+          crossings.push({ along: n.along, name: s.name });
+          break;
+        }
+      }
+    }
+  }
+  const taken = (along: number, side: number) =>
+    lots.some((l) => l.side === side && Math.abs(l.along - along) < LOT_GAP) || crossings.some((c) => Math.abs(c.along - along) < LOT_ALONG_M / 2 + 5);
   const free = (want: number, side: 1 | -1): { along: number; side: 1 | -1 } => {
     // Nearest free slot to `want`, trying this side then the other.
     for (let k = 0; k < 40; k++) {
@@ -271,7 +297,9 @@ export function layoutTown(opts: { name: string; places: PlaceKind[]; seed: numb
         }
       }
     }
-    return { along: FIRST_LOT + lots.length * LOT_GAP, side };
+    // No room left: past the last lot on this side, never on top of one.
+    const last = Math.max(FIRST_LOT - LOT_GAP, ...lots.filter((l) => l.side === side).map((l) => l.along));
+    return { along: last + LOT_GAP, side };
   };
   const order = [...opts.places].sort((a, b) => (a === 'pumps' ? -1 : b === 'pumps' ? 1 : 0));
   order.forEach((place, i) => {
@@ -287,23 +315,20 @@ export function layoutTown(opts: { name: string; places: PlaceKind[]; seed: numb
   });
   lots.sort((a, b) => a.along - b.along);
   const length = Math.min(lineLen, Math.max(STREET_MIN, lots[lots.length - 1]?.along + 46 || STREET_MIN));
-  // Cross streets: real ones where they meet Main Street, or one or two made up.
-  const crossings: { along: number; name: string }[] = [];
-  if (frame) {
-    for (const s of streets) {
-      if (!s.name || s.name === streetName) continue;
-      for (const q of resampleLine(s.pts, 4)) {
-        const n = nearestOn(line, frame(q));
-        if (n.dist < 12 && n.along > 20 && n.along < length - 10 && !crossings.some((c) => Math.abs(c.along - n.along) < 30)) {
-          crossings.push({ along: n.along, name: s.name });
-          break;
-        }
-      }
-    }
-  }
+  const real2 = crossings.filter((c) => c.along < length - 10);
+  crossings.length = 0;
+  crossings.push(...real2);
+  // A made-up cross street may not cut through a lot on either side either.
+  const clearOfLots = (along: number) => !lots.some((l) => Math.abs(l.along - along) < LOT_ALONG_M / 2 + 5);
   if (!crossings.length) {
-    const at = lots.length > 1 ? (lots[0].along + lots[1].along) / 2 : length * 0.6;
-    if (!lots.some((l) => Math.abs(l.along - at) < 18)) crossings.push({ along: at, name: pick(rng, MADE_UP_STREETS.filter((n) => n !== streetName)) });
+    // Made up: in the first gap between lots wide enough for it.
+    const stops = [0, ...lots.map((l) => l.along), length].sort((a, b) => a - b);
+    let at = -1;
+    for (let i = 1; i < stops.length && at < 0; i++) {
+      const mid = (stops[i - 1] + stops[i]) / 2;
+      if (mid > 20 && mid < length - 10 && clearOfLots(mid)) at = mid;
+    }
+    if (at > 0) crossings.push({ along: at, name: pick(rng, MADE_UP_STREETS.filter((n) => n !== streetName)) });
   }
   crossings.sort((a, b) => a.along - b.along);
   // Houses fill the gaps on both sides.
