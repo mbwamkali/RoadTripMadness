@@ -307,10 +307,12 @@ export function buildTownWorld(layout: TownLayout, mats: TownMaterials, seed: nu
       canopy.position.copy(at(co, 0, cy + 0.45));
       canopy.rotation.y = Math.atan2(fwd.x, fwd.z);
       canopy.castShadow = true;
+      canopy.name = 'roof';
       g.add(canopy);
       const ceil = box(12.8, 0.05, LOT_ALONG * 0.6, under);
       ceil.position.copy(at(co, 0, cy - 0.02));
       ceil.rotation.y = canopy.rotation.y;
+      ceil.name = 'roof';
       g.add(ceil);
       for (const a of [-7, 7]) for (const o of [-4.5, 4.5]) {
         const post = box(0.45, cy, 0.45, white);

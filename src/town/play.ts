@@ -299,6 +299,8 @@ export class TownPlay {
       this.phase = 'inside';
       sp.shell.visible = false;
       sp.room.visible = true;
+      // The gas canopy would hide the dollhouse from above.
+      showRoofs(sp, false);
       this.search = startScavenge(this.hooks.state, this.storeKey(), sp.lot.place, sp.crates.length);
       for (const c of sp.crates) resetCrate(c);
       this.hooks.save();
@@ -313,6 +315,7 @@ export class TownPlay {
     const sp = this.at;
     sp.shell.visible = true;
     sp.room.visible = false;
+    showRoofs(sp, true);
     this.search = null;
     this.phase = 'walking';
     // Out the door facing the street, so the camera sees what's coming.
@@ -707,6 +710,7 @@ export class TownPlay {
     for (const sp of this.world.spots) {
       sp.shell.visible = true;
       sp.room.visible = false;
+      showRoofs(sp, true);
     }
   }
 }
@@ -717,6 +721,12 @@ export const LOOT_ICONS: Record<keyof Inventory, string> = { fuel: '⛽', cash: 
 
 function placeWord(sp: TownSpot): string {
   return { pumps: 'Gas', motel: 'Motel', grocery: 'Food', garage: 'Garage', hardware: 'Tools', pharmacy: 'Medicine', police: 'Police', gunshop: 'Ammo', junkyard: 'Junkyard', barn: 'Farm' }[sp.lot.place];
+}
+
+function showRoofs(sp: TownSpot, on: boolean): void {
+  sp.group.traverse((o) => {
+    if (o.name === 'roof') o.visible = on;
+  });
 }
 
 function placeName(sp: TownSpot): string {
