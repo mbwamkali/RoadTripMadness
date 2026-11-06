@@ -1,12 +1,14 @@
 import { BUILD } from '../build';
 import { devClock, WEATHER_INFO, type Weather } from '../game/time';
+import { devGfx, quality } from '../scenes/quality';
 
 /**
  * A test panel for checking the look at any hour and in any weather without
  * waiting for it: open the game with ?dev=1 (remembered until ?dev=0). The
  * 🛠 button at the top opens it.
  */
-export function mountDevPanel(): void {
+/** `applyGfx` re-applies the graphics settings after a switch changes them. */
+export function mountDevPanel(applyGfx: () => void = () => undefined): void {
   const q = new URLSearchParams(location.search).get('dev');
   let on = q === '1';
   try {
@@ -98,7 +100,30 @@ export function mountDevPanel(): void {
   };
   wRow.append(...wBtns);
 
-  panel.append(tHead, tRow, sRow, wHead, wRow);
+  // Graphics switches, to see what each effect costs on this phone (watch the ?perf=1 box).
+  const gHead = document.createElement('h4');
+  gHead.textContent = 'Graphics (resets on reload)';
+  const gRow = document.createElement('div');
+  gRow.className = 'row';
+  const choices: { label: string; set: () => void; on: () => boolean }[] = [
+    { label: 'Glow + grade', set: () => (devGfx.post = !quality.profile.bloom), on: () => quality.profile.bloom },
+    ...[1, 1.5, 2].map((r) => ({ label: `Sharp ${r}x`, set: () => (devGfx.ratio = r), on: () => quality.profile.pixelRatio === r })),
+  ];
+  const gBtns = choices.map((c) => {
+    const b = document.createElement('button');
+    b.textContent = c.label;
+    b.onclick = () => {
+      c.set();
+      applyGfx();
+      paintGfx();
+    };
+    return b;
+  });
+  const paintGfx = () => gBtns.forEach((b, i) => b.classList.toggle('on', choices[i].on()));
+  gRow.append(...gBtns);
+  paintGfx();
+
+  panel.append(tHead, tRow, sRow, wHead, wRow, gHead, gRow);
   document.body.append(btn, panel);
   setHour(null);
   setWeather(null);

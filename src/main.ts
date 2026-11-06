@@ -158,7 +158,10 @@ const perf = new PerfMeter(renderer, () => {
     km: Math.round(realKmAt(s.route, s.distance)),
   };
 });
-mountDevPanel();
+mountDevPanel(() => {
+  applyQuality();
+  resize();
+});
 function frame(now: number): void {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;

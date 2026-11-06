@@ -88,13 +88,19 @@ export const onPhone = !!deviceHints().mobile;
  * ambient occlusion ran at 10 fps; Medium held 60. This keeps High's glow, colour
  * grade, bigger shadows and longer view, but not the two costliest parts.
  */
-const PHONE_HIGH: QualityProfile = { ...QUALITY.high, pixelRatio: 1.5 };
+// Build 102 (no AO, 1.5x) still ran 17-37 fps with the glow pass on, so phones skip that too.
+const PHONE_HIGH: QualityProfile = { ...QUALITY.high, pixelRatio: 1.5, bloom: false };
+
+/** Test-panel overrides (?dev=1) for trying effects on a real phone; undefined = the quality's own. */
+export const devGfx: { post?: boolean; ratio?: number } = {};
 
 /** The quality in use right now (scenes read this when they build). */
 export const quality = {
   level: resolveQuality() as QualityLevel,
   get profile(): QualityProfile {
-    return this.level === 'high' && onPhone ? PHONE_HIGH : QUALITY[this.level];
+    const base = this.level === 'high' && onPhone ? PHONE_HIGH : QUALITY[this.level];
+    if (devGfx.post === undefined && devGfx.ratio === undefined) return base;
+    return { ...base, bloom: devGfx.post ?? base.bloom, pixelRatio: devGfx.ratio ?? base.pixelRatio };
   },
 };
 
