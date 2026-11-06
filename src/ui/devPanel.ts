@@ -1,3 +1,4 @@
+import { BUILD } from '../build';
 import { devClock, WEATHER_INFO, type Weather } from '../game/time';
 
 /**
@@ -32,7 +33,7 @@ export function mountDevPanel(): void {
 
   const btn = document.createElement('button');
   btn.className = 'devp-btn';
-  btn.textContent = '🛠 Test';
+  btn.textContent = `🛠 Test · build ${BUILD.number}`;
   const panel = document.createElement('div');
   panel.className = 'devp';
   btn.onclick = () => panel.classList.toggle('open');

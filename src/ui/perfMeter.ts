@@ -1,5 +1,6 @@
 import type * as THREE from 'three';
 import { quality } from '../scenes/quality';
+import { BUILD } from '../build';
 
 /**
  * A small speed readout for testing on real phones: open the game with
@@ -34,6 +35,7 @@ export class PerfMeter {
       position: 'fixed', left: '50%', transform: 'translateX(-50%)', top: 'calc(env(safe-area-inset-top) + 2px)', zIndex: '9999',
       font: '600 11px/1.3 ui-monospace, monospace', color: '#fff', background: 'rgba(0,0,0,0.65)', padding: '3px 7px', borderRadius: '6px', pointerEvents: 'none', whiteSpace: 'pre',
     });
+    this.el.textContent = `build ${BUILD.number} · ${BUILD.commit}`;
     document.body.append(this.el);
   }
 
@@ -53,7 +55,7 @@ export class PerfMeter {
     const fps = (this.frames * 1000) / (now - this.since);
     const i = this.renderer.info;
     const tris = i.render.triangles;
-    this.el.textContent = `${fps.toFixed(0)} fps · worst ${this.worst.toFixed(0)} ms · ${quality.level} ×${this.renderer.getPixelRatio().toFixed(1)}\n${i.render.calls} draws · ${tris > 1e6 ? (tris / 1e6).toFixed(2) + 'M' : Math.round(tris / 1000) + 'k'} tris · ${i.memory.geometries} geo · ${i.memory.textures} tex`;
+    this.el.textContent = `${fps.toFixed(0)} fps · worst ${this.worst.toFixed(0)} ms · ${quality.level} ×${this.renderer.getPixelRatio().toFixed(1)}\n${i.render.calls} draws · ${tris > 1e6 ? (tris / 1e6).toFixed(2) + 'M' : Math.round(tris / 1000) + 'k'} tris · ${i.memory.geometries} geo · ${i.memory.textures} tex\nbuild ${BUILD.number} · ${BUILD.commit}`;
     this.frames = 0;
     this.worst = 0;
     this.since = now;
