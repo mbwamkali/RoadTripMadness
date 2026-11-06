@@ -1,3 +1,4 @@
+import { lastError } from '../game/errors';
 import type * as THREE from 'three';
 import { loadAutoCap, onPhone, quality } from '../scenes/quality';
 import { BUILD } from '../build';
@@ -32,6 +33,7 @@ export interface GameInfo {
  *   G   screen (road, roadfight, fight, town, bldg, menu), h hour, weather (* = set in the test panel),
  *       biome, road type, mph/limit, ride, kid mode, km into the trip
  *   L   load: trip wait ms, detailed models ok/fail at ms, buildings ok/fail at ms, c commit
+ *   E   only after something went wrong: how many errors, the last one and where (game/errors.ts)
  *
  * Nothing personal (no location, no account) goes in.
  */
@@ -138,6 +140,7 @@ export class PerfMeter {
       `D ${this.device} ${qualityCode()} ${innerWidth}x${innerHeight}${innerWidth > innerHeight ? 'L' : 'P'} r${this.renderer.getPixelRatio().toFixed(1)}/${devicePixelRatio.toFixed(1)}${this.battery} ${navigator.onLine ? 'on' : 'off'}`,
       `G ${gameLine}`,
       `L t${Math.round(loadStats.tripWait)} hd${at(loadStats.hd)} b${at(loadStats.buildings)} c${BUILD.commit}`,
+      ...(lastError.count ? [`E ${lastError.count}× ${lastError.msg} · ${lastError.where}`] : []),
     ].join('\n');
     this.frames = 0;
     this.worst = 0;

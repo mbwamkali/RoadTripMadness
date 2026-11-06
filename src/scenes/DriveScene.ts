@@ -41,6 +41,7 @@ import { layoutTown, townSeed } from '../town/layout';
 import { knownTown, lookupTown } from '../town/fetchTown';
 import { buildTownWorld, type TownWorld } from '../town/world';
 import { TownPlay, type TownHooks } from '../town/play';
+import { noteError } from '../game/errors';
 
 const CHUNK = 400;
 const BEHIND = 250;
@@ -1956,8 +1957,16 @@ export class DriveScene implements GameScene {
     const have = this.towns.get(stop.id);
     if (have) return have;
     const seed = townSeed(this.state.seed, stop.id);
-    const layout = layoutTown({ name: stop.name, places: stop.places, seed, street: stop.street, map: knownTown(this.townPlace(stop)) ?? null });
-    const world = buildTownWorld(layout, { asphalt: this.asphaltMat, lineYellow: this.stripeMats.yellowDash }, seed, crateCount(kidMode.on));
+    const build = (map: ReturnType<typeof knownTown>) =>
+      buildTownWorld(layoutTown({ name: stop.name, places: stop.places, seed, street: stop.street, map: map ?? null }), { asphalt: this.asphaltMat, lineYellow: this.stripeMats.yellowDash }, seed, crateCount(kidMode.on));
+    let world: TownWorld;
+    try {
+      world = build(knownTown(this.townPlace(stop)));
+    } catch (e) {
+      // Odd map data must never block a turn-off: lay the town out from made-up data instead.
+      noteError(e, 'town map');
+      world = build(null);
+    }
     const p = this.path.pointAt(stop.at);
     const f = this.path.directionAt(stop.at);
     const k = stop.side === 'right' ? 1 : -1;
@@ -1987,6 +1996,7 @@ export class DriveScene implements GameScene {
     const pos = to3(this.path.pointAt(at)).addScaledVector(new THREE.Vector3(f.y, 0, f.x), this.laneAt(at));
     const fwd = new THREE.Vector3(f.x, 0, -f.y);
     this.town?.dispose();
+    this.town = null;
     this.town = new TownPlay({ scene: this.scene, camera: this.camera, car: this.car, exit: { pos, fwd } }, world, {
       ...hooks,
       done: () => {

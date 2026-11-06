@@ -60,6 +60,7 @@ import { CombatScene } from './scenes/CombatScene';
 import { clearUi, fmtKm, h, ui } from './ui/dom';
 import { Minimap } from './ui/minimap';
 import type { TownPlay } from './town/play';
+import { noteError } from './game/errors';
 import { gunDamageFor, MAX_LEVEL, ramDamageFor, upgradeCost, UPGRADES, type UpgradeKind } from './game/upgrades';
 import { sound } from './audio/sound';
 import { hdModelsReady, loadHdModels } from './scenes/hdModels';
@@ -182,15 +183,25 @@ function tuneQuality(gapMs: number): void {
 }
 
 function frame(now: number): void {
+  // Ask for the next frame first, so one error can never stop the game for good.
+  requestAnimationFrame(frame);
   const gap = now - last;
   const dt = Math.min(0.05, gap / 1000);
   last = now;
   tuneQuality(gap);
   perf.begin();
   if (active) {
-    active.update(dt);
-    if (bloom) bloom.render(active.scene, active.camera);
-    else renderer.render(active.scene, active.camera);
+    try {
+      active.update(dt);
+    } catch (e) {
+      noteError(e, 'update');
+    }
+    try {
+      if (bloom) bloom.render(active.scene, active.camera);
+      else renderer.render(active.scene, active.camera);
+    } catch (e) {
+      noteError(e, 'render');
+    }
   } else {
     renderer.setClearColor(0x1b1410);
     renderer.clear();
@@ -200,8 +211,9 @@ function frame(now: number): void {
     saveGame(state);
     lastSave = now;
   }
-  requestAnimationFrame(frame);
 }
+window.addEventListener('error', (e) => noteError(e.error ?? e.message, 'window'));
+window.addEventListener('unhandledrejection', (e) => noteError(e.reason, 'promise'));
 
 function setScene(scene: GameScene | null): void {
   active = scene;
@@ -1665,25 +1677,36 @@ function showTown(stop: Stop): void {
     sound.startMusic();
     setScene(drive);
   };
-  townPlay = drive!.enterTown(stop, {
-    kid,
-    state: s,
-    stopId: stop.id,
-    say,
-    sfx: { coin: () => sound.coin(), bad: () => sound.bad(), click: () => sound.click(), shot: () => sound.shot('bullets') },
-    changed: () => {
-      refresh();
-      // Zombies banging on the parked car can wreck it (state.ts marks the trip lost).
-      if (s.status === 'lost' && !wrecked) {
-        wrecked = true;
-        clearInterval(timer);
-        drive!.paused = true;
-        setTimeout(showEnd, 900);
-      }
-    },
-    save: () => saveGame(s),
-    done: leave,
-  });
+  try {
+    townPlay = drive!.enterTown(stop, {
+      kid,
+      state: s,
+      stopId: stop.id,
+      say,
+      sfx: { coin: () => sound.coin(), bad: () => sound.bad(), click: () => sound.click(), shot: () => sound.shot('bullets') },
+      changed: () => {
+        refresh();
+        // Zombies banging on the parked car can wreck it (state.ts marks the trip lost).
+        if (s.status === 'lost' && !wrecked) {
+          wrecked = true;
+          clearInterval(timer);
+          drive!.paused = true;
+          setTimeout(showEnd, 900);
+        }
+      },
+      save: () => saveGame(s),
+      done: leave,
+    });
+  } catch (e) {
+    // A town that fails to open must never strand the car: carry on down the road.
+    noteError(e, 'town');
+    clearInterval(timer);
+    townPlay = null;
+    showDriveHud();
+    drive!.resume();
+    showToast('🚧', `${stop.name} is closed`, 'Back on the road');
+    return;
+  }
   refresh();
 }
 
