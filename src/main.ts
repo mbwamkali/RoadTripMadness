@@ -985,7 +985,7 @@ function showDriveHud(fight?: CombatState): void {
     showToast('🤖', 'Autopilot', drive!.autopilot ? 'On: faster, stays in its lane, slows for traffic' : 'Off: you are driving');
   });
   const menuBtn = h('button', { class: 'btn small round', title: 'Menu' }, '☰');
-  const stationName = () => ({ off: 'Radio off', twang: 'KTWG Country', synth: 'Neon FM' })[sound.station];
+  const stationName = () => ({ off: 'Radio off', road: 'Home Stretch', classical: 'Evening Drive', west: 'Desert Highway' })[sound.station];
   const radioBtn = h('button', { class: `btn small round ${sound.station === 'off' ? 'off' : ''}`, title: stationName() }, '📻');
   radioBtn.addEventListener('click', () => {
     sound.nextStation();
@@ -1809,7 +1809,6 @@ const inFight = () => !!combat && (active === combat || !!drive?.fighting);
 
 function startCombat(ambush: boolean, stop?: Stop, theme?: EnemyType, boss?: BossKind): void {
   const s = state!;
-  sound.stopMusic();
   const diff = DIFFICULTIES[s.difficulty];
   const ts = threatScale(s.threat ?? 0);
   const c = createCombat({
@@ -1833,6 +1832,9 @@ function startCombat(ambush: boolean, stop?: Stop, theme?: EnemyType, boss?: Bos
   combat?.dispose();
   // Fights happen right on the road in the drive view. Ambushes at a town stop keep the old fight view until the walkable town replaces it.
   const onRoad = roadFights && !stop && !!drive;
+  // Road fights keep the radio on (Home Stretch plays its fight version; the Cat Queen has her own song).
+  if (onRoad) sound.fightMusic(boss);
+  else sound.stopMusic();
   if (onRoad) {
     useLanes(c, drive!.sideX);
     c.pace = 1;

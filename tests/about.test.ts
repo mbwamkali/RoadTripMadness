@@ -10,8 +10,8 @@ describe('about and credits', () => {
   });
   it('lists every third party named in NOTICE, each with a licence and a link', () => {
     const notice = fs.readFileSync('NOTICE', 'utf8');
-    for (const name of ['OpenStreetMap', 'Natural Earth', 'Poly Haven', 'Quaternius', 'Open-Meteo']) {
-      expect(notice).toContain(name);
+    for (const name of ['OpenStreetMap', 'Natural Earth', 'Poly Haven', 'Quaternius', 'Open-Meteo', 'FluidR3 GM soundfont', 'Versilian Community Sample Library', 'OpenGameArt cat sounds']) {
+      expect(notice.replace(/\s+/g, ' ')).toContain(name.replace(/ cat sounds$/, ''));
       const c = CREDITS.find((x) => x.name === name)!;
       expect(c.licence.length).toBeGreaterThan(0);
       expect(c.links.length).toBeGreaterThan(0);

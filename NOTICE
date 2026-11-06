@@ -21,6 +21,17 @@ This product bundles third-party data and assets under their own terms:
   houses and landmarks with Microsoft TRELLIS.2 (MIT) in ComfyUI. Shrunk with
   glTF Transform (MIT).
 - Bump maps ground_n.jpg and asphalt_n.jpg made from the Poly Haven textures.
+- Car radio instruments in public/audio/inst/ from the FluidR3 GM soundfont
+  by Frank Wen, as prepared by Benjamin Gleitzman
+  (https://github.com/gleitz/midi-js-soundfonts), licensed CC BY 3.0
+  (https://creativecommons.org/licenses/by/3.0/). Only the notes the songs use
+  are included. The songs themselves are written for this game.
+- Drum kit in public/audio/drums/ from the Versilian Community Sample Library
+  (https://github.com/sgossner/VCSL, CC0, public domain).
+- Cat sounds in public/audio/cats/ from OpenGameArt.org: meows and purrs by
+  kerzoven, ignasd and antumdeluge (CC0, public domain); upset-cat sounds
+  ("Cat SFX") by macro, licensed CC BY 3.0
+  (https://opengameart.org/content/cat-sfx). Trimmed, levelled and retuned.
 - Live weather from Open-Meteo.com (CC BY 4.0), fetched at play time.
 
 See docs/CREDITS.md for details.

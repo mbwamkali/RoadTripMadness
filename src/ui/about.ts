@@ -88,6 +88,32 @@ export const CREDITS: Credit[] = [
     links: [['gltf-transform.dev', 'https://gltf-transform.dev']],
   },
   {
+    icon: '🎸',
+    name: 'FluidR3 GM soundfont',
+    what: 'The recorded instruments the car radio songs are played on (guitars, piano, strings, fiddle, trumpet and more), by Frank Wen, as prepared by Benjamin Gleitzman.',
+    licence: 'CC BY 3.0.',
+    links: [['midi-js-soundfonts', 'https://github.com/gleitz/midi-js-soundfonts'], ['CC BY 3.0', 'https://creativecommons.org/licenses/by/3.0/']],
+  },
+  {
+    icon: '🥁',
+    name: 'Versilian Community Sample Library',
+    what: 'The drum kit in Home Stretch, by Versilian Studios.',
+    licence: 'CC0 (public domain).',
+    links: [['github.com/sgossner/VCSL', 'https://github.com/sgossner/VCSL']],
+  },
+  {
+    icon: '🐱',
+    name: 'OpenGameArt cat sounds',
+    what: 'The real cats singing along in Cat Queen Creep: meows and purrs by kerzoven, ignasd and antumdeluge (CC0), and upset-cat sounds by macro (CC BY 3.0).',
+    licence: 'CC0 and CC BY 3.0.',
+    links: [
+      ['Cat purr & meow (kerzoven)', 'https://opengameart.org/content/cat-purr-meow'],
+      ['Meow (ignasd)', 'https://opengameart.org/content/meow'],
+      ['Kitten mew (antumdeluge)', 'https://opengameart.org/content/kitten-mew'],
+      ['Cat SFX (macro)', 'https://opengameart.org/content/cat-sfx'],
+    ],
+  },
+  {
     icon: '🌦️',
     name: 'Open-Meteo',
     what: 'Live weather and local time at the start of a trip.',
