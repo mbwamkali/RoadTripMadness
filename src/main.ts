@@ -74,6 +74,7 @@ import { sound } from './audio/sound';
 import { hdModelsReady, loadHdModels } from './scenes/hdModels';
 import { loadHdBuildings } from './scenes/hdBuildings';
 import { PerfMeter } from './ui/perfMeter';
+import { mountDevPanel } from './ui/devPanel';
 import { gfx, loadQualityChoice, nextQualityChoice, quality, QUALITY_NAMES, resolveQuality, saveQualityChoice } from './scenes/quality';
 import type { Bloom } from './scenes/bloom';
 
@@ -139,14 +140,18 @@ window.addEventListener('resize', resize);
 
 let last = performance.now();
 const perf = new PerfMeter(renderer);
+mountDevPanel();
 function frame(now: number): void {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   perf.begin();
   if (active) {
     active.update(dt);
-    if (bloom) bloom.render(active.scene, active.camera);
-    else renderer.render(active.scene, active.camera);
+    // A town or a building drawn full screen on its own canvas covers the road: don't draw the road under it.
+    if (!document.querySelector('.town3d, .scavenge')) {
+      if (bloom) bloom.render(active.scene, active.camera);
+      else renderer.render(active.scene, active.camera);
+    }
   } else {
     renderer.setClearColor(0x1b1410);
     renderer.clear();
