@@ -74,6 +74,7 @@ import { sound } from './audio/sound';
 import { hdModelsReady, loadHdModels } from './scenes/hdModels';
 import { loadHdBuildings } from './scenes/hdBuildings';
 import { PerfMeter } from './ui/perfMeter';
+import { loadStats } from './game/loadStats';
 import { mountDevPanel } from './ui/devPanel';
 import { gfx, loadQualityChoice, nextQualityChoice, quality, QUALITY_NAMES, resolveQuality, saveQualityChoice } from './scenes/quality';
 import type { Bloom } from './scenes/bloom';
@@ -139,7 +140,24 @@ function resize(): void {
 window.addEventListener('resize', resize);
 
 let last = performance.now();
-const perf = new PerfMeter(renderer);
+const perf = new PerfMeter(renderer, () => {
+  // What's on screen and where, for the readout's game line.
+  const s = state;
+  const screen = document.querySelector('.scavenge') ? 'bldg' : document.querySelector('.town3d') ? 'town' : combat && active === combat ? 'fight' : drive && active === drive ? (drive.fightOn ? 'roadfight' : 'road') : 'menu';
+  if (!s || !drive) return { screen };
+  return {
+    screen,
+    hour: hourOf(s),
+    weather: weatherAt(s),
+    biome: drive.biomeId,
+    road: drive.roadClass,
+    mph: Math.round(drive.speedLimit() * drive.throttle),
+    limit: drive.speedLimit(),
+    ride: s.ride ?? 'car',
+    kid: kidMode.on,
+    km: Math.round(realKmAt(s.route, s.distance)),
+  };
+});
 mountDevPanel();
 function frame(now: number): void {
   const dt = Math.min(0.05, (now - last) / 1000);
@@ -634,9 +652,14 @@ function startTrip(s: GameState): void {
   // The CC0 models load in the background at startup; wait for them on the
   // rare first trip that starts before they arrive (they never block on Low).
   if (modelsWanted() && (!modelsReady() || !hdModelsReady())) {
-    void Promise.all([loadModels(), loadHdModels()]).then(() => startTripNow(s));
+    const t0 = performance.now();
+    void Promise.all([loadModels(), loadHdModels()]).then(() => {
+      loadStats.tripWait = performance.now() - t0;
+      startTripNow(s);
+    });
     return;
   }
+  loadStats.tripWait = 0;
   startTripNow(s);
 }
 

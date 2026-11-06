@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { modelsWanted } from './models';
 import type { PlaceKind } from '../game/stops';
+import { loadStats } from '../game/loadStats';
 
 /**
  * The generated town buildings and landmarks (public/models/hd/b/, about 6k
@@ -65,7 +66,9 @@ export function loadHdBuildings(base = `${import.meta.env.BASE_URL}models/hd/b/`
           });
           loaded.set(name, pivot);
           nightLevel = -1;
+          loadStats.buildings.ok++;
         } catch (e) {
+          loadStats.buildings.fail++;
           console.warn(`Building ${name} not loaded:`, e);
         }
       }
@@ -98,6 +101,7 @@ export function loadHdBuildings(base = `${import.meta.env.BASE_URL}models/hd/b/`
         }
       }),
     );
+    loadStats.buildings.at = performance.now();
   })();
   return loading;
 }

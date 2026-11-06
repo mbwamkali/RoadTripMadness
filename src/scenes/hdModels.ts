@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { modelsWanted } from './models';
+import { loadStats } from '../game/loadStats';
 
 /**
  * The detailed generated models from the visual overhaul (public/models/hd/,
@@ -65,12 +66,15 @@ export function loadHdModels(base = `${import.meta.env.BASE_URL}models/hd/`): Pr
             for (const mat of [m.material].flat()) mat.userData.shared = true;
           });
           loaded.set(name, pivot);
+          loadStats.hd.ok++;
         } catch (e) {
+          loadStats.hd.fail++;
           console.warn(`Detailed model ${name} not loaded:`, e);
         }
       }),
     );
     ready = true;
+    loadStats.hd.at = performance.now();
   })();
   return loading;
 }

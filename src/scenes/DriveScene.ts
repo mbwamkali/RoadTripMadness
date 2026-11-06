@@ -461,6 +461,19 @@ export class DriveScene implements GameScene {
     return this.edge(d) + (this.sidewalkAt(d) ? SIDEWALK : this.shoulder(d));
   }
 
+  /** For the ?perf=1 readout: whether a fight is on the road, and the climate id here. */
+  get fightOn(): boolean {
+    return !!this.fight;
+  }
+  get biomeId(): BiomeId {
+    return biomeAtDistance(this.biomes, this.state.distance);
+  }
+
+  /** The road type under the car (for the ?perf=1 readout). */
+  get roadClass(): RoadClass {
+    return this.laneClass;
+  }
+
   /** The speed limit where the car is, in mph: the posted one from OpenStreetMap when known, else the usual one for the road. */
   speedLimit(d = this.state.distance): number {
     const posted = postedLimit(this.state.route, d);
