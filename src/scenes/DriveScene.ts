@@ -29,6 +29,7 @@ import { sound } from '../audio/sound';
 import { Atmosphere } from './atmosphere';
 import { Backdrop } from './backdrop';
 import { addGroundDetail } from './groundDetail';
+import { endGlow, glowFoes } from './nightGlow';
 import { setBuildingsNight, HD_ROADSIDE, hdRoadside, type HdRoadside } from './hdBuildings';
 import { quality } from './quality';
 import { MODEL_SPECS, modelGeometry, modelMaterial, treeModelsWanted, type ModelName } from './models';
@@ -803,6 +804,7 @@ export class DriveScene implements GameScene {
 
   detachFight(): void {
     this.fight = null;
+    endGlow();
   }
 
   get fighting(): boolean {
@@ -837,6 +839,7 @@ export class DriveScene implements GameScene {
       (this.mats.lampHead as THREE.MeshStandardMaterial).emissiveIntensity = night * 1.6;
       (this.mats.lampGlow as THREE.MeshBasicMaterial).opacity = night * 0.4;
       setBuildingsNight(night);
+      if (this.fight) glowFoes(this.fight.root, night);
     }
     // The clock moves every frame so dawn and dusk come on smoothly.
     this.atmosphere.set(hourOf(this.state), weatherAt(this.state));
