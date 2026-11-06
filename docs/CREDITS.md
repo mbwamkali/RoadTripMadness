@@ -34,6 +34,8 @@ Files in `public/models/hd/` were generated for this game from its own concept p
 
 All were shrunk for phones with glTF Transform (MIT, https://gltf-transform.dev): quantised meshes, WebP textures, and for buildings simplified to about 6k triangles (3.5k for the roadside copies in `b/lod/`).
 
+The people in `people/` (the player on foot, the hitchhiker, the cyclist and the Cat Queen) were rigged and given their looping moves for this game with Blender (https://www.blender.org), by `scripts/rig-people.py`.
+
 `ground_n.jpg` and `asphalt_n.jpg` are bump (normal) maps computed from `ground.jpg` and `asphalt.jpg`.
 
 ## Car radio (public/audio)
@@ -51,4 +53,4 @@ The four songs (Home Stretch, Evening Drive, Desert Highway, Cat Queen Creep) ar
 
 The cat sounds are trimmed, cleaned of low hum and levelled; in the game each meow is retuned to the note it lands on.
 
-Other bundled data: the offline atlas and US state outlines come from Natural Earth (public domain); classic routes and map features from OpenStreetMap (© OpenStreetMap contributors, ODbL); live weather from Open-Meteo (CC BY 4.0).
+Other bundled data: the offline atlas and US state outlines come from Natural Earth (public domain); classic routes, map features and each town's streets and shops from OpenStreetMap (© OpenStreetMap contributors, ODbL); live weather from Open-Meteo (CC BY 4.0).

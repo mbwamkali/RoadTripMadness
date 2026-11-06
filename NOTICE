@@ -19,7 +19,11 @@ This product bundles third-party data and assets under their own terms:
   concept pictures (made with FLUX.1 schnell, Apache 2.0): vehicles, bosses,
   enemies and animals with Tripo image-to-3D (https://www.tripo3d.ai); buildings,
   houses and landmarks with Microsoft TRELLIS.2 (MIT) in ComfyUI. Shrunk with
-  glTF Transform (MIT).
+  glTF Transform (MIT). The people in public/models/hd/people/ were rigged and
+  animated for this game with Blender (https://www.blender.org) by
+  scripts/rig-people.py.
+- Town streets and shop names from OpenStreetMap (ODbL), looked up per town
+  through the Overpass API.
 - Bump maps ground_n.jpg and asphalt_n.jpg made from the Poly Haven textures.
 - Car radio instruments in public/audio/inst/ from the FluidR3 GM soundfont
   by Frank Wen, as prepared by Benjamin Gleitzman

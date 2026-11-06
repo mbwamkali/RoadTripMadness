@@ -595,51 +595,10 @@ body.hurt::after {
 
 /* ------------------------------------------------------------------ explore */
 
-.explore {
-  background: linear-gradient(180deg, rgba(27, 20, 16, 0.75), rgba(27, 20, 16, 0.95) 30%);
-  max-width: none;
-}
-
-.explore > * {
-  width: 100%;
-  max-width: 640px;
-  align-self: center;
-}
-
-.explore h2 small {
-  color: var(--muted);
-  font-weight: 500;
-  font-size: 15px;
-}
-
-.explore .stats {
-  flex: none;
-}
-
 .places {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 10px;
-}
-
-.place {
-  background: var(--panel);
-  border-radius: 14px;
-  padding: 12px;
-  border-left: 5px solid var(--accent);
-}
-
-.place.pumps {
-  border-left-color: var(--accent-2);
-}
-
-.place.garage {
-  border-left-color: var(--good);
-}
-
-.place h3 {
-  margin: 0 0 8px;
-  font-size: 17px;
 }
 
 .log {
@@ -1023,57 +982,6 @@ body.hurt::after {
 }
 
 /* ------------------------------------------------------------------ town map */
-
-.town-map {
-  width: 100%;
-  height: auto;
-  border-radius: 16px;
-  display: block;
-  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
-  touch-action: manipulation;
-}
-
-.town-map.night {
-  filter: brightness(0.6) saturate(0.8) hue-rotate(-10deg);
-}
-
-.town-map .building {
-  cursor: pointer;
-  transition: opacity 0.2s;
-}
-
-.town-map .building:focus {
-  outline: none;
-}
-
-.town-map .building.selected .roof {
-  stroke: #ffd23f;
-  stroke-width: 3;
-}
-
-.town-map .building.risky .roof {
-  stroke: #ff6a4a;
-  stroke-width: 2;
-  stroke-dasharray: 5 4;
-}
-
-.town-map .building.selected.risky .roof {
-  stroke: #ffd23f;
-  stroke-dasharray: none;
-}
-
-.sheet {
-  min-height: 60px;
-}
-
-.sheet .hint {
-  text-align: center;
-  margin: 8px 0;
-}
-
-.sheet .place p {
-  margin: 0 0 8px;
-}
 
 /* ------------------------------------------------------------------ bosses */
 .bosshp .fill {
@@ -1613,112 +1521,6 @@ body.kid .howto-tip b {
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 
-/* ------------------------------------------------------------------ crate search */
-
-.scavenge {
-  position: absolute;
-  inset: 0;
-  z-index: 30;
-  background: #2a1f18;
-  animation: slideUp 0.2s;
-}
-
-.scavenge canvas {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  display: block;
-  touch-action: manipulation;
-}
-
-.scavenge-title {
-  position: absolute;
-  top: calc(8px + var(--safe-t));
-  left: 0;
-  right: 0;
-  text-align: center;
-  pointer-events: none;
-  text-shadow: 0 2px 0 #2a1404, 0 0 12px rgba(0, 0, 0, 0.6);
-}
-
-.scavenge-title b {
-  display: block;
-  font-size: 30px;
-  font-weight: 900;
-  color: var(--accent-2);
-  letter-spacing: 0.5px;
-}
-
-.scavenge-title small {
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.scavenge.ambush .scavenge-title b {
-  color: var(--bad);
-}
-
-.scavenge.ambush::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  box-shadow: inset 0 0 90px 30px rgba(255, 0, 0, 0.55);
-}
-
-.scavenge-pops {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-
-.scavenge-pop {
-  position: absolute;
-  transform: translate(-50%, -50%);
-  font-size: 32px;
-  font-weight: 900;
-  color: #fff;
-  text-shadow: 0 2px 0 #2a1404, 0 0 8px rgba(0, 0, 0, 0.5);
-  animation: popUp 1.4s ease-out forwards;
-}
-
-@keyframes popUp {
-  0% { opacity: 0; margin-top: 10px; }
-  15% { opacity: 1; }
-  75% { opacity: 1; }
-  100% { opacity: 0; margin-top: -40px; }
-}
-
-.scavenge-bottom,
-.explore.town3d-screen > .town3d-bottom {
-  position: absolute;
-  left: calc(10px + var(--safe-l));
-  right: calc(10px + var(--safe-r));
-  bottom: calc(14px + var(--safe-b));
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  max-width: 560px;
-  margin: 0 auto;
-}
-
-.scavenge-tray {
-  display: flex;
-  gap: 8px;
-  justify-content: center;
-  flex-wrap: wrap;
-  min-height: 36px;
-}
-
-.scavenge-tray span {
-  background: var(--panel);
-  border-radius: 12px;
-  padding: 6px 10px;
-  font-weight: 800;
-  font-size: 18px;
-}
-
 .noise {
   display: grid;
   grid-template-columns: 28px 1fr 28px;
@@ -1759,64 +1561,7 @@ body.kid .howto-tip b {
   to { box-shadow: 0 0 0 3px rgba(255, 77, 77, 0.6); }
 }
 
-.scavenge-run {
-  min-height: 64px;
-  font-size: 20px;
-}
-
-.scavenge-run.pulse {
-  animation: hotPulse 0.7s ease-in-out infinite alternate;
-}
-
 /* ------------------------------------------------------------------ 3D town */
-
-.explore.town3d-screen {
-  padding: 0;
-  background: #1b1410;
-  overflow: hidden;
-  max-width: none;
-}
-
-.explore.town3d-screen > * {
-  width: auto;
-  max-width: none;
-  /* Absolutely placed children of a flex column would otherwise shrink to their content. */
-  align-self: stretch;
-}
-
-.explore.town3d-screen > .town3d {
-  position: absolute;
-  inset: 0;
-}
-
-.town3d canvas {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  display: block;
-  touch-action: manipulation;
-}
-
-.explore.town3d-screen > .town3d-top {
-  position: absolute;
-  top: calc(10px + var(--safe-t));
-  left: calc(10px + var(--safe-l));
-  right: calc(10px + var(--safe-r));
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 8px;
-  pointer-events: none;
-}
-
-.town3d-top > * {
-  pointer-events: auto;
-}
-
-.town3d-top .stats {
-  flex: 0 1 230px;
-}
 
 .town-chip {
   background: var(--panel);
@@ -1837,54 +1582,71 @@ body.kid .howto-tip b {
   font-size: 12px;
 }
 
-.town3d-bottom .sheet .place,
-.town3d-bottom .sheet .hint {
-  background: var(--panel);
-  border-radius: 16px;
-  margin: 0;
-}
-
-.town3d-bottom .sheet .hint {
-  padding: 12px;
-  font-size: 18px;
-  color: var(--ink);
-}
-
-.town3d-bottom .log {
-  max-height: 52px;
-  background: var(--panel);
-}
-
-.town3d-bottom .log p:not(:first-child) {
-  display: none;
-}
-
-.town3d-bottom .back-road {
-  min-height: 58px;
-  font-size: 19px;
-}
-
-.place .row .btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
 .big-icon {
   font-size: 24px;
   line-height: 1;
 }
 
-.place h3 .big-icon {
-  font-size: 28px;
-}
-
-.noise[hidden] {
+.noise[hidden],
+.town-hint[hidden] {
   display: none;
 }
 
-.explore.town3d-screen > .town3d-bottom {
-  max-width: 560px;
+/* The town plays in the road view; its HUD keeps to the top and bottom edges. */
+.town-hud .town-bottom {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(560px, 100%);
+  align-self: center;
+}
+
+.town-hint,
+.town-log {
+  background: var(--panel);
+  border-radius: 14px;
+  padding: 8px 12px;
+  font-size: 16px;
+  color: var(--ink);
+}
+
+.town-log:empty {
+  display: none;
+}
+
+.town-log p {
+  margin: 0;
+}
+
+.town-log.fresh {
+  animation: slideUp 0.25s ease-out;
+}
+
+.town-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.town-actions .btn {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 56px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 17px;
+  pointer-events: auto;
+}
+
+/* Kid mode: picture buttons only, big. */
+.town-actions.kid .btn {
+  min-height: 76px;
+}
+
+.town-actions.kid .big-icon {
+  font-size: 40px;
 }
 
 /* ------------------------------------------------------------------ narrator voice */
@@ -2162,6 +1924,24 @@ body.kid .howto-tip b {
 }
 
 @media (orientation: landscape) and (max-height: 560px) {
+  /* Town sideways: the panel moves to the right so the town stays in view. */
+  .town-hud .town-bottom {
+    align-self: flex-end;
+    width: min(380px, 48vw);
+    gap: 6px;
+  }
+  .town-hint,
+  .town-log {
+    font-size: 14px;
+    padding: 6px 10px;
+  }
+  .town-actions .btn {
+    min-height: 48px;
+  }
+  .town-chip small {
+    display: none;
+  }
+
   /* Title menu: two columns of buttons. */
   .screen.title {
     display: grid;
@@ -2235,32 +2015,6 @@ body.kid .howto-tip b {
     display: none;
   }
 
-  /* 3D town: the panel moves to the right so the town stays in view. */
-  .explore.town3d-screen > .town3d-bottom {
-    left: auto;
-    width: min(360px, 46vw);
-    margin: 0;
-    gap: 8px;
-  }
-  .town3d-top .stats {
-    flex-basis: 220px;
-  }
-  .town3d-bottom .back-road {
-    min-height: 50px;
-  }
-  .town3d-bottom .sheet .place {
-    padding: 8px 10px;
-  }
-  .town3d-bottom .sheet .place h3 {
-    margin-bottom: 4px;
-  }
-  .town3d-bottom .log {
-    max-height: 40px;
-    font-size: 13px;
-  }
-  .town3d-bottom .log p {
-    margin: 4px 0;
-  }
   .town-chip {
     padding: 6px 10px;
   }
@@ -2269,18 +2023,6 @@ body.kid .howto-tip b {
   }
   .town-chip small {
     display: none;
-  }
-
-  /* Crate search: a lower bar so the boxes stay tappable. */
-  .scavenge-bottom {
-    gap: 6px;
-    bottom: calc(8px + var(--safe-b));
-  }
-  .scavenge-tray {
-    min-height: 0;
-  }
-  .scavenge-run {
-    min-height: 54px;
   }
 
   /* Kid shoot button: beside the dashboard, clear of the radio and menu buttons. */
@@ -2295,17 +2037,6 @@ body.kid .howto-tip b {
   .landmark-toast {
     max-width: 34vw;
   }
-}
-
-/* Flat (Low graphics) town: the map shrinks and "Back on the road" stays on screen. */
-.explore:not(.town3d-screen) .town-map {
-  max-height: 55vh;
-  max-height: 55dvh;
-}
-.explore:not(.town3d-screen) > .back-road {
-  position: sticky;
-  bottom: 0;
-  box-shadow: 0 -6px 18px rgba(27, 20, 16, 0.9);
 }
 
 /* Shortcut flat tyre: tap until the bar fills. */

@@ -74,6 +74,13 @@ export const CREDITS: Credit[] = [
     links: [['github.com/microsoft/TRELLIS.2', 'https://github.com/microsoft/TRELLIS.2'], ['comfy.org', 'https://www.comfy.org']],
   },
   {
+    icon: '🚶',
+    name: 'Blender',
+    what: 'Gave the people (you on foot, the hitchhiker, the cyclist and the Cat Queen) their bones and their walking, waving and pedalling moves.',
+    licence: 'Free and open source; the moves were made for this game.',
+    links: [['blender.org', 'https://www.blender.org']],
+  },
+  {
     icon: '🎨',
     name: 'FLUX.1 schnell',
     what: 'The concept pictures the 3D models were made from, by Black Forest Labs.',

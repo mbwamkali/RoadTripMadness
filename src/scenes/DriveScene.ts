@@ -29,13 +29,18 @@ import { sound } from '../audio/sound';
 import { Atmosphere } from './atmosphere';
 import { Backdrop } from './backdrop';
 import { addGroundDetail } from './groundDetail';
-import { fitted, setBuildingsNight, HD_HOUSES, HD_ROADSIDE, hdRoadside, placeBuilding, type HdRoadside } from './hdBuildings';
+import { setBuildingsNight, HD_ROADSIDE, hdRoadside, type HdRoadside } from './hdBuildings';
 import { quality } from './quality';
-import { MODEL_SPECS, modelGeometry, modelMaterial, modelMesh, treeModelsWanted, type ModelName } from './models';
+import { MODEL_SPECS, modelGeometry, modelMaterial, treeModelsWanted, type ModelName } from './models';
 import { detailTexture } from './textures';
 import { daylight, hourOf, weatherAt } from '../game/time';
 import { BIOMES, biomeAtDistance, biomeSpans, groundColorAt, type BiomeId, type BiomeSpan, type PlantKind } from '../game/biomes';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { crateCount } from '../game/state';
+import { layoutTown, townSeed } from '../town/layout';
+import { knownTown, lookupTown } from '../town/fetchTown';
+import { buildTownWorld, type TownWorld } from '../town/world';
+import { TownPlay, type TownHooks } from '../town/play';
 
 const CHUNK = 400;
 const BEHIND = 250;
@@ -45,6 +50,14 @@ const GROUND_SIZE = 4000;
 const GROUND_TILE = 60;
 const ROAD_HALF = 4.5;
 const PROMPT_RANGE = 320;
+/** Look a town's streets up this far ahead, so the answer is usually in before it's built. */
+const TOWN_LOOKAHEAD = 4000;
+/** Wait for the lookup until the town is this close, then lay it out from made-up data. */
+const TOWN_WAIT = 700;
+/** Roadside scenery keeps this far (along the road) from a town's turn-off. */
+const TOWN_CLEAR = 85;
+/** Where the car rejoins the highway after a town, past the turn-off. */
+const TOWN_EXIT = 14;
 
 export interface DriveCallbacks {
   onEncounter(): void;
@@ -215,6 +228,10 @@ export class DriveScene implements GameScene {
   private fightCam = 0;
 
   private chunks = new Map<number, THREE.Group>();
+  /** The walkable towns built along the road, by stop id. */
+  private towns = new Map<string, TownWorld>();
+  /** You're in a town: it drives the car, the walker and the camera. */
+  town: TownPlay | null = null;
   private car: THREE.Group;
   private ground: THREE.Mesh;
   private roadTex = makeRoadTexture();
@@ -829,6 +846,14 @@ export class DriveScene implements GameScene {
         if (o.name === 'spin') o.rotation.z += dt * 0.6;
       });
     }
+    if (this.town) {
+      if (!this.paused) this.town.update(dt);
+      this.traffic.step(dt, this.state.distance);
+      this.placeTraffic();
+      const c = this.car.position;
+      this.ground.position.set(c.x, 0, c.z);
+      return;
+    }
     if (this.turning) {
       this.animateTurn(dt);
       return;
@@ -844,6 +869,7 @@ export class DriveScene implements GameScene {
       if (this.stopping) break;
     }
     this.streamChunks();
+    this.streamTowns();
     this.fightCam += ((this.fight ? 1 : 0) - this.fightCam) * Math.min(1, dt * 2);
     this.placeCar(false, dt);
     if (this.fight) {
@@ -1361,15 +1387,16 @@ export class DriveScene implements GameScene {
       t: 0,
       from: this.car.position.clone(),
       mid: p.clone().addScaledVector(fwd, 4),
-      to: p.clone().addScaledVector(side, 45),
+      to: p.clone().addScaledVector(side, stop.kind === 'shortcut' ? 45 : this.edge(stop.at) + 7),
     };
+    if (stop.kind !== 'shortcut') this.ensureTown(stop);
     this.promptStop = null;
     this.cb.onPrompt(null, 0);
   }
 
   private animateTurn(dt: number): void {
     const tr = this.turning!;
-    tr.t = Math.min(1, tr.t + dt / 1.8);
+    tr.t = Math.min(1, tr.t + dt / (tr.stop.kind === 'shortcut' ? 1.8 : 1.2));
     const t = tr.t;
     const a = tr.from.clone().lerp(tr.mid, t);
     const b = tr.mid.clone().lerp(tr.to, t);
@@ -1577,7 +1604,7 @@ export class DriveScene implements GameScene {
         for (const side of [-1, 1]) placeAt(inst.railPost, p, right, side * (this.edge(d) + this.shoulder(d) + 0.52), 0, 1);
       }
       for (const side of [-1, 1]) {
-        if (stopsHere.some((s) => Math.abs(s.at - d) < 30 && (s.side === 'right' ? 1 : -1) === side)) continue;
+        if (stopsHere.some((s) => Math.abs(s.at - d) < (s.kind === 'shortcut' ? 30 : TOWN_CLEAR) && (s.side === 'right' ? 1 : -1) === side)) continue;
         if (clear(d, side)) continue;
         const r = rng();
         if (r < urban * 0.6) {
@@ -1646,7 +1673,7 @@ export class DriveScene implements GameScene {
       for (const sol of solids) for (const i of sol.inst ?? []) if (i.key === key) i.mesh = mesh;
     }
     for (const stop of this.state.stops) {
-      if (stop.at >= from && stop.at < from + CHUNK) g.add(this.buildStop(stop, rng));
+      if (stop.at >= from && stop.at < from + CHUNK) g.add(this.buildStop(stop));
     }
     this.addMileMarkers(g, from, to);
     this.addSigns(g, k, from, Math.min(this.path.length, from + CHUNK));
@@ -1863,7 +1890,7 @@ export class DriveScene implements GameScene {
     }
   }
 
-  private buildStop(stop: Stop, rng: Rng): THREE.Group {
+  private buildStop(stop: Stop): THREE.Group {
     const g = new THREE.Group();
     const p = this.path.pointAt(stop.at);
     const f = this.path.directionAt(stop.at);
@@ -1876,11 +1903,14 @@ export class DriveScene implements GameScene {
     const a = { x: p.x + side.x * edge, y: p.y + side.y * edge };
     const b = { x: p.x + side.x * len, y: p.y + side.y * len };
     const dirt = stop.kind === 'shortcut';
-    const road = new THREE.Mesh(new THREE.PlaneGeometry(dirt ? 5 : 7, len - edge), dirt ? this.dirtMat : this.roadMat);
-    road.rotation.x = -Math.PI / 2;
-    road.rotation.z = Math.atan2(side.x, side.y);
-    road.position.copy(to3({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, 0.09));
-    g.add(road);
+    // A town's own Main Street (built by streamTowns) starts at the road edge; a shortcut is a dirt track.
+    if (dirt) {
+      const road = new THREE.Mesh(new THREE.PlaneGeometry(5, len - edge), this.dirtMat);
+      road.rotation.x = -Math.PI / 2;
+      road.rotation.z = Math.atan2(side.x, side.y);
+      road.position.copy(to3({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, 0.09));
+      g.add(road);
+    }
     // Exit sign ahead of the turn.
     const signAt = this.path.pointAt(stop.at - 90);
     const sf = this.path.directionAt(stop.at - 90);
@@ -1899,65 +1929,93 @@ export class DriveScene implements GameScene {
       blade.position.copy(to3({ x: a.x + side.x * 3 + f.x * back, y: a.y + side.y * 3 + f.y * back }, 4));
       g.add(blade);
     }
-    // A dirt road just runs off into the distance.
-    if (dirt) return g;
-    // The detailed buildings, when loaded: the stop's own places in a row across the end of the side road, houses behind.
-    const facing = Math.atan2(-side.x, side.y);
-    const at = (along: number, out: number) => to3({ x: p.x + side.x * out + f.x * along, y: p.y + side.y * out + f.y * along }, 0);
-    const places = stop.places.map((pl) => placeBuilding(pl, pl === 'junkyard' ? 18 : 13, 14));
-    if (places.length && places.every(Boolean)) {
-      places.forEach((b, i) => {
-        b!.position.copy(at((i - (places.length - 1) / 2) * 17, len + 4));
-        b!.rotation.y = facing + (rng() - 0.5) * 0.1;
-        g.add(b!);
-      });
-      const houses = stop.kind === 'farm' ? ['barn', 'house_farm'] as const : stop.kind === 'town' ? HD_HOUSES : [];
-      houses.forEach((h, i) => {
-        const b = fitted(h, 11, 12);
-        if (!b) return;
-        b.position.copy(at((i - (houses.length - 1) / 2) * 18 + (rng() - 0.5) * 4, len + 24 + rng() * 4));
-        b.rotation.y = facing + (rng() - 0.5) * 0.3;
-        g.add(b);
-      });
-      return g;
-    }
-    // A little cluster of buildings at the end of the side road.
-    for (let i = 0; i < 4 + rng() * 4; i++) {
-      const w = 8 + rng() * 10;
-      const h = 4 + rng() * 8;
-      const along = (rng() - 0.5) * 70;
-      const out = len - 10 + rng() * 40;
-      const model = modelMesh(pick(rng, stop.kind === 'town' || stop.kind === 'mall' ? BLOCK_MODELS : HOUSE_MODELS));
-      if (model) {
-        model.position.copy(to3({ x: p.x + side.x * out + f.x * along, y: p.y + side.y * out + f.y * along }, 0));
-        // Face back down the side road.
-        model.rotation.y = Math.atan2(-side.x, side.y) + (rng() - 0.5) * 0.4;
-        model.scale.setScalar(0.9 + rng() * 0.4);
-        g.add(model);
-        continue;
-      }
-      const box = new THREE.Mesh(
-        new THREE.BoxGeometry(w, h, 8 + rng() * 6),
-        lit({ color: new THREE.Color().setHSL(rng(), 0.3, 0.6) }),
-      );
-      (box.material as THREE.Material).userData.chunkOwned = true;
-      box.position.copy(to3({ x: p.x + side.x * out + f.x * along, y: p.y + side.y * out + f.y * along }, h / 2));
-      box.rotation.y = rng();
-      g.add(box);
-    }
-    if (stop.places.includes('pumps')) {
-      const canopy = new THREE.Mesh(new THREE.BoxGeometry(16, 0.8, 10), this.mats.canopy);
-      const cpos = { x: p.x + side.x * (28 + wide) + f.x * 14, y: p.y + side.y * (28 + wide) + f.y * 14 };
-      canopy.position.copy(to3(cpos, 5));
-      canopy.rotation.y = Math.atan2(f.x, f.y);
-      g.add(canopy);
-      for (const o of [-5, 5]) {
-        const post = new THREE.Mesh(new THREE.BoxGeometry(0.6, 5, 0.6), this.mats.white);
-        post.position.copy(to3({ x: cpos.x + f.y * o, y: cpos.y - f.x * o }, 2.5));
-        g.add(post);
-      }
-    }
     return g;
+  }
+
+  // ------------------------------------------------------------ towns
+
+  /** Starts looking towns up ahead, builds them as they come into view, and drops them once passed. */
+  private streamTowns(): void {
+    const d = this.state.distance;
+    for (const stop of this.state.stops) {
+      if (stop.kind === 'shortcut') continue;
+      const ahead = stop.at - d;
+      if (ahead > -BEHIND && ahead < TOWN_LOOKAHEAD) void lookupTown(this.townPlace(stop));
+      const want = ahead > -BEHIND && ahead < this.ahead;
+      if (want && !this.towns.has(stop.id) && (knownTown(this.townPlace(stop)) !== undefined || ahead < TOWN_WAIT)) this.ensureTown(stop);
+      if (!want && this.towns.has(stop.id) && this.town?.world !== this.towns.get(stop.id)) this.dropTown(stop.id);
+    }
+  }
+
+  private townPlace(stop: Stop) {
+    return latLngAt(this.state.route, this.path, stop.at);
+  }
+
+  /** The stop's town, built where its side road leaves the highway. */
+  private ensureTown(stop: Stop): TownWorld {
+    const have = this.towns.get(stop.id);
+    if (have) return have;
+    const seed = townSeed(this.state.seed, stop.id);
+    const layout = layoutTown({ name: stop.name, places: stop.places, seed, street: stop.street, map: knownTown(this.townPlace(stop)) ?? null });
+    const world = buildTownWorld(layout, { asphalt: this.asphaltMat, lineYellow: this.stripeMats.yellowDash }, seed, crateCount(kidMode.on));
+    const p = this.path.pointAt(stop.at);
+    const f = this.path.directionAt(stop.at);
+    const k = stop.side === 'right' ? 1 : -1;
+    const side = { x: f.y * k, y: -f.x * k };
+    const edge = this.edge(stop.at);
+    world.group.position.copy(to3({ x: p.x + side.x * edge, y: p.y + side.y * edge }, 0));
+    world.group.rotation.y = Math.atan2(-side.x, side.y);
+    if (this.shadows) castShadows(world.group, true);
+    this.scene.add(world.group);
+    this.towns.set(stop.id, world);
+    return world;
+  }
+
+  private dropTown(id: string): void {
+    const w = this.towns.get(id);
+    if (!w) return;
+    this.scene.remove(w.group);
+    w.dispose();
+    this.towns.delete(id);
+  }
+
+  /** Into the stop's town: from here the town drives the car and the camera until `hooks.done`. */
+  enterTown(stop: Stop, hooks: Omit<TownHooks, 'done'> & { done(): void }): TownPlay {
+    const world = this.ensureTown(stop);
+    const at = Math.min(this.path.length - 1, stop.at + TOWN_EXIT);
+    const f = this.path.directionAt(at);
+    const pos = to3(this.path.pointAt(at)).addScaledVector(new THREE.Vector3(f.y, 0, f.x), this.laneAt(at));
+    const fwd = new THREE.Vector3(f.x, 0, -f.y);
+    this.town?.dispose();
+    this.town = new TownPlay({ scene: this.scene, camera: this.camera, car: this.car, exit: { pos, fwd } }, world, {
+      ...hooks,
+      done: () => {
+        this.town?.dispose();
+        this.town = null;
+        // Back on the highway just past the turn-off, where the town left the car.
+        this.state.distance = Math.max(this.state.distance, at);
+        hooks.done();
+      },
+    });
+    return this.town;
+  }
+
+  /** Jumps to just short of a stop and turns in straight away (play tests: rtm.stop). */
+  turnInNow(stop: Stop): void {
+    this.town?.dispose();
+    this.town = null;
+    this.state.distance = Math.max(0, stop.at - 0.5);
+    this.paused = false;
+    this.stopping = false;
+    this.pendingTurn = null;
+    this.placeCar(true);
+    this.streamChunks();
+    this.startTurn(stop);
+  }
+
+  /** The town you're in, for the HUD. */
+  get inTown(): boolean {
+    return !!this.town;
   }
 
   private buildFinish(): THREE.Group {
@@ -1984,6 +2042,9 @@ export class DriveScene implements GameScene {
     this.animalMeshes.clear();
     for (const g of this.chunks.values()) disposeChunk(g);
     this.chunks.clear();
+    this.town?.dispose();
+    this.town = null;
+    for (const id of [...this.towns.keys()]) this.dropTown(id);
     disposeTree(this.car);
     this.ground.geometry.dispose();
     const gm = this.ground.material as THREE.MeshStandardMaterial;
