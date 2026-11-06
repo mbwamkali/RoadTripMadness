@@ -2385,9 +2385,11 @@ body.kid .howto-tip b {
 .fight-banner {
   position: absolute;
   top: 30%;
-  left: 50%;
-  transform: translateX(-50%);
-  width: max-content;
+  /* Centred without a transform, so the slide-in animation can't push it off the screen. */
+  left: 0;
+  right: 0;
+  margin: 0 auto;
+  width: fit-content;
   max-width: calc(100% - 24px);
   text-align: center;
   font-size: 22px;
