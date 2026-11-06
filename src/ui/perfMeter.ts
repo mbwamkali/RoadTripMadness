@@ -5,7 +5,8 @@ import { BUILD } from '../build';
 /**
  * A small speed readout for testing on real phones: open the game with
  * ?perf=1 (remembered until ?perf=0). Shows frames per second, the slowest
- * frame, draw calls and triangles, refreshed every second.
+ * frame, draw calls and triangles, refreshed every second. Line 1 is for
+ * people (fps, graphics mode, build); line 2 is a compact code (see end()).
  */
 export class PerfMeter {
   private el: HTMLDivElement | null = null;
@@ -35,7 +36,7 @@ export class PerfMeter {
       position: 'fixed', left: '50%', transform: 'translateX(-50%)', top: 'calc(env(safe-area-inset-top) + 2px)', zIndex: '9999',
       font: '600 11px/1.3 ui-monospace, monospace', color: '#fff', background: 'rgba(0,0,0,0.65)', padding: '3px 7px', borderRadius: '6px', pointerEvents: 'none', whiteSpace: 'pre',
     });
-    this.el.textContent = `build ${BUILD.number} · ${BUILD.commit}`;
+    this.el.textContent = `build ${BUILD.number}`;
     document.body.append(this.el);
   }
 
@@ -55,7 +56,10 @@ export class PerfMeter {
     const fps = (this.frames * 1000) / (now - this.since);
     const i = this.renderer.info;
     const tris = i.render.triangles;
-    this.el.textContent = `${fps.toFixed(0)} fps · worst ${this.worst.toFixed(0)} ms · ${quality.level} ×${this.renderer.getPixelRatio().toFixed(1)}\n${i.render.calls} draws · ${tris > 1e6 ? (tris / 1e6).toFixed(2) + 'M' : Math.round(tris / 1000) + 'k'} tris · ${i.memory.geometries} geo · ${i.memory.textures} tex\nbuild ${BUILD.number} · ${BUILD.commit}`;
+    // Line 1 for people: fps, graphics mode, build. Line 2 is a compact code for Claude to read off a screenshot:
+    // w slowest frame ms, d draw calls, t triangles (k), g geometries, x textures, r pixel ratio, c commit.
+    const mode = { low: 'Low', medium: 'Medium', high: 'High' }[quality.level];
+    this.el.textContent = `${fps.toFixed(0)} fps · ${mode} · build ${BUILD.number}\nw${this.worst.toFixed(0)} d${i.render.calls} t${Math.round(tris / 1000)} g${i.memory.geometries} x${i.memory.textures} r${this.renderer.getPixelRatio().toFixed(1)} c${BUILD.commit}`;
     this.frames = 0;
     this.worst = 0;
     this.since = now;
