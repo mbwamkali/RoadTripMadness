@@ -95,6 +95,9 @@ export class TownPlay {
   private fx: { obj: THREE.Object3D; life: number; vy: number }[] = [];
   private camPos = new THREE.Vector3();
   private camLook = new THREE.Vector3();
+  /** Which Main Street view: 0 shows every stop, the others are closer looks at part of the street. */
+  view = 0;
+  private views: { key: string; pos: THREE.Vector3; look: THREE.Vector3 }[] = [];
   private heading = new THREE.Vector3(0, 0, -1);
   private ray = new THREE.Raycaster();
   private time = 0;
@@ -162,6 +165,18 @@ export class TownPlay {
   cratesLeft(): number {
     if (!this.search) return 0;
     return this.search.opened.filter((o) => !o).length * (this.search.over ? 0 : 1);
+  }
+
+  /** How many Main Street views there are (the first always shows every stop). */
+  get viewCount(): number {
+    const n = this.world.spots.length;
+    return n > 3 ? 3 : 1;
+  }
+
+  /** Main Street: switch to the next view. */
+  nextView(): void {
+    this.view = (this.view + 1) % this.viewCount;
+    this.hooks.changed();
   }
 
   // ---------------------------------------------------------------- taps
@@ -406,6 +421,7 @@ export class TownPlay {
       this.hooks.changed();
       this.driveCurve(dedupe([now, this.laneIn[Math.min(j, i + 1)], this.laneIn[j]]), false, () => {
         this.phase = 'street';
+        this.view = 0;
         this.hooks.say(this.hooks.kid ? 'Tap a sign!' : 'Back on Main Street. Tap a sign to pull in.', false);
         this.hooks.changed();
       });
@@ -716,9 +732,10 @@ export class TownPlay {
       wantPos.addScaledVector(along, -8).setY(car.y + 7.5);
       wantLook.copy(mid).setY(car.y + 2);
     } else if (this.phase === 'street' && !busy) {
-      // Waiting on Main Street: higher and further back, so the whole street and its signs are in view.
-      wantPos.copy(car).addScaledVector(fwd, -16).setY(car.y + 12);
-      wantLook.copy(car).addScaledVector(fwd, 34).setY(car.y);
+      // Waiting on Main Street: up high, framed so every stop's sign (and the car) is on screen.
+      const v = this.streetView(this.view);
+      wantPos.copy(v.pos);
+      wantLook.copy(v.look);
     } else {
       // Driving: the road's chase camera, a bit higher and closer when zombies are about (as in road fights).
       wantPos.copy(car).addScaledVector(fwd, busy ? -11.5 : -14).setY(car.y + (busy ? 8.5 : 7));
@@ -731,6 +748,89 @@ export class TownPlay {
     this.camLook.lerp(wantLook, k);
     cam.position.copy(this.camPos);
     cam.lookAt(this.camLook);
+  }
+
+  /**
+   * A Main Street view, looking up the street from where it starts (the signs face that way),
+   * pulled back until every sign in it fits the screen. View 0 holds every stop;
+   * views 1 and 2 are the near and far halves of the street, closer up. Worked out once per
+   * screen shape and kept, so the camera doesn't wander.
+   */
+  private streetView(i: number): { key: string; pos: THREE.Vector3; look: THREE.Vector3 } {
+    const cam = this.host.camera;
+    const key = `${i}|${cam.aspect.toFixed(3)}|${cam.fov}`;
+    const kept = this.views[i];
+    if (kept && kept.key === key) return kept;
+    const start = this.laneIn[0];
+    const order = [...this.world.spots].sort((a, b) => a.centre.distanceTo(start) - b.centre.distanceTo(start));
+    const half = Math.ceil(order.length / 2);
+    const spots = i === 0 ? order : i === 1 ? order.slice(0, half) : order.slice(half - 1);
+    const pts: THREE.Vector3[] = [];
+    const box = new THREE.Box3();
+    for (const sp of spots) {
+      box.setFromObject(sp.sign);
+      pts.push(box.min.clone(), box.max.clone(), new THREE.Vector3(box.min.x, box.max.y, box.min.z), new THREE.Vector3(box.max.x, box.min.y, box.max.z));
+      pts.push(sp.centre.clone());
+    }
+    const centre = new THREE.Box3().setFromPoints(pts).getCenter(new THREE.Vector3());
+    const ahead = centre.clone().sub(start).setY(0);
+    if (ahead.lengthSq() < 1) ahead.set(Math.sin(this.carYaw), 0, Math.cos(this.carYaw));
+    ahead.normalize();
+    // The part of the screen clear of the meters at the top and the buttons at the bottom.
+    const BAND = { x: 0.88, top: 0.68, bottom: -0.5 };
+    const probe = new THREE.PerspectiveCamera(cam.fov, cam.aspect, 0.5, 2000);
+    const q = new THREE.Vector3();
+    const aim = (pos: THREE.Vector3, look: THREE.Vector3) => {
+      probe.position.copy(pos);
+      probe.lookAt(look);
+      probe.updateMatrixWorld(true);
+    };
+    const fits = (pos: THREE.Vector3, look: THREE.Vector3) => {
+      aim(pos, look);
+      return pts.every((p) => {
+        q.copy(p).project(probe);
+        return q.z < 1 && Math.abs(q.x) < BAND.x && q.y < BAND.top && q.y > BAND.bottom;
+      });
+    };
+    /** The closest the camera can sit along `dir` from `look` with everything in the band (or null). */
+    const fit = (look: THREE.Vector3, dir: THREE.Vector3): number | null => {
+      let lo = 6, hi = 400;
+      if (!fits(look.clone().addScaledVector(dir, hi), look)) return null;
+      for (let k = 0; k < 22; k++) {
+        const mid = (lo + hi) / 2;
+        if (fits(look.clone().addScaledVector(dir, mid), look)) hi = mid;
+        else lo = mid;
+      }
+      return hi;
+    };
+    // A few angles around "straight up the street"; take the one that can sit closest. Each one is
+    // re-aimed a few times so the street sits in the middle of the clear band, not just the screen.
+    let best: { pos: THREE.Vector3; look: THREE.Vector3; d: number } | null = null;
+    for (const turn of [0, -0.35, 0.35, -0.7, 0.7]) {
+      for (const pitch of [0.72, 0.9]) {
+        const dir = ahead.clone().applyAxisAngle(UP, turn).multiplyScalar(-Math.cos(pitch)).setY(Math.sin(pitch));
+        const look = centre.clone();
+        let dist = fit(look, dir);
+        for (let k = 0; dist !== null && k < 4; k++) {
+          aim(look.clone().addScaledVector(dir, dist), look);
+          let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+          for (const p of pts) {
+            q.copy(p).project(probe);
+            x0 = Math.min(x0, q.x); x1 = Math.max(x1, q.x); y0 = Math.min(y0, q.y); y1 = Math.max(y1, q.y);
+          }
+          const depth = q.copy(look).project(probe).z;
+          const shifted = new THREE.Vector3((x0 + x1) / 2, (y0 + y1) / 2 - (BAND.top + BAND.bottom) / 2, depth).unproject(probe);
+          look.copy(shifted);
+          dist = fit(look, dir) ?? dist;
+        }
+        if (dist === null) continue;
+        const d = dist * (1 + Math.abs(turn) * 0.15);
+        if (!best || d < best.d) best = { pos: look.clone().addScaledVector(dir, dist * 1.04), look, d };
+      }
+    }
+    const look = best?.look ?? centre;
+    const pos = best?.pos ?? centre.clone().addScaledVector(ahead, -40).setY(centre.y + 45);
+    return (this.views[i] = { key, pos, look });
   }
 
   dispose(): void {

@@ -210,6 +210,8 @@ const BOSS_HOLD = 40;
 /** How much a fight's nitro boost speeds the car up. */
 /** Game units per second for each mph (65 mph = cruise speed). */
 export const UNITS_PER_MPH = CRUISE_SPEED / CRUISE_MPH;
+/** Speed the car eases down to while a stop's Turn button is on offer. */
+const PROMPT_MPH = CRUISE_MPH * 0.7;
 
 export class DriveScene implements GameScene {
   scene = new THREE.Scene();
@@ -902,9 +904,12 @@ export class DriveScene implements GameScene {
     const top = topSpeed(s);
     const want = targetMph(limit, this.over, this.cap(limit));
     // About 0 to 60 in four seconds; braking is quicker.
+    const prevPace = this.paceMph;
     this.paceMph = want > this.paceMph ? Math.min(want, this.paceMph + 15 * dt) : Math.max(want, this.paceMph - 30 * dt);
+    // A stop coming up: ease off (gently) so there's time to read the Turn button. Once you've chosen to
+    // turn, the speed is yours again: swipe up or down as usual.
+    if (this.promptStop && !this.pendingTurn) this.paceMph = Math.min(this.paceMph, Math.max(PROMPT_MPH, prevPace - 20 * dt));
     let speed = this.paceMph * UNITS_PER_MPH * this.roadSpeed;
-    if (this.promptStop) speed = Math.min(speed, CRUISE_SPEED * 0.7);
     // Off the road: slower on the shoulder, slower still on the sidewalk, and slowest on grass and dirt.
     if (this.off) speed *= this.offSurface() === 'paved' ? OFFROAD_SPEED.paved : this.offSurface() === 'sidewalk' ? OFFROAD_SPEED.sidewalk : OFFROAD_SPEED.rough;
     // Brake behind a slower vehicle in your lane.
@@ -921,6 +926,8 @@ export class DriveScene implements GameScene {
       }
     }
     if (this.autopilot) speed = this.autopilotAnimals(speed);
+    // Signalling, the car can't swerve off the road, so it never drives you into something big in your lane.
+    if (this.pendingTurn) speed = this.signalBrake(speed);
     // Boost: a burst of extra speed, never past the vehicle's top speed.
     if (this.fight?.boosting()) speed = Math.max(speed, Math.min(speed + BOOST_MPH * UNITS_PER_MPH, top * UNITS_PER_MPH));
     speed = Math.max(0, speed);
@@ -1007,6 +1014,24 @@ export class DriveScene implements GameScene {
   }
 
   /** Autopilot slows for animals in its path and honks them along, rather than hitting them. */
+  /**
+   * While signalling: slow to a stop behind a wreck, a roadblock or animals in your lane, so the turn
+   * never forces a crash. Change lanes, shoot it, or wait for the animals to cross. Zombies and junk
+   * you can still drive through.
+   */
+  private signalBrake(speed: number): number {
+    const d = this.state.distance;
+    let gap = Infinity;
+    const o = this.obstacles.ahead(d, this.playerLane, 80);
+    if (o && (o.kind === 'wreck' || o.kind === 'roadblock')) gap = o.d - d;
+    const a = this.animals.inPath(d, this.lane, 80);
+    if (a) gap = Math.min(gap, a.d - d);
+    if (gap === Infinity) return speed;
+    const safe = CRUISE_SPEED * Math.max(0, (gap - 9) / 60);
+    if (safe < speed) this.paceMph = Math.min(this.paceMph, safe / UNITS_PER_MPH);
+    return Math.min(speed, safe);
+  }
+
   private autopilotAnimals(speed: number): number {
     const a = this.animals.inPath(this.state.distance, this.lane, 70);
     if (!a) return speed;

@@ -1627,7 +1627,7 @@ function showTown(stop: Stop): void {
     // The buttons change only when where you are or what's around does.
     const near = p.nearZombies() > 0;
     const at = p.at?.lot.place;
-    const key = [p.phase, at, near, p.filling > 0, p.canFill(), repairCost(s).hp > 0, p.cratesLeft(), s.inv.cash].join('|');
+    const key = [p.phase, p.view, at, near, p.filling > 0, p.canFill(), repairCost(s).hp > 0, p.cratesLeft(), s.inv.cash].join('|');
     if (key === shown) return;
     shown = key;
     const b: HTMLElement[] = [];
@@ -1636,6 +1636,7 @@ function showTown(stop: Stop): void {
     const runOrWalk = () => button(near ? '🏃' : '🚗', near ? 'Run to the car!' : 'Back to car', () => p.backToCar(near), near);
     if (p.phase === 'street') {
       tip = kid ? '👆 🪧' : 'Tap a sign to pull in.';
+      if (p.viewCount > 1) b.push(button('👀', p.view === 0 ? 'Closer look' : p.view < p.viewCount - 1 ? 'Further up' : 'Whole street', () => p.nextView()));
       b.push(driveOn());
     } else if (p.phase === 'parked') {
       if (at === 'pumps') {
