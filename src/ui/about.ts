@@ -127,6 +127,13 @@ export const CREDITS: Credit[] = [
     licence: 'CC BY 4.0.',
     links: [['open-meteo.com', 'https://open-meteo.com']],
   },
+  {
+    icon: '⛽',
+    name: 'U.S. Energy Information Administration',
+    what: 'The real U.S. average price of gas each week. Prices in the game move with it.',
+    licence: 'Public domain (U.S. government data).',
+    links: [['eia.gov gasoline prices', 'https://www.eia.gov/petroleum/gasdiesel/']],
+  },
 ];
 
 const link = (label: string, href: string) => h('a', { href, target: '_blank', rel: 'noopener' }, label);

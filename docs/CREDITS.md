@@ -53,4 +53,4 @@ The four songs (Home Stretch, Evening Drive, Desert Highway, Cat Queen Creep) ar
 
 The cat sounds are trimmed, cleaned of low hum and levelled; in the game each meow is retuned to the note it lands on.
 
-Other bundled data: the offline atlas and US state outlines come from Natural Earth (public domain); classic routes, map features and each town's streets and shops from OpenStreetMap (© OpenStreetMap contributors, ODbL); live weather from Open-Meteo (CC BY 4.0).
+Other bundled data: the offline atlas and US state outlines come from Natural Earth (public domain); classic routes, map features and each town's streets and shops from OpenStreetMap (© OpenStreetMap contributors, ODbL); live weather from Open-Meteo (CC BY 4.0); the weekly U.S. average gas price from the U.S. Energy Information Administration (public domain, https://www.eia.gov/petroleum/gasdiesel/), which game prices follow.

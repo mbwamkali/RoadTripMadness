@@ -15,12 +15,14 @@ export const UPGRADES: Record<UpgradeKind, { name: string; icon: string; describ
 
 export const noUpgrades = (): Upgrades => ({ armor: 0, tank: 0, engine: 0, turret: 0, ram: 0 });
 
-export function upgradeCost(level: number): { scrap: number; cash: number } {
-  return [
+/** Scrap and cash for the next level; `cashScale` inflates the cash like found money (state.ts cashScale). */
+export function upgradeCost(level: number, cashScale = 1): { scrap: number; cash: number } {
+  const c = [
     { scrap: 12, cash: 20 },
     { scrap: 24, cash: 45 },
     { scrap: 40, cash: 80 },
   ][Math.min(level, 2)];
+  return { scrap: c.scrap, cash: Math.max(1, Math.round(c.cash * cashScale)) };
 }
 
 export const maxHealthFor = (u: Upgrades) => 100 + u.armor * 25;

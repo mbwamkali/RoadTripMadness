@@ -1,6 +1,6 @@
 import { realKmAt } from '../geo/route';
 import { makeRng } from './rng';
-import { fuelCost, tankSize, type GameState } from './state';
+import { fuelCost, priceOf, tankSize, type GameState } from './state';
 import { hasFuel, type Stop } from './stops';
 import { hourOf, isNight } from './time';
 
@@ -73,7 +73,7 @@ export function rideForGas(s: GameState, plan: BikePlan = planBikeRide(s)): Bike
       fuel -= spilt;
       story.push(`A zombie lunges out of a ditch. You make it, but ${spilt} fuel sloshes out of the can.`);
     } else {
-      const lost = Math.min(s.inv.cash + cash, 10 + Math.floor(rng() * 20));
+      const lost = Math.min(s.inv.cash + cash, priceOf(s, 10 + Math.floor(rng() * 20)));
       cash -= lost;
       story.push(lost > 0 ? `Two raiders on dirt bikes run you off the road and take $${lost}.` : 'Two raiders run you off the road, see your empty pockets, and leave.');
     }

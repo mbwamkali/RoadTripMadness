@@ -88,7 +88,7 @@ describe('scavenging and shops', () => {
     repair(s);
     expect(s.health).toBe(100);
     expect(s.inv.scrap).toBe(0);
-    expect(s.inv.cash).toBe(94);
+    expect(s.inv.cash).toBe(100 - Math.ceil(6 * cashScale(s)));
   });
 
   it('gets riskier the more you search one place', () => {

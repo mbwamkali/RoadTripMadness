@@ -5,6 +5,7 @@ import { fillLandmarks, type Landmark } from './landmarks';
 import type { LiveConditions } from '../geo/liveWeather';
 import type { CrewMember } from './events';
 import { hourOf, nightLoot } from './time';
+import { priceLevelNow } from './gasPrice';
 import { fuelEfficiency, MAX_LEVEL, maxHealthFor, noUpgrades, tankFor, upgradeCost, UPGRADES, type UpgradeKind, type Upgrades } from './upgrades';
 import { generateStops, type PlaceKind, type Stop } from './stops';
 import { hashString, makeRng, range, rangeInt, type Rng } from './rng';
@@ -52,6 +53,8 @@ export interface GameState {
   ride?: Ride;
   /** The one-time bike rescue has been used (see rescue.ts). */
   bikeUsed?: boolean;
+  /** Real gas price level locked in at the start of the trip (gasPrice.ts); old saves have none (1). */
+  priceLevel?: number;
   /** Road rage, 0 to 100: rises when you shoot traffic, cools as you drive (see rage.ts). */
   rage?: number;
   /** The boss waiting halfway, drawn from the pool when the trip starts (older saves: by seed). */
@@ -75,33 +78,42 @@ export const TANK = 100;
 
 export const maxHealth = (s: GameState) => Math.round(maxHealthFor(s.upgrades) * rideOf(s).health);
 export const tankSize = (s: GameState) => Math.round(tankFor(s.upgrades) * rideOf(s).tank);
-/** Gas price per fuel unit, the same on every trip. */
+/** Gas price per fuel unit at the reference real price (see gasPrice.ts); the same on every trip length. */
 export const FUEL_PRICE = 2;
 /** Trips up to this long pay out money at the base rate (x2); longer ones pay more, up to MAX_CASH_SCALE. */
 export const RICH_TRIP_MILES = 800;
 export const MAX_CASH_SCALE = 6.67;
 
-/** What a unit of gas costs, in dollars. */
-export function fuelPrice(_s?: { route: { realMeters: number } }): number {
-  return FUEL_PRICE;
+/** What prices need to know about a trip: its real length and its locked-in real gas price level. */
+type Priced = { route: { realMeters: number }; priceLevel?: number };
+
+/** What a unit of gas costs on this trip, in dollars: $2, moved with the real price of gas. */
+export function fuelPrice(s?: Priced): number {
+  return Math.round(FUEL_PRICE * (s?.priceLevel ?? 1) * 100) / 100;
 }
 
 /**
  * How much more money you find than the base loot tables say: x2 on trips up
  * to 800 miles, growing with the miles on longer trips (a coast-to-coast trip
- * needs many more fill-ups), up to x6.67. Applies to searches, crates, fights
- * and town zombies. Checked by tests/tripBalance.test.ts.
+ * needs many more fill-ups), up to x6.67, times the real gas price level.
+ * Applies to searches, crates, fights and town zombies. Everything else
+ * bought with cash (repairs, upgrades, road deals and tolls) is inflated by
+ * the same amount, so only gas gets relatively cheaper on long trips.
+ * Checked by tests/tripBalance.test.ts.
  */
-export function cashScale(s: { route: { realMeters: number } }): number {
+export function cashScale(s: Priced): number {
   const miles = s.route.realMeters / 1609.344;
-  return Math.min(MAX_CASH_SCALE, 2 * Math.max(1, miles / RICH_TRIP_MILES));
+  return Math.min(MAX_CASH_SCALE, 2 * Math.max(1, miles / RICH_TRIP_MILES)) * (s.priceLevel ?? 1);
 }
 
 /** Found money, scaled for this trip and rounded to whole dollars. */
-export const foundCash = (s: { route: { realMeters: number } }, base: number) => (base > 0 ? Math.round(base * cashScale(s)) : 0);
+export const foundCash = (s: Priced, base: number) => (base > 0 ? Math.round(base * cashScale(s)) : 0);
+
+/** A cash price (repairs aside), inflated like found money; whole dollars, at least $1. */
+export const priceOf = (s: Priced, base: number) => (base > 0 ? Math.max(1, Math.round(base * cashScale(s))) : 0);
 
 /** Whole dollars for some units of gas (rounded up; never free). */
-export const fuelCost = (s: { route: { realMeters: number } }, units: number) => (units > 0 ? Math.max(1, Math.ceil(units * fuelPrice(s))) : 0);
+export const fuelCost = (s: Priced, units: number) => (units > 0 ? Math.max(1, Math.ceil(units * fuelPrice(s))) : 0);
 
 /** How many units the player can pay for right now. */
 export function fuelAffordable(s: GameState): number {
@@ -141,6 +153,7 @@ export function newGame(
 ): GameState {
   const path = pathFromRoute(route);
   const rng = makeRng(seed);
+  const priceLevel = priceLevelNow();
   const stops = generateStops(route, path.length, seed, gasGapFor(ride, route.scale));
   // Now and then a dirt-road shortcut, offered like any other turn-off.
   stops.push(...placeShortcuts(path.length, seed, stops));
@@ -149,6 +162,7 @@ export function newGame(
   const start = DIFFICULTIES[difficulty].start;
   const s: GameState = {
     version: 1,
+    priceLevel,
     seed,
     route,
     stops,
@@ -163,7 +177,7 @@ export function newGame(
     inv: {
       ...start,
       // Starting money buys as much gas as it did before money was scaled (see cashScale).
-      cash: foundCash({ route }, start.cash),
+      cash: foundCash({ route, priceLevel }, start.cash),
       fuel: Math.round(start.fuel * r.tank),
       bullets: Math.round(start.bullets * r.carry),
       shells: Math.round(start.shells * r.carry),
@@ -325,7 +339,7 @@ export function buyFuel(s: GameState): ActionResult {
 
 export function repairCost(s: GameState): { hp: number; scrap: number; cash: number } {
   const hp = Math.ceil(maxHealth(s) - s.health);
-  return { hp, scrap: Math.ceil(hp * REPAIR_SCRAP_PER_HP), cash: Math.ceil(hp * REPAIR_CASH_PER_HP) };
+  return { hp, scrap: Math.ceil(hp * REPAIR_SCRAP_PER_HP), cash: Math.ceil(hp * REPAIR_CASH_PER_HP * cashScale(s)) };
 }
 
 /** Repairs as much as the player can pay for, scrap first and cash for the rest. */
@@ -333,11 +347,17 @@ export function repair(s: GameState): ActionResult {
   const need = Math.ceil(maxHealth(s) - s.health);
   if (need <= 0) return { ok: false, message: 'The mechanic says your car is fine.' };
   let hp = 0;
-  while (hp < need) {
-    if (s.inv.scrap >= REPAIR_SCRAP_PER_HP) s.inv.scrap -= REPAIR_SCRAP_PER_HP;
-    else if (s.inv.cash >= REPAIR_CASH_PER_HP) s.inv.cash -= REPAIR_CASH_PER_HP;
-    else break;
+  // Scrap first; cash for the rest, at the trip's inflated rate (paid in whole dollars).
+  while (hp < need && s.inv.scrap >= REPAIR_SCRAP_PER_HP) {
+    s.inv.scrap -= REPAIR_SCRAP_PER_HP;
     hp++;
+  }
+  const perHp = REPAIR_CASH_PER_HP * cashScale(s);
+  let paid = Math.min(need - hp, Math.floor(s.inv.cash / perHp));
+  while (paid > 0 && Math.ceil(paid * perHp) > s.inv.cash) paid--;
+  if (paid > 0) {
+    s.inv.cash -= Math.ceil(paid * perHp);
+    hp += paid;
   }
   s.inv.scrap = Math.round(s.inv.scrap * 10) / 10;
   if (hp === 0) return { ok: false, message: 'You need scrap or cash to pay for repairs.' };
@@ -513,7 +533,7 @@ export function scavengeSummary(sc: Scavenge, ambush: boolean): ActionResult {
 export function buyUpgrade(s: GameState, kind: UpgradeKind): ActionResult {
   const level = s.upgrades[kind];
   if (level >= MAX_LEVEL) return { ok: false, message: `${UPGRADES[kind].name} is already maxed out.` };
-  const cost = upgradeCost(level);
+  const cost = upgradeCost(level, cashScale(s));
   if (s.inv.scrap < cost.scrap || s.inv.cash < cost.cash) {
     return { ok: false, message: `You need ${cost.scrap} scrap and $${cost.cash} for that.` };
   }

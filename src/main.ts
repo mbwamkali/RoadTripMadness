@@ -22,6 +22,7 @@ import { buildLabel } from './build';
 import { showClassics, showSavedTrips } from './ui/tripScreens';
 import {
   clearSave,
+  cashScale,
   foundCash,
   fuelAffordable,
   fuelCost,
@@ -66,6 +67,7 @@ import { noteError } from './game/errors';
 import { gunDamageFor, MAX_LEVEL, ramDamageFor, upgradeCost, UPGRADES, type UpgradeKind } from './game/upgrades';
 import { sound } from './audio/sound';
 import { TAP_LINES, TitleScene, type Tapped } from './scenes/titleScene';
+import { loadGasPrice } from './game/gasPrice';
 import { hdModelsReady, loadHdModels } from './scenes/hdModels';
 import { loadHdBuildings } from './scenes/hdBuildings';
 import { loadPeople, preparePeople } from './scenes/people';
@@ -108,6 +110,8 @@ function applyQuality(): void {
 applyQuality();
 // State outlines for state-line signs and exit numbers (small, cached offline).
 void loadStateMap();
+// The real price of gas this week, so prices follow it (gasPrice.ts).
+void loadGasPrice();
 void loadModels();
 // The detailed overhaul models (Medium and High).
 // The rigged people (the player on foot) come last: they're only needed in towns.
@@ -1844,7 +1848,7 @@ function showUpgrades(s: GameState, say: (r: ActionResult) => void): void {
         const u = UPGRADES[k];
         const level = s.upgrades[k];
         const maxed = level >= MAX_LEVEL;
-        const cost = upgradeCost(level);
+        const cost = upgradeCost(level, cashScale(s));
         const afford = s.inv.scrap >= cost.scrap && s.inv.cash >= cost.cash;
         return h(
           'div',

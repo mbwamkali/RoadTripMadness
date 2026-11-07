@@ -37,5 +37,7 @@ This product bundles third-party data and assets under their own terms:
   ("Cat SFX") by macro, licensed CC BY 3.0
   (https://opengameart.org/content/cat-sfx). Trimmed, levelled and retuned.
 - Live weather from Open-Meteo.com (CC BY 4.0), fetched at play time.
+- Weekly U.S. average gasoline price from the U.S. Energy Information
+  Administration (public domain), saved to public/data/gas-price.json.
 
 See docs/CREDITS.md for details.

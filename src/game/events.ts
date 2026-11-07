@@ -1,4 +1,4 @@
-import { damage, tankSize, type ActionResult, type GameState } from './state';
+import { damage, foundCash, priceOf, tankSize, type ActionResult, type GameState } from './state';
 import { hashString, makeRng, rangeInt, type Rng } from './rng';
 
 /**
@@ -147,10 +147,10 @@ const MAKERS: Record<string, Maker> = {
       },
       {
         label: 'Buy shells and catnip',
-        hint: '$30 → 4 shells, 1 catnip',
-        enabled: s.inv.cash >= 30,
+        hint: `$${priceOf(s, 30)} → 4 shells, 1 catnip`,
+        enabled: s.inv.cash >= priceOf(s, 30),
         apply: () => {
-          add(s, 'cash', -30);
+          add(s, 'cash', -priceOf(s, 30));
           add(s, 'shells', 4);
           add(s, 'catnip', 1);
           return { ok: true, message: 'You load up 4 shells and a catnip bomb.' };
@@ -158,10 +158,10 @@ const MAKERS: Record<string, Maker> = {
       },
       {
         label: 'Buy a gas can',
-        hint: '$25 → 20 fuel',
-        enabled: s.inv.cash >= 25,
+        hint: `$${priceOf(s, 25)} → 20 fuel`,
+        enabled: s.inv.cash >= priceOf(s, 25),
         apply: () => {
-          add(s, 'cash', -25);
+          add(s, 'cash', -priceOf(s, 25));
           add(s, 'fuel', 20);
           return { ok: true, message: 'You top up with 20 fuel.' };
         },
@@ -183,7 +183,7 @@ const MAKERS: Record<string, Maker> = {
           if (rng() < (s.crew.includes('dog') ? 0.2 : 0.35)) return { ok: false, message: 'Something is still in the back seat. It is hungry.', fight: 'zombie' };
           const fuel = rangeInt(rng, 5, 15);
           const scrap = rangeInt(rng, 3, 8);
-          const cash = rangeInt(rng, 0, 20);
+          const cash = foundCash(s, rangeInt(rng, 0, 20));
           add(s, 'fuel', fuel);
           add(s, 'scrap', scrap);
           add(s, 'cash', cash);
@@ -233,14 +233,14 @@ const MAKERS: Record<string, Maker> = {
     id: 'roadblock',
     icon: '🚧',
     title: 'Outlaw roadblock',
-    text: 'Burning barrels and a line of motorcycles block the road. "Toll\'s thirty bucks," yells their leader.',
+    text: 'Burning barrels and a line of motorcycles block the road. "Pay the toll!" yells their leader.',
     choices: [
       {
         label: 'Pay the toll',
-        hint: '$30',
-        enabled: s.inv.cash >= 30,
+        hint: `$${priceOf(s, 30)}`,
+        enabled: s.inv.cash >= priceOf(s, 30),
         apply: () => {
-          add(s, 'cash', -30);
+          add(s, 'cash', -priceOf(s, 30));
           return { ok: true, message: 'They wave you through, laughing.' };
         },
       },
