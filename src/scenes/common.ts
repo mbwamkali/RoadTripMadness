@@ -358,17 +358,20 @@ function codeRide(ride: 'motorcycle' | 'truck', up?: Upgrades): THREE.Group {
     g.add(mesh3(new THREE.BoxGeometry(0.42, 0.18, 0.7), dark, 0, 1.0, -0.35)); // seat
     g.add(mesh3(new THREE.BoxGeometry(0.8, 0.06, 0.06), metal, 0, 1.25, 0.55)); // handlebars
     g.add(mesh3(new THREE.BoxGeometry(0.06, 0.6, 0.06), metal, 0, 0.95, 0.65));
-    // Rider: leaning forward, arms to the bars.
+    // Rider: leaning forward, arms to the bars. Its own group, so the bike can stand empty while you walk.
+    const rider = new THREE.Group();
+    rider.name = 'rider';
+    g.add(rider);
     const jacket = lit({ color: 0x3a2a1a });
     const torso = mesh3(new THREE.BoxGeometry(0.5, 0.7, 0.32), jacket, 0, 1.45, -0.15);
     torso.rotation.x = 0.35;
-    g.add(torso);
-    g.add(mesh3(new THREE.SphereGeometry(0.2, 10, 8), paint, 0, 1.95, 0.0)); // helmet
-    g.add(mesh3(new THREE.BoxGeometry(0.3, 0.1, 0.06), glass, 0, 1.95, 0.18)); // visor
+    rider.add(torso);
+    rider.add(mesh3(new THREE.SphereGeometry(0.2, 10, 8), paint, 0, 1.95, 0.0)); // helmet
+    rider.add(mesh3(new THREE.BoxGeometry(0.3, 0.1, 0.06), glass, 0, 1.95, 0.18)); // visor
     for (const x of [-0.26, 0.26]) {
       const arm = mesh3(new THREE.BoxGeometry(0.12, 0.12, 0.6), jacket, x, 1.45, 0.25);
       arm.rotation.x = 0.4;
-      g.add(arm, mesh3(new THREE.BoxGeometry(0.14, 0.5, 0.14), dark, x * 0.9, 0.85, -0.2));
+      rider.add(arm, mesh3(new THREE.BoxGeometry(0.14, 0.5, 0.14), dark, x * 0.9, 0.85, -0.2));
     }
     const gun = mesh3(new THREE.BoxGeometry(0.1, 0.1, 0.7), dark, 0.28, 1.12, 0.6);
     gun.name = 'gun';

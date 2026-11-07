@@ -1622,6 +1622,16 @@ body.kid .howto-tip b {
   animation: slideUp 0.25s ease-out;
 }
 
+.town-hud .bump {
+  animation: town-bump 0.35s ease-out;
+}
+
+@keyframes town-bump {
+  40% {
+    transform: scale(1.15);
+  }
+}
+
 .town-actions {
   display: flex;
   flex-wrap: wrap;

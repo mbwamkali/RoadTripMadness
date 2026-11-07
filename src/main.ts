@@ -1595,12 +1595,14 @@ function showTown(stop: Stop): void {
   const hint = h('div', { class: 'town-hint' });
   const log = h('div', { class: 'town-log' });
   const actions = h('div', { class: `town-actions ${kid ? 'kid' : ''}` });
+  const hudTop = h('div', { class: 'hud-top' }, meters, h('div', { class: 'side' }, h('div', { class: 'town-chip' }, h('h2', {}, stop.name), clockEl), menuBtn));
+  const bottom = h('div', { class: 'town-bottom' }, hint, noise, log, actions);
   ui().append(
     h(
       'div',
       { class: 'hud town-hud' },
-      h('div', { class: 'hud-top' }, meters, h('div', { class: 'side' }, h('div', { class: 'town-chip' }, h('h2', {}, stop.name), clockEl), menuBtn)),
-      h('div', { class: 'town-bottom' }, hint, noise, log, actions),
+      hudTop,
+      bottom,
     ),
   );
   const say = (text: string, speak = true) => {
@@ -1707,6 +1709,23 @@ function showTown(stop: Stop): void {
       },
       save: () => saveGame(s),
       done: leave,
+      clearArea: () => {
+        // Below the meters, and above the buttons (or left of them, sideways, where they sit on the right).
+        const W = window.innerWidth;
+        const H = window.innerHeight;
+        const top = (hudTop.getBoundingClientRect().bottom || 0) + 4;
+        const r = bottom.getBoundingClientRect();
+        if (!W || !H || !r.width) return null;
+        const beside = r.left > W * 0.35;
+        const nx = (px: number) => (px / W) * 2 - 1;
+        const ny = (py: number) => 1 - (py / H) * 2;
+        return { left: -0.98, right: beside ? nx(r.left - 6) : 0.98, top: ny(top), bottom: beside ? -0.96 : ny(r.top - 4) };
+      },
+      bump: () => {
+        invEl.classList.remove('bump');
+        void invEl.offsetWidth;
+        invEl.classList.add('bump');
+      },
     });
   } catch (e) {
     // A town that fails to open must never strand the car: carry on down the road.

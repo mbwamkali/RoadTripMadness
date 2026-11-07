@@ -94,8 +94,27 @@ function canvasTexture(w: number, h: number, draw: (g: CanvasRenderingContext2D)
 
 /** The big picture sign on a pole: emoji, one word, and the real name underneath when we have it. */
 export function pictureSign(place: PlaceKind, realName?: string): THREE.Group {
+  const tex = signTexture(place, realName);
+  const g = new THREE.Group();
+  // Two faces back to back, so the picture reads the right way round from either side.
+  const face = new THREE.MeshBasicMaterial({ map: tex, toneMapped: false });
+  for (const turn of [0, Math.PI]) {
+    const board = new THREE.Mesh(new THREE.PlaneGeometry(4.2, 4.2), face);
+    board.position.y = 7.4;
+    board.rotation.y = turn;
+    board.name = 'board';
+    g.add(board);
+  }
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.16, 5.4, 8), lit({ color: 0x8a8f96, metalness: 0.4, roughness: 0.5 }));
+  pole.position.y = 2.7;
+  g.add(pole);
+  return g;
+}
+
+/** The sign's picture: emoji, one word, and the real name underneath when we have it. */
+function signTexture(place: PlaceKind, realName?: string): THREE.CanvasTexture {
   const p = PLACE_PICTURES[place];
-  const tex = canvasTexture(512, 512, (g) => {
+  return canvasTexture(512, 512, (g) => {
     g.fillStyle = p.color;
     g.beginPath();
     g.roundRect(10, 10, 492, 492, 56);
@@ -119,20 +138,6 @@ export function pictureSign(place: PlaceKind, realName?: string): THREE.Group {
       g.fillText(realName, 256, 460);
     }
   });
-  const g = new THREE.Group();
-  // Two faces back to back, so the picture reads the right way round from either side.
-  const face = new THREE.MeshBasicMaterial({ map: tex, toneMapped: false });
-  for (const turn of [0, Math.PI]) {
-    const board = new THREE.Mesh(new THREE.PlaneGeometry(4.2, 4.2), face);
-    board.position.y = 7.4;
-    board.rotation.y = turn;
-    board.name = 'board';
-    g.add(board);
-  }
-  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.16, 5.4, 8), lit({ color: 0x8a8f96, metalness: 0.4, roughness: 0.5 }));
-  pole.position.y = 2.7;
-  g.add(pole);
-  return g;
 }
 
 const box = (w: number, h: number, d: number, mat: THREE.Material) => new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
@@ -371,8 +376,10 @@ export function buildTownWorld(layout: TownLayout, mats: TownMaterials, seed: nu
       [size.x / 2 - 2.4, size.z / 2 - 3.6],
     ];
     for (const [x, z] of spotsIn.slice(0, crateCount)) {
-      const c = crate(mat);
-      c.position.set(x, 0.12, z);
+      const c = container(CONTAINERS[lot.place], mat);
+      c.position.set(x, FLOOR_Y, z);
+      // Face into the room, so the lid or door opens toward the camera side.
+      c.rotation.y = x < 0 ? Math.PI / 2 : -Math.PI / 2;
       room.add(c);
       crates.push(c);
     }
@@ -486,59 +493,229 @@ function houseFallback(rng: () => number, mat: (p: THREE.MeshStandardMaterialPar
   return g;
 }
 
-function crate(mat: (p: THREE.MeshStandardMaterialParameters) => THREE.Material): THREE.Group {
+type Mat = (p: THREE.MeshStandardMaterialParameters) => THREE.Material;
+
+/** Top of a room's floor: above the lot's paving (0.16 m), which would otherwise show through. */
+const FLOOR_Y = 0.26;
+
+/** The glow under every unopened box, shared so they all pulse together (town play sets its opacity). */
+export const CRATE_GLOW = new THREE.MeshBasicMaterial({ color: 0xff9a1a, transparent: true, opacity: 0.8, depthWrite: false, toneMapped: false });
+CRATE_GLOW.userData.shared = true;
+
+/** What you search in each place: a toolbox in the garage, a fridge at the grocery, a cabinet at the drugstore. */
+export type ContainerKind = 'toolbox' | 'fridge' | 'cabinet' | 'locker' | 'ammo' | 'suitcase' | 'crate';
+export const CONTAINERS: Record<PlaceKind, ContainerKind> = {
+  garage: 'toolbox',
+  hardware: 'toolbox',
+  junkyard: 'toolbox',
+  grocery: 'fridge',
+  pumps: 'fridge',
+  pharmacy: 'cabinet',
+  police: 'locker',
+  gunshop: 'ammo',
+  motel: 'suitcase',
+  barn: 'crate',
+};
+
+/**
+ * Something to search, named 'crate'. Its 'lid' (a lid, door or drawer) knows how it opens
+ * (userData.open: position and rotation), and a 'glow' ring on the floor shows it's not opened yet.
+ */
+function container(kind: ContainerKind, mat: Mat): THREE.Group {
   const g = new THREE.Group();
   g.name = 'crate';
-  const wood = mat({ color: 0xb88a4a, roughness: 0.85 });
-  const band = mat({ color: 0x7a5a30 });
-  const body = box(1.3, 1.0, 1.1, wood);
-  body.position.y = 0.5;
-  body.castShadow = true;
-  g.add(body);
-  const b1 = box(1.34, 0.14, 0.22, band);
-  b1.position.y = 0.75;
-  g.add(b1);
-  const lid = box(1.36, 0.16, 1.16, wood);
-  lid.position.y = 1.08;
+  g.userData.kind = kind;
+  const part = (m: THREE.Mesh, x: number, y: number, z: number, to: THREE.Object3D = g) => {
+    m.position.set(x, y, z);
+    m.castShadow = true;
+    to.add(m);
+    return m;
+  };
+  const lid = new THREE.Group();
   lid.name = 'lid';
   g.add(lid);
+  let open = { pos: new THREE.Vector3(), rot: new THREE.Euler() };
+  let foot = 1.6;
+  if (kind === 'toolbox' || kind === 'ammo') {
+    // A big red toolbox (green for the ammo box): the lid flips back on its hinge.
+    const c = kind === 'toolbox' ? 0xd13b2c : 0x4f6b3a;
+    part(box(1.4, 0.8, 0.9, mat({ color: c, metalness: 0.4, roughness: 0.45 })), 0, 0.4, 0);
+    part(box(1.42, 0.08, 0.92, mat({ color: 0x333333, metalness: 0.6 })), 0, 0.62, 0);
+    lid.position.set(0, 0.8, -0.45);
+    part(box(1.44, 0.2, 0.94, mat({ color: c, metalness: 0.4, roughness: 0.45 })), 0, 0.1, 0.47, lid);
+    part(box(0.6, 0.08, 0.1, mat({ color: 0x222222 })), 0, 0.26, 0.47, lid);
+    if (kind === 'ammo') part(box(0.5, 0.3, 0.02, mat({ color: 0xffd04a })), 0, 0.42, 0.46);
+    open = { pos: lid.position.clone(), rot: new THREE.Euler(-1.9, 0, 0) };
+  } else if (kind === 'fridge') {
+    // A white fridge with a see-through glowing door that swings open.
+    part(box(1.2, 2.0, 0.9, mat({ color: 0xf2f4f6, roughness: 0.35 })), 0, 1.0, 0);
+    const food = [0xe0302a, 0x4fd17a, 0xffc94a, 0x5b9fe8];
+    for (let r = 0; r < 3; r++) for (let i = 0; i < 3; i++) part(box(0.26, 0.3, 0.26, mat({ color: food[(r + i) % 4] })), -0.35 + i * 0.35, 0.45 + r * 0.55, 0.15);
+    lid.position.set(0.6, 0, 0.46);
+    part(box(1.2, 2.0, 0.06, mat({ color: 0xbfe6ff, transparent: true, opacity: 0.45, emissive: 0x88ccff, emissiveIntensity: 0.5 })), -0.6, 1.0, 0, lid);
+    part(box(0.06, 0.8, 0.08, mat({ color: 0x888888, metalness: 0.7 })), -1.1, 1.1, 0.06, lid);
+    open = { pos: lid.position.clone(), rot: new THREE.Euler(0, 1.9, 0) };
+    foot = 1.8;
+  } else if (kind === 'cabinet' || kind === 'locker') {
+    // A cabinet (white with a red cross) or a blue locker: the drawer slides out.
+    const c = kind === 'cabinet' ? 0xf4f6f6 : 0x3f5f9f;
+    part(box(1.2, 1.5, 0.8, mat({ color: c, metalness: 0.3, roughness: 0.4 })), 0, 0.75, 0);
+    if (kind === 'cabinet') {
+      const red = mat({ color: 0xe0302a });
+      part(box(0.5, 0.14, 0.02, red), 0, 1.25, 0.41);
+      part(box(0.14, 0.5, 0.02, red), 0, 1.25, 0.41);
+    } else for (const y of [1.1, 1.25, 1.4]) part(box(0.8, 0.04, 0.02, mat({ color: 0x223355 })), 0, y, 0.41);
+    lid.position.set(0, 0.45, 0.05);
+    part(box(1.1, 0.5, 0.8, mat({ color: c, metalness: 0.3, roughness: 0.4 })), 0, 0, 0, lid);
+    part(box(0.5, 0.08, 0.08, mat({ color: 0x555555, metalness: 0.7 })), 0, 0, 0.44, lid);
+    open = { pos: new THREE.Vector3(0, 0.45, 0.65), rot: new THREE.Euler() };
+  } else if (kind === 'suitcase') {
+    // A suitcase on the floor: the top flips open.
+    part(box(1.4, 0.35, 1.0, mat({ color: 0x8a4fd1, roughness: 0.6 })), 0, 0.18, 0);
+    lid.position.set(0, 0.35, -0.5);
+    part(box(1.4, 0.3, 1.0, mat({ color: 0x8a4fd1, roughness: 0.6 })), 0, 0.15, 0.5, lid);
+    part(box(0.5, 0.1, 0.12, mat({ color: 0x222222 })), 0, 0.15, 1.04, lid);
+    open = { pos: lid.position.clone(), rot: new THREE.Euler(-1.8, 0, 0) };
+  } else {
+    // A wooden crate: the lid lifts and tips back.
+    const wood = mat({ color: 0xb88a4a, roughness: 0.85 });
+    part(box(1.3, 1.0, 1.1, wood), 0, 0.5, 0);
+    part(box(1.34, 0.14, 0.22, mat({ color: 0x7a5a30 })), 0, 0.75, 0);
+    lid.position.set(0, 1.0, -0.55);
+    part(box(1.36, 0.16, 1.16, mat({ color: 0xb88a4a, roughness: 0.85 })), 0, 0.08, 0.55, lid);
+    open = { pos: new THREE.Vector3(0, 1.4, -0.6), rot: new THREE.Euler(-1.2, 0, 0) };
+  }
+  lid.userData.closed = { pos: lid.position.clone(), rot: lid.rotation.clone() };
+  lid.userData.open = open;
+  // A glowing ring on the floor: "this one still has something in it".
+  const ring = new THREE.Mesh(new THREE.RingGeometry(foot * 0.55, foot * 0.75, 32), CRATE_GLOW);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.04;
+  ring.name = 'glow';
+  g.add(ring);
+  // Remember each colour, so an emptied one can go dark and come back for the next visit.
+  g.traverse((o) => {
+    const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
+    if (m && o !== ring && m.color && m.userData.base === undefined) m.userData.base = m.color.getHex();
+  });
   return g;
 }
 
-/** Furniture a 5-year-old can name: a bed in the motel, a car on a lift in the garage, fruit at the grocery. */
-function furnish(g: THREE.Group, place: PlaceKind, size: THREE.Vector3, mat: (p: THREE.MeshStandardMaterialParameters) => THREE.Material): void {
+/** A floor you can tell apart: tiles in shops, concrete in the garage, planks in the motel and barn. */
+function floorTexture(place: PlaceKind, w: number, d: number): THREE.CanvasTexture {
+  const look: Record<PlaceKind, [string, string, 'tile' | 'concrete' | 'planks']> = {
+    grocery: ['#f2efe6', '#d9d2c0', 'tile'],
+    pumps: ['#efece4', '#c9c3b6', 'tile'],
+    pharmacy: ['#f4fbfa', '#cfe3e0', 'tile'],
+    police: ['#cfd5e2', '#aab2c4', 'tile'],
+    garage: ['#8b8c8f', '#77787b', 'concrete'],
+    hardware: ['#a39b8c', '#8e8676', 'concrete'],
+    junkyard: ['#7d7062', '#665a4c', 'concrete'],
+    gunshop: ['#8a6a4a', '#6f5238', 'planks'],
+    motel: ['#a8774f', '#8f6340', 'planks'],
+    barn: ['#9a7448', '#7f5e38', 'planks'],
+  };
+  const [a, b, kind] = look[place];
+  const tex = canvasTexture(256, 256, (g) => {
+    g.fillStyle = a;
+    g.fillRect(0, 0, 256, 256);
+    g.fillStyle = b;
+    if (kind === 'tile') {
+      for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) if ((x + y) % 2) g.fillRect(x * 64, y * 64, 64, 64);
+    } else if (kind === 'planks') {
+      for (let y = 0; y < 8; y++) {
+        g.fillRect(0, y * 32, 256, 3);
+        g.fillRect(((y * 97) % 256), y * 32, 3, 32);
+      }
+    } else {
+      for (let i = 0; i < 260; i++) g.fillRect((i * 151) % 256, (i * 89) % 256, 2 + (i % 3), 2 + (i % 2));
+      g.fillRect(0, 126, 256, 3);
+      g.fillRect(126, 0, 3, 256);
+    }
+  });
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(w / 4, d / 4);
+  return tex;
+}
+
+/** Furniture a 5-year-old can name, so every place has its own room: a car on a lift in the garage,
+ * shelves of fruit and a till at the grocery, a bed in the motel, hay in the barn. */
+function furnish(g: THREE.Group, place: PlaceKind, size: THREE.Vector3, mat: Mat): void {
   const w = size.x;
   const d = size.z;
-  const add = (m: THREE.Mesh, x: number, y: number, z: number) => {
+  const add = (m: THREE.Object3D, x: number, y: number, z: number) => {
     m.position.set(x, y, z);
-    m.castShadow = m.receiveShadow = true;
+    m.traverse((o) => ((o as THREE.Mesh).castShadow = (o as THREE.Mesh).receiveShadow = true));
     g.add(m);
     return m;
   };
-  const room = {
-    pumps: [0xf1ebdc, 0x9a9a96], motel: [0xf2d6e4, 0x8a6a7a], grocery: [0xe9e2c8, 0xbab3a0], garage: [0xc9ccd1, 0x6d6d70],
-    hardware: [0xe0cba6, 0x9a8a72], gunshop: [0xb39a7a, 0x7a6650], pharmacy: [0xe4f0ee, 0xb6c2c0], police: [0xc8cfe0, 0x7d8494],
-    junkyard: [0x9a8a72, 0x6b5a45], barn: [0xb04a3a, 0xb8a070],
-  }[place];
+  const walls: Record<PlaceKind, [number, number]> = {
+    pumps: [0xf1ebdc, 0xc8302a], motel: [0xf2d6e4, 0x8a6a7a], grocery: [0xe9f2d8, 0x4fa04f], garage: [0xc9ccd1, 0xffc94a],
+    hardware: [0xe0cba6, 0xd1772c], gunshop: [0xb39a7a, 0x4f6b3a], pharmacy: [0xe4f0ee, 0xe0302a], police: [0xc8cfe0, 0x2f4f8f],
+    junkyard: [0x9a8a72, 0x7a5a30], barn: [0xb04a3a, 0xf4f1ea],
+  };
+  const [wallC, trimC] = walls[place];
   // Floor and low walls: a dollhouse with the roof and front lifted off.
-  add(box(w, 0.16, d, mat({ color: room[1] })), 0, 0.08, 0);
-  const wall = mat({ color: room[0] });
+  // Its top sits above the lot's paving (FLOOR_Y), or the paving shows through.
+  add(box(w, FLOOR_Y, d, mat({ color: 0xffffff, map: floorTexture(place, w, d), roughness: 0.8 })), 0, FLOOR_Y / 2, 0);
+  const wall = mat({ color: wallC });
+  const trim = mat({ color: trimC });
   add(box(w, 2.4, 0.3, wall), 0, 1.2, -d / 2);
   add(box(0.3, 2.4, d, wall), -w / 2, 1.2, 0);
   add(box(0.3, 2.4, d, wall), w / 2, 1.2, 0);
+  // A stripe of the place's colour along the walls.
+  add(box(w, 0.35, 0.34, trim), 0, 2.25, -d / 2);
+  add(box(0.34, 0.35, d, trim), -w / 2, 2.25, 0);
+  add(box(0.34, 0.35, d, trim), w / 2, 2.25, 0);
+  // The front: low walls either side of the doorway, an open door and a mat, so you see where you came in.
   add(box(w / 2 - 1.4, 0.9, 0.3, wall), -w / 4 - 0.7, 0.45, d / 2);
   add(box(w / 2 - 1.4, 0.9, 0.3, wall), w / 4 + 0.7, 0.45, d / 2);
-  const light = new THREE.PointLight(0xfff0d0, 18, 22, 1.4);
-  light.position.set(0, 4.5, 0);
+  const frame = mat({ color: 0x5a3a22 });
+  for (const x of [-1.4, 1.4]) add(box(0.25, 2.6, 0.35, frame), x, 1.3, d / 2);
+  add(box(3.05, 0.3, 0.4, trim), 0, 2.65, d / 2);
+  add(box(2.2, 0.03, 1.2, mat({ color: trimC, roughness: 0.95 })), 0, FLOOR_Y + 0.02, d / 2 - 0.9);
+  // A big picture of the place on the back wall (the same as its sign out front).
+  const poster = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.5), new THREE.MeshBasicMaterial({ map: signTexture(place), toneMapped: false }));
+  add(poster, 0, 1.55, -d / 2 + 0.17);
+  // Warm light from above, and two lamps on the back wall.
+  const light = new THREE.PointLight(0xfff0d0, 22, 24, 1.3);
+  light.position.set(0, 5, 0);
   g.add(light);
+  const lamp = mat({ color: 0xfff2c0, emissive: 0xffe0a0, emissiveIntensity: 1.2 });
+  for (const x of [-w / 2 + 1.2, w / 2 - 1.2]) add(box(0.5, 0.3, 0.2, lamp), x, 2.0, -d / 2 + 0.25);
+
+  const shelf = (x: number, z: number, len: number, colors: number[], round = false, turn = 0) => {
+    const s = new THREE.Group();
+    s.add(box(len, 1.6, 0.7, mat({ color: 0x8a6a4a })).translateY(0.8));
+    for (let r = 0; r < 3; r++)
+      for (let i = 0; i < Math.floor(len / 0.5); i++) {
+        const m = round ? new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), mat({ color: colors[(i + r) % colors.length] })) : box(0.34, 0.36, 0.3, mat({ color: colors[(i + r) % colors.length] }));
+        m.position.set(-len / 2 + 0.3 + i * 0.5, 0.45 + r * 0.5, 0.42);
+        s.add(m);
+      }
+    s.rotation.y = turn;
+    return add(s, x, FLOOR_Y, z);
+  };
+  const counter = (x: number, z: number, len: number, c: number) => {
+    add(box(len, 1.0, 0.8, mat({ color: c })), x, 0.66, z);
+    add(box(len + 0.1, 0.08, 0.9, mat({ color: 0xeeeeee })), x, 1.2, z);
+  };
+  const tire = (x: number, y: number, z: number) => {
+    const t = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.18, 8, 16), mat({ color: 0x222222, roughness: 0.9 }));
+    t.rotation.x = Math.PI / 2;
+    return add(t, x, y, z);
+  };
+  const drum = (x: number, z: number, c: number) => add(new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 1.2, 12), mat({ color: c, metalness: 0.3 })), x, 0.76, z);
+
   if (place === 'motel') {
-    add(box(3.2, 0.7, 4.4, mat({ color: 0x6b4a2a })), -1, 0.45, -d / 2 + 2.6);
-    add(box(3.0, 0.4, 4.2, mat({ color: 0xffffff })), -1, 0.95, -d / 2 + 2.6);
-    add(box(3.05, 0.45, 2.8, mat({ color: 0x5b9fe8 })), -1, 1.0, -d / 2 + 3.4);
-    for (const x of [-1.7, -0.3]) add(box(1.1, 0.35, 0.8, mat({ color: 0xffffff })), x, 1.25, -d / 2 + 1.0);
-    add(box(0.8, 0.8, 0.8, mat({ color: 0x6b4a2a })), 1.4, 0.5, -d / 2 + 0.9);
-    add(box(0.6, 0.6, 0.6, mat({ color: 0xffe08a, emissive: 0xffd070, emissiveIntensity: 0.6 })), 1.4, 1.2, -d / 2 + 0.9);
-    add(box(2.2, 1.3, 0.2, mat({ color: 0x111111 })), 4.2, 1.7, -d / 2 + 0.3);
+    add(box(3.2, 0.7, 4.4, mat({ color: 0x6b4a2a })), -1, 0.5, -d / 2 + 2.6);
+    add(box(3.0, 0.4, 4.2, mat({ color: 0xffffff })), -1, 1.0, -d / 2 + 2.6);
+    add(box(3.05, 0.45, 2.8, mat({ color: 0x5b9fe8 })), -1, 1.05, -d / 2 + 3.4);
+    for (const x of [-1.7, -0.3]) add(box(1.1, 0.35, 0.8, mat({ color: 0xffffff })), x, 1.3, -d / 2 + 1.0);
+    add(box(0.8, 0.8, 0.8, mat({ color: 0x6b4a2a })), 1.4, 0.56, -d / 2 + 0.9);
+    add(box(0.6, 0.6, 0.6, mat({ color: 0xffe08a, emissive: 0xffd070, emissiveIntensity: 0.6 })), 1.4, 1.26, -d / 2 + 0.9);
+    add(box(3.6, 0.03, 2.4, mat({ color: 0xd16a8a })), -1, 0.18, 0.8);
+    add(box(2.2, 1.3, 0.2, mat({ color: 0x111111 })), 2.6, 1.6, -d / 2 + 0.3);
   } else if (place === 'garage') {
     const yellow = mat({ color: 0xffc94a, metalness: 0.3, roughness: 0.5 });
     for (const x of [-2.6, 2.6]) add(box(0.4, 2.2, 0.4, yellow), x, 1.1, -0.8);
@@ -546,26 +723,63 @@ function furnish(g: THREE.Group, place: PlaceKind, size: THREE.Vector3, mat: (p:
     const car = modelMesh('car-sedan');
     if (car) {
       car.rotation.y = Math.PI / 2;
-      car.position.set(0, 2.3, -0.8);
-      g.add(car);
+      add(car, 0, 2.3, -0.8);
     }
-    add(box(6, 1.8, 0.1, mat({ color: 0xb0805a })), 0, 1.6, -d / 2 + 0.25);
-    for (const x of [w / 2 - 1.2, w / 2 - 2.4]) add(new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 1.3, 12), mat({ color: 0x2f5f9f })), x, 0.75, 1.5);
-  } else if (place === 'grocery' || place === 'pumps' || place === 'pharmacy' || place === 'hardware') {
-    const colors = place === 'grocery' ? [0xe0302a, 0x4fd17a, 0xffc94a, 0xff8a2a] : [0xd13b2c, 0x5b9fe8, 0xffc94a, 0x7a4fd1];
-    for (const x of [-2, 2]) {
-      add(box(1.2, 1.8, d * 0.45, mat({ color: 0x8a6a4a })), x, 0.95, -0.6);
-      for (let r = 0; r < 3; r++)
-        for (let i = 0; i < 4; i++) {
-          const item = place === 'grocery' ? new THREE.Mesh(new THREE.SphereGeometry(0.26, 10, 8), mat({ color: colors[(i + r) % 4] })) : box(0.4, 0.45, 0.3, mat({ color: colors[(i + r) % 4] }));
-          add(item, x + 0.62, 0.5 + r * 0.55, -0.6 - d * 0.18 + i * (d * 0.12));
-        }
+    // Pegboard of tools on the back wall.
+    add(box(5, 1.6, 0.08, mat({ color: 0xb0805a })), 0, 1.5, -d / 2 + 0.2);
+    for (let i = 0; i < 7; i++) add(box(0.12, 0.7 - (i % 3) * 0.15, 0.06, mat({ color: [0xd13b2c, 0x5b9fe8, 0x888888][i % 3], metalness: 0.5 })), -2.1 + i * 0.7, 1.5, -d / 2 + 0.28);
+    for (let k = 0; k < 4; k++) tire(-1, 0.36 + k * 0.36, 2.0);
+    for (let k = 0; k < 3; k++) tire(0.2, 0.36 + k * 0.36, 2.2);
+    for (const x of [1.6, 2.6]) drum(x, 1.6, 0x2f5f9f);
+  } else if (place === 'grocery' || place === 'pumps') {
+    const food = place === 'grocery' ? [0xe0302a, 0x4fd17a, 0xffc94a, 0xff8a2a] : [0xd13b2c, 0x5b9fe8, 0xffc94a, 0x7a4fd1];
+    shelf(-1.6, -0.4, 3, food, place === 'grocery', Math.PI / 2);
+    shelf(1.6, -0.4, 3, food, place === 'grocery', -Math.PI / 2);
+    // Drinks fridges glowing along the back wall.
+    for (const x of [-1.3, 0, 1.3]) {
+      add(box(1.2, 2.0, 0.6, mat({ color: 0xdfe6ee })), x, 1.16, -d / 2 + 0.5);
+      add(box(1.0, 1.7, 0.04, mat({ color: 0xbfe6ff, emissive: 0x88ccff, emissiveIntensity: 0.6 })), x, 1.2, -d / 2 + 0.82);
     }
-    add(box(2.6, 2.2, 1, mat({ color: 0xe8e8ee })), w / 2 - 1.8, 1.1, -d / 2 + 0.8);
+    counter(0, d / 2 - 2.2, 2.4, 0x6b4a2a);
+    add(box(0.6, 0.4, 0.5, mat({ color: 0x333333 })), 0.5, 1.45, d / 2 - 2.2);
+  } else if (place === 'pharmacy') {
+    shelf(-1.6, -0.4, 3, [0xffffff, 0x5b9fe8, 0xe0302a, 0x4fd17a], false, Math.PI / 2);
+    shelf(1.6, -0.4, 3, [0xffffff, 0xffc94a, 0x7a4fd1, 0x5b9fe8], false, -Math.PI / 2);
+    counter(0, -d / 2 + 1.4, 3.4, 0xf4f6f6);
+    const red = mat({ color: 0xe0302a, emissive: 0xe0302a, emissiveIntensity: 0.4 });
+    add(box(0.9, 0.3, 0.06, red), 2.6, 1.9, -d / 2 + 0.2);
+    add(box(0.3, 0.9, 0.06, red), 2.6, 1.9, -d / 2 + 0.2);
+  } else if (place === 'hardware') {
+    shelf(-1.6, -0.4, 3, [0xd1772c, 0x5b9fe8, 0xffc94a, 0x4fa04f], false, Math.PI / 2);
+    shelf(1.6, -0.4, 3, [0x888888, 0xd13b2c, 0xffffff, 0x333333], false, -Math.PI / 2);
+    // Paint cans and a ladder.
+    for (let i = 0; i < 4; i++) add(new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 0.4, 12), mat({ color: [0xe0302a, 0x5b9fe8, 0xffc94a, 0x4fd17a][i] })), -1 + i * 0.6, 0.36, d / 2 - 2.2);
+    const ladder = new THREE.Group();
+    for (const x of [-0.35, 0.35]) ladder.add(box(0.08, 2.2, 0.08, mat({ color: 0xc0c4c8, metalness: 0.6 })).translateX(x).translateY(1.1));
+    for (let k = 0; k < 5; k++) ladder.add(box(0.7, 0.06, 0.06, mat({ color: 0xc0c4c8, metalness: 0.6 })).translateY(0.3 + k * 0.42));
+    ladder.rotation.x = -0.25;
+    add(ladder, 0, 0.16, -d / 2 + 0.8);
   } else if (place === 'police') {
-    add(box(3, 0.9, 1.2, mat({ color: 0x4a5266 })), -2, 0.45, -1);
-    for (let i = 0; i < 6; i++) add(box(0.12, 2.2, 0.12, mat({ color: 0x777777, metalness: 0.6 })), w / 2 - 3.5 + i * 0.5, 1.1, -d / 2 + 2.5);
-  } else {
-    for (const x of [-2, 2]) add(box(1.2, 1.8, d * 0.45, mat({ color: 0x6b4a2a })), x, 0.95, -0.6);
+    add(box(2.4, 0.9, 1.2, mat({ color: 0x4a5266 })), -1.5, 0.6, -0.5);
+    add(box(0.5, 0.35, 0.4, mat({ color: 0x222222 })), -1.5, 1.25, -0.5);
+    // A cell with bars at the back.
+    for (let i = 0; i < 7; i++) add(box(0.1, 2.2, 0.1, mat({ color: 0x777777, metalness: 0.7 })), 0.8 + i * 0.45, 1.26, -d / 2 + 2.2);
+    add(box(3.2, 0.1, 0.1, mat({ color: 0x777777, metalness: 0.7 })), 2.15, 2.3, -d / 2 + 2.2);
+    add(box(1.0, 1.2, 0.05, mat({ color: 0xffffff })), -3, 1.6, -d / 2 + 0.2);
+  } else if (place === 'gunshop') {
+    counter(0, -d / 2 + 1.4, 4, 0x6b4a2a);
+    // Racks of ammo boxes behind the counter (no guns on show).
+    for (let i = 0; i < 8; i++) add(box(0.5, 0.35, 0.3, mat({ color: i % 2 ? 0x4f6b3a : 0xc8a040 })), -1.8 + i * 0.5, 1.5 + (i % 2) * 0.4, -d / 2 + 0.3);
+    add(box(2.0, 0.03, 1.4, mat({ color: 0x7a3a2a })), 0, 0.18, 0.6);
+  } else if (place === 'junkyard') {
+    for (let k = 0; k < 5; k++) tire(-2 + (k % 2) * 0.3, 0.36 + k * 0.36, -0.4);
+    for (let k = 0; k < 3; k++) tire(1.8, 0.36 + k * 0.36, 1.2);
+    for (const [x, z] of [[0.4, -1.2], [1.4, -1.4]] as [number, number][]) drum(x, z, 0x8a4a2a);
+    add(box(2.6, 1.0, 1.4, mat({ color: 0x6f7f8f, metalness: 0.5, roughness: 0.7 })), 0, 0.66, 1.4).rotation.y = 0.3;
+  } else if (place === 'barn') {
+    const hay = mat({ color: 0xe8c860, roughness: 1 });
+    for (const [x, y, z] of [[-1.8, 0.56, -0.8], [-0.6, 0.56, -0.8], [-1.2, 1.36, -0.8], [1.6, 0.56, 1.2]] as [number, number, number][]) add(box(1.1, 0.8, 0.7, hay), x, y, z);
+    for (const x of [0.6, 1.2]) add(box(0.5, 0.7, 0.4, mat({ color: 0xd8ccb0 })), x, 0.51, -d / 2 + 0.6);
+    add(box(0.12, 1.8, 0.12, mat({ color: 0x6b4a2a })), 2.2, 1.06, -d / 2 + 0.5).rotation.z = 0.3;
   }
 }
