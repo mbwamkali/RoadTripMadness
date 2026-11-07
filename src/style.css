@@ -1953,29 +1953,27 @@ body.kid .howto-tip b {
     display: none;
   }
 
-  /* Title menu: two columns of buttons. */
+  /* Title: one-line logo, no tagline, smaller tiles. */
   .screen.title {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    align-content: start;
-    max-width: 760px;
-    gap: 10px;
+    gap: 6px;
+    padding-top: calc(10px + var(--safe-t));
+    padding-bottom: calc(8px + var(--safe-b));
   }
-  .screen.title > :not(.btn) {
-    grid-column: 1 / -1;
-  }
-  .screen.title > :first-child,
-  .screen.title > :last-child {
-    margin: 0;
-  }
-  .screen.title > .build-line {
-    margin-top: 4px;
+  .screen.title .tag {
+    display: none;
   }
   .title h1 {
     font-size: 40px;
   }
   .title h1 span {
     display: inline-block;
+  }
+  .title .btn.play {
+    min-height: 60px;
+    font-size: 26px;
+  }
+  .title .btn.tile {
+    min-height: 60px;
   }
 
   /* Event, out-of-gas and boss cards: story on the left, choices on the right. */
@@ -2211,5 +2209,239 @@ body.kid .howto-tip b {
   /* Kid mode's big Shoot button sits above the dodge arrows in a fight, not on them. */
   body.kid .hud.fighting .shoot-row .btn.shoot {
     bottom: 72px;
+  }
+}
+
+/* ------------------------------------------------------------------ title screen */
+
+/* The menu floats over the live scene (titleScene.ts): dark at the top and bottom
+   so the words read, clear in the middle so the car and passers-by show. */
+.screen.title {
+  max-width: none;
+  align-items: center;
+  overflow-x: hidden;
+  background: linear-gradient(
+    180deg,
+    rgba(20, 14, 10, 0.55) 0%,
+    rgba(20, 14, 10, 0) 32%,
+    rgba(20, 14, 10, 0) 52%,
+    rgba(20, 14, 10, 0.7) 72%,
+    rgba(20, 14, 10, 0.9) 100%
+  );
+}
+.screen.title > * {
+  width: 100%;
+  max-width: 560px;
+}
+.screen.title > :first-child {
+  margin-top: 0;
+}
+.screen.title > :last-child {
+  margin-bottom: 0;
+}
+.title h1,
+.title .tag,
+.title .fine {
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.8);
+}
+.title h1 {
+  text-shadow:
+    0 4px 0 #000,
+    0 6px 16px rgba(0, 0, 0, 0.6);
+}
+.title .tag {
+  color: #f2e6d8;
+  margin: 0;
+}
+.title .fine {
+  margin: 0;
+  color: #e8dccd;
+}
+.title .offline-badge {
+  width: auto;
+}
+
+.title-bar {
+  display: flex;
+  gap: 4px;
+  align-items: flex-start;
+}
+.title-bar .gap {
+  flex: 1;
+}
+.btn.icon-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  min-height: 54px;
+  padding: 3px 1px;
+  border-radius: 16px;
+  background: rgba(20, 14, 10, 0.55);
+  gap: 1px;
+}
+.btn.icon-btn .emoji {
+  font-size: 24px;
+  line-height: 1.1;
+}
+.btn.icon-btn .word {
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.btn.icon-btn.kid-toggle {
+  width: 58px;
+}
+
+/* The gap the scene shows through. */
+.title-view {
+  flex: 1 1 40px;
+  min-height: 24px;
+}
+
+.btn.play {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-height: 74px;
+  font-size: 30px;
+  border-radius: 22px;
+  box-shadow:
+    0 6px 0 #9a4a10,
+    0 10px 24px rgba(0, 0, 0, 0.45);
+  animation: play-pulse 2.4s ease-in-out infinite;
+}
+.btn.play .emoji {
+  font-size: 30px;
+}
+.btn.play b {
+  display: block;
+  line-height: 1;
+}
+.btn.play small {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+  opacity: 0.9;
+}
+/* A gentle glow, not a size change: a button that never holds still can't be tapped by test scripts. */
+@keyframes play-pulse {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(1.15);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn.play {
+    animation: none;
+  }
+}
+
+.title-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.tiles {
+  display: flex;
+  gap: 8px;
+}
+.btn.tile {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 76px;
+  padding: 6px 2px;
+  border-radius: 18px;
+  background: rgba(20, 14, 10, 0.6);
+}
+.btn.tile .emoji {
+  font-size: 32px;
+  line-height: 1.1;
+}
+.btn.tile .word {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.tap-bubble {
+  position: fixed;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 18px;
+  background: #fff8ec;
+  color: #2a1a10;
+  font-weight: 800;
+  font-size: 17px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  animation: bubble-pop 1.8s ease-out forwards;
+}
+.tap-bubble .emoji {
+  font-size: 26px;
+}
+@keyframes bubble-pop {
+  0% {
+    transform: scale(0.4) translateY(10px);
+    opacity: 0;
+  }
+  12% {
+    transform: scale(1.05);
+    opacity: 1;
+  }
+  80% {
+    transform: none;
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-14px);
+    opacity: 0;
+  }
+}
+
+.title-settings > .btn {
+  width: 100%;
+}
+
+/* Narrow or short phones: the scene needs the room more than the tagline. */
+@media (max-width: 380px), (max-height: 700px) {
+  .screen.title .tag {
+    display: none;
+  }
+}
+
+/* Sideways phones: Play and the trip tiles share one row, so the scene gets the middle. */
+@media (max-height: 640px) and (orientation: landscape) {
+  .title .title-actions {
+    flex-direction: row;
+    align-items: stretch;
+  }
+  .title .btn.play {
+    flex: 1 1 0;
+  }
+  .title .title-actions .tiles {
+    flex: 1.3 1 0;
+  }
+  .title .btn.tile {
+    min-height: 56px;
+    flex-direction: row;
+    gap: 6px;
+  }
+  .title .btn.tile .emoji {
+    font-size: 24px;
   }
 }

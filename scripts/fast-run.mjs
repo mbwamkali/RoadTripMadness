@@ -29,7 +29,7 @@ try {
   await page.goto(`http://localhost:${PORT}/`);
   await page.evaluate(([r, q]) => { localStorage.clear(); localStorage.setItem('rtm-ride', r); localStorage.setItem('rtm-quality', q); }, [ride, quality]);
   await page.goto(`http://localhost:${PORT}/?perf=1`);
-  await page.getByText('Quick demo trip').click();
+  await page.getByRole('button', { name: 'Quick demo trip' }).click();
   await page.getByText('Hit the road').click();
   await page.waitForFunction(() => window.rtm?.drive, null, { timeout: 60000 });
   await page.evaluate(() => {

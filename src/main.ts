@@ -63,6 +63,7 @@ import type { TownPlay } from './town/play';
 import { noteError } from './game/errors';
 import { gunDamageFor, MAX_LEVEL, ramDamageFor, upgradeCost, UPGRADES, type UpgradeKind } from './game/upgrades';
 import { sound } from './audio/sound';
+import { TAP_LINES, TitleScene, type Tapped } from './scenes/titleScene';
 import { hdModelsReady, loadHdModels } from './scenes/hdModels';
 import { loadHdBuildings } from './scenes/hdBuildings';
 import { loadPeople, preparePeople } from './scenes/people';
@@ -113,6 +114,8 @@ void loadHdModels()
   .then(() => Promise.all([preparePeople(), loadPeople()]));
 
 let active: GameScene | null = null;
+/** The title screen's live scene, while the title is showing. */
+let title: TitleScene | null = null;
 let state: GameState | null = null;
 let path: Path | null = null;
 let drive: DriveScene | null = null;
@@ -232,33 +235,115 @@ function showTitle(): void {
   const saved = loadGame();
   const savedTrips = tripCache.list().length;
   const pick = (raw: RawRoute) => previewRoute(buildRouteData(raw), undefined, showTitle);
-  ui().append(
+  // The live scene behind the menu (titleScene.ts); it goes away as soon as you leave.
+  title = new TitleScene();
+  setScene(title);
+  const go = (fn: () => void) => () => {
+    closeTitleScene();
+    fn();
+  };
+  /** A round picture button with a small word under it; `name` is what screen readers (and the tests) use. */
+  const icon = (emoji: string, word: string, name: string, onclick: () => void, cls = '') =>
+    h('button', { class: `btn icon-btn ${cls}`, 'aria-label': name, onclick }, h('span', { class: 'emoji', 'aria-hidden': 'true' }, emoji), h('span', { class: 'word' }, word));
+  const tile = (emoji: string, word: string, name: string, onclick: () => void) =>
+    h('button', { class: 'btn tile', 'aria-label': name, onclick }, h('span', { class: 'emoji', 'aria-hidden': 'true' }, emoji), h('span', { class: 'word' }, word));
+  const demo = () => previewRoute(buildRouteData(demoRawRoute(Date.now() % 1000)), undefined, showTitle);
+  const play = saved
+    ? h(
+        'button',
+        { class: 'btn primary play', 'aria-label': `Continue to ${saved.route.endLabel.split(',')[0]}`, onclick: go(() => startTrip(saved)) },
+        h('span', { class: 'emoji', 'aria-hidden': 'true' }, '▶'),
+        h('span', {}, h('b', {}, 'Keep going'), h('small', {}, `to ${saved.route.endLabel.split(',')[0]}`)),
+      )
+    : h('button', { class: 'btn primary play', 'aria-label': 'Plan a new trip', onclick: go(showSetup) }, h('span', { class: 'emoji', 'aria-hidden': 'true' }, '▶'), h('b', {}, 'Play'));
+  const screen = h(
+    'div',
+    { class: 'screen title' },
     h(
       'div',
-      { class: 'screen title' },
-      h('h1', {}, 'Road Trip ', h('span', {}, 'Madness')),
-      h('p', { class: 'tag' }, 'Real roads. Zombies, outlaws and alien cats. Keep your tank full.'),
-      saved && h('button', { class: 'btn primary', onclick: () => startTrip(saved) }, `Continue to ${saved.route.endLabel.split(',')[0]}`),
-      h('button', { class: `btn ${saved ? '' : 'primary'}`, onclick: showSetup }, 'Plan a new trip'),
-      h('button', { class: 'btn', onclick: () => showClassics(pick, showTitle) }, 'Classic road trips'),
-      savedTrips > 0 && h('button', { class: 'btn', onclick: () => showSavedTrips(pick, showTitle) }, `Saved trips (${savedTrips})`),
-      h('button', { class: 'btn', onclick: () => previewRoute(buildRouteData(demoRawRoute(Date.now() % 1000)), undefined, showTitle) }, 'Quick demo trip (made-up map)'),
-      h('button', { class: 'btn', onclick: () => showHowToPlay(showTitle) }, '❓ How to play'),
-      h('button', { class: 'btn ghost', onclick: showScores }, '🏆 High scores'),
+      { class: 'title-bar' },
       kidModeButton(),
-      voiceButton(),
-      installButton(),
-      isOffline() && h('div', { class: 'offline-badge' }, 'Offline: classic, saved and atlas trips still work'),
-      h('button', { class: 'btn ghost', onclick: () => showAbout(showTitle, buildLine) }, 'ℹ️ About and credits'),
+      h('span', { class: 'gap' }),
+      icon('❓', 'Help', 'How to play', go(() => showHowToPlay(showTitle))),
+      icon('🏆', 'Scores', 'High scores', go(showScores)),
+      icon('⚙️', 'Settings', 'Settings', showTitleSettings),
+      icon('ℹ️', 'About', 'About and credits', go(() => showAbout(showTitle, buildLine))),
+    ),
+    h('h1', {}, 'Road Trip ', h('span', {}, 'Madness')),
+    h('p', { class: 'tag' }, 'Real roads. Zombies, outlaws and alien cats. Keep your tank full.'),
+    h('div', { class: 'title-view' }),
+    h(
+      'div',
+      { class: 'title-actions' },
+      play,
       h(
-        'p',
-        { class: 'fine' },
-        'Maps © ',
-        h('a', { href: 'https://www.openstreetmap.org/copyright', target: '_blank', rel: 'noopener' }, 'OpenStreetMap'),
-        ' contributors (ODbL). More in About.',
+        'div',
+        { class: 'tiles' },
+      saved && tile('🗺️', 'New trip', 'Plan a new trip', go(showSetup)),
+      tile('⭐', 'Classic', 'Classic road trips', go(() => showClassics(pick, showTitle))),
+      savedTrips > 0 && tile('💾', `Saved (${savedTrips})`, `Saved trips (${savedTrips})`, go(() => showSavedTrips(pick, showTitle))),
+        tile('🎲', 'Demo', 'Quick demo trip (made-up map)', go(demo)),
       ),
     ),
+    isOffline() && h('div', { class: 'offline-badge' }, 'Offline: classic, saved and atlas trips still work'),
+    h(
+      'p',
+      { class: 'fine' },
+      'Maps © ',
+      h('a', { href: 'https://www.openstreetmap.org/copyright', target: '_blank', rel: 'noopener' }, 'OpenStreetMap'),
+      ' contributors (ODbL). More in About.',
+    ),
   );
+  // Taps that miss the buttons land in the scene: the zombie groans, the car honks.
+  screen.addEventListener('pointerdown', (e) => {
+    if (!title || (e.target as HTMLElement).closest('button, a, .modal')) return;
+    const what = title.tap(e.clientX, e.clientY, window.innerWidth, window.innerHeight);
+    if (what) tapBubble(screen, e.clientX, e.clientY, what);
+  });
+  ui().append(screen);
+}
+
+
+function closeTitleScene(): void {
+  if (!title) return;
+  if (active === title) setScene(null);
+  title.dispose();
+  title = null;
+}
+
+/** A speech bubble where the player tapped, with the line read out in kid mode. */
+function tapBubble(host: HTMLElement, x: number, y: number, what: Tapped): void {
+  const lines = TAP_LINES[what];
+  const line = lines[Math.floor(Math.random() * lines.length)];
+  host.querySelector('.tap-bubble')?.remove();
+  const b = h('div', { class: 'tap-bubble' }, h('span', { class: 'emoji' }, line.icon), h('span', {}, line.text));
+  const w = Math.min(240, window.innerWidth - 24);
+  b.style.left = `${Math.max(12, Math.min(window.innerWidth - w - 12, x - w / 2))}px`;
+  b.style.top = `${Math.max(12, y - 70)}px`;
+  b.style.width = `${w}px`;
+  host.append(b);
+  setTimeout(() => b.remove(), 1800);
+  narrator.say(line.text);
+}
+
+/** The title's settings: narrator voice and installing the app. */
+function showTitleSettings(): void {
+  const close = () => overlay.remove();
+  const overlay = h(
+    'div',
+    { class: 'modal' },
+    h(
+      'div',
+      { class: 'card title-settings' },
+      h('h2', {}, '⚙️ Settings'),
+      voiceButton(),
+      installButton(),
+      h('p', { class: 'muted' }, 'Graphics and sounds are in the pause menu during a trip.'),
+      h('div', { class: 'card-actions' }, h('button', { class: 'btn primary', onclick: close }, 'Done')),
+    ),
+  );
+  overlay.addEventListener('click', (e) => e.target === overlay && close());
+  ui().append(overlay);
 }
 
 /** The build number, with a button that looks for a newer one. */
@@ -272,14 +357,19 @@ function buildLine(): HTMLElement {
   return h('div', { class: 'build-line' }, h('span', { class: 'build' }, buildLabel()), check);
 }
 
-/** The Kid mode switch on the title screen. */
+/** The Kid mode switch on the title screen: a round picture button that lights up green when on. */
 function kidModeButton(): HTMLElement {
-  const label = () => `🧒 Kid mode: ${kidMode.on ? 'on' : 'off'}`;
-  const b = h('button', { class: `btn kid-toggle ${kidMode.on ? 'on' : ''}` }, label());
+  const word = h('span', { class: 'word' }, '');
+  const b = h('button', { class: 'btn icon-btn kid-toggle' }, h('span', { class: 'emoji', 'aria-hidden': 'true' }, '🧒'), word);
+  const sync = () => {
+    word.textContent = kidMode.on ? 'Kid: on' : 'Kid: off';
+    b.setAttribute('aria-label', `Kid mode: ${kidMode.on ? 'on' : 'off'}`);
+    b.classList.toggle('on', kidMode.on);
+  };
+  sync();
   b.addEventListener('click', () => {
     kidMode.set(!kidMode.on);
-    b.textContent = label();
-    b.classList.toggle('on', kidMode.on);
+    sync();
     document.body.classList.toggle('kid', kidMode.on);
     if (kidMode.on) narrator.say('Kid mode is on. I will read everything out loud.');
     else narrator.stop();
@@ -675,6 +765,7 @@ function describeLive(c: LiveConditions): string {
 // --------------------------------------------------------------- driving
 
 function disposeAll(): void {
+  closeTitleScene();
   drive?.dispose();
   combat?.dispose();
   drive = null;

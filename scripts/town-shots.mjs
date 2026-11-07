@@ -40,7 +40,7 @@ try {
   await page.goto(BASE);
   await page.evaluate((q) => { localStorage.clear(); localStorage.setItem('rtm-quality', q); }, Q);
   await page.goto(BASE);
-  await page.getByText('Quick demo trip').click();
+  await page.getByRole('button', { name: 'Quick demo trip' }).click();
   await page.getByText('Hit the road').click();
   await page.waitForTimeout(800);
   await page.evaluate(() => { const s = window.rtm.state; s.nextEncounterAt = 1e9; s.nextEventAt = 1e9; s.inv.fuel = 4; s.inv.cash = 60; });

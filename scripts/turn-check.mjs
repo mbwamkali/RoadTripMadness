@@ -22,7 +22,7 @@ for (const size of sizes) for (const kid of [false, true]) {
   await page.goto(`http://localhost:${PORT}/`);
   await page.evaluate((k) => { localStorage.clear(); localStorage.setItem('rtm-kid', k ? '1' : '0'); }, kid);
   await page.goto(`http://localhost:${PORT}/`);
-  await page.getByText('Quick demo trip').click();
+  await page.getByRole('button', { name: 'Quick demo trip' }).click();
   await page.getByText(/Hit the road|Let's go|Go!/).first().click();
   await page.waitForTimeout(500);
   // Jump to just before a right-hand stop on a road with more than one lane our way.
