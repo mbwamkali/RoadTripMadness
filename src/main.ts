@@ -703,7 +703,7 @@ function previewRoute(route: RouteData, note?: string, back: () => void = showSe
         (route.fuel?.length ?? 0) > 0 && h('li', {}, `Fuel stops are real gas stations from the map (${route.fuel!.length} along the way)`),
         (route.states?.length ?? 0) > 1 && h('li', {}, `Crosses ${route.states!.length} states: ${route.states!.map((st) => st.code).join(' → ')}`),
         realMap && liveLi,
-        h('li', {}, 'Green dots have gas pumps. Your tank lasts about a third of the trip.'),
+        h('li', {}, 'Green dots have gas pumps. A full tank goes about 450 miles in the car, less on the motorcycle, more in the pickup.'),
         h('li', {}, 'Something big is waiting halfway, and another at the end of the road.'),
       ),
       note && h('p', { class: 'note' }, note),
@@ -1530,7 +1530,7 @@ function showShortcut(stop: Stop): void {
   const rng = makeRngFor(s.seed ^ hashStr(stop.id));
   const skip = shortcutSkip(s, p.length, stop.at, rng);
   const outcome = rollShortcut(rng, kid);
-  takeShortcut(s, stop, skip, fuelPerUnit(p.length));
+  takeShortcut(s, stop, skip, fuelPerUnit(s.route.scale));
   saveGame(s);
   sound.engine(0);
   const km = realKmAt(s.route, skip);

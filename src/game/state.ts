@@ -79,9 +79,24 @@ export const FUEL_PRICE = 2; // cash per fuel unit
 export const REPAIR_SCRAP_PER_HP = 0.5;
 export const REPAIR_CASH_PER_HP = 1;
 
-/** A tank lasts about a third of the trip, so the player has to stop for gas. */
-export function fuelPerUnit(pathLength: number): number {
-  return TANK / (pathLength / 3.2);
+/**
+ * How far a full stock tank goes in the muscle car, in real miles at the speed
+ * limit on Normal (about 1.3x a real car's, so long trips stay busy without
+ * becoming a chore). Rides change it through their tank and thirst: motorcycle
+ * about 300, pickup about 550. Upgrades, speed and difficulty change it too.
+ */
+export const RANGE_MILES = 450;
+const METERS_PER_MILE = 1609.344;
+
+/** Fuel burned per game unit, for a route with `metersPerUnit` real metres in each game unit. */
+export function fuelPerUnit(metersPerUnit: number): number {
+  return (TANK * metersPerUnit) / (RANGE_MILES * METERS_PER_MILE);
+}
+
+/** How far apart (game units) gas stops may be for a ride: 60% of its stock full-tank range. */
+export function gasGapFor(ride: Ride, metersPerUnit: number): number {
+  const r = rideOf({ ride });
+  return (0.6 * (TANK * r.tank)) / (fuelPerUnit(metersPerUnit) * r.fuel);
 }
 
 export function newGame(
@@ -93,7 +108,7 @@ export function newGame(
 ): GameState {
   const path = pathFromRoute(route);
   const rng = makeRng(seed);
-  const stops = generateStops(route, path.length, seed);
+  const stops = generateStops(route, path.length, seed, gasGapFor(ride, route.scale));
   // Now and then a dirt-road shortcut, offered like any other turn-off.
   stops.push(...placeShortcuts(path.length, seed, stops));
   stops.sort((a, b) => a.at - b.at);
@@ -175,7 +190,7 @@ export function advance(
   s: GameState,
   path: Path,
   dist: number,
-  fuelRate = fuelPerUnit(path.length),
+  fuelRate = fuelPerUnit(s.route.scale),
   /** Signalling for a turn: the boss waits until you're back on the road (it is never skipped). */
   holdBoss = false,
 ): { arrived: boolean; outOfFuel: boolean; encounter: boolean; event?: boolean; boss?: BossKind } {

@@ -15,7 +15,7 @@ This is the living design doc. It describes what the first playable build does a
 
 Real routes range from a few kilometres to thousands. The game rescales every route so the driving part takes roughly 5 to 25 minutes (about 5 minutes plus a minute per 60 km, capped). Shape is preserved; the world is just shrunk or stretched.
 
-- A full tank lasts about a third of the trip, so every trip needs about three fuel stops.
+- A full tank goes a set distance in real miles (car about 450, motorcycle about 300, pickup about 550; about 1.3x real), so short trips may need no gas and long ones many fill-ups. Pumps are never more than 60% of a tank's range apart (the first within 50%), with extra gas stops added on long trips.
 - There are 6 to 14 turn-off stops per trip. Every third stop is guaranteed to have gas pumps so bad luck can't strand the player. Where the real route has a named left or right turn near a stop slot, the stop snaps to it and takes the road's name.
 - Fights come every 7 to 13% of the trip and get bigger and nastier further along.
 

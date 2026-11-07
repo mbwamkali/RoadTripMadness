@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildRouteData, pathFromRoute } from '../src/geo/route';
 import { demoRawRoute } from '../src/geo/demoRoute';
-import { advance, buyFuel, fuelPerUnit, newGame, repair, search, upcomingStop, TANK } from '../src/game/state';
+import { advance, buyFuel, fuelPerUnit, gasGapFor, newGame, RANGE_MILES, repair, search, upcomingStop, TANK } from '../src/game/state';
 import { hasFuel } from '../src/game/stops';
 import { boost, combatOutcome, createCombat, fireAt, horn, stepCombat } from '../src/game/combat';
 
@@ -13,13 +13,18 @@ describe('trip', () => {
     const s = newGame(route, 42);
     expect(s.stops.length).toBeGreaterThanOrEqual(6);
     for (let i = 1; i < s.stops.length; i++) expect(s.stops[i].at - s.stops[i - 1].at).toBeGreaterThanOrEqual(500);
-    // A tank lasts about a third of the trip; there must be pumps well inside that range.
-    const range = TANK / fuelPerUnit(path.length);
+    // Pumps are never further apart than 60% of a tank's range.
+    const gap = gasGapFor('car', route.scale);
     let last = 0;
     for (const st of s.stops.filter(hasFuel)) {
-      expect(st.at - last).toBeLessThan(range);
+      expect(st.at - last).toBeLessThanOrEqual(gap + 1);
       last = st.at;
     }
+  });
+
+  it('a full tank goes a set number of real miles, whatever the trip length', () => {
+    const units = TANK / fuelPerUnit(route.scale);
+    expect((units * route.scale) / 1609.344).toBeCloseTo(RANGE_MILES, 5);
   });
 
   it('burns fuel while driving and fires encounters', () => {

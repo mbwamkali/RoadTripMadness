@@ -83,7 +83,7 @@ export const SECTIONS: Section[] = [
     icon: '🔧',
     title: 'Your car',
     tips: [
-      { icon: '⛽', title: 'Gas', text: 'A full tank lasts about a third of the trip.' },
+      { icon: '⛽', title: 'Gas', text: 'A full tank goes about 450 miles (motorcycle 300, pickup 550). Long trips need lots of fill-ups.' },
       { icon: '🛠️', title: 'Garage', text: 'Fix the car and buy upgrades with scrap and cash.' },
       { icon: '🛡️', title: 'Upgrades', text: 'Armor, a bigger tank, a better engine, a roof gun and a ram plate.' },
       { icon: '⭐', title: 'Keep them', text: 'Finish a trip and your upgrades come with you to the next one.' },

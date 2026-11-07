@@ -310,7 +310,7 @@ export class DriveScene implements GameScene {
     private cb: DriveCallbacks,
   ) {
     this.car = makeRide(state.ride ?? 'car', state.upgrades);
-    this.fuelRate = fuelPerUnit(path.length);
+    this.fuelRate = fuelPerUnit(state.route.scale);
     this.rageRng = makeRng(state.seed ^ 0x2a6e);
     // A river landmark already draws its own crossing, so skip a bridge right on top of one.
     this.structures = (state.route.structures ?? []).filter(

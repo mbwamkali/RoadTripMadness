@@ -64,11 +64,53 @@ const MADE_UP_NAMES = ['Dry Creek', 'Pinecone', 'Hollow Rock', 'Bitterroot', 'Re
 export const hasFuel = (s: Stop) => s.places.includes('pumps');
 
 /**
+ * Makes sure pumps are never more than `gap` apart (the first ones within
+ * `gap` × 5/6 of the start, since trips start with a part-full tank, and the
+ * last within `gap` of the finish). Fills a long gap by adding pumps to the
+ * furthest stop that still keeps it in range, or by adding a gas stop.
+ */
+export function spaceGas(stops: Stop[], pathLength: number, gap: number, makeGas: (at: number) => Stop): Stop[] {
+  const out = [...stops].sort((a, b) => a.at - b.at);
+  let last = 0;
+  let reach = gap * (5 / 6);
+  for (let guard = 0; guard < 200; guard++) {
+    const next = out.find((s) => s.at > last && hasFuel(s));
+    const target = next ? next.at : pathLength;
+    if (target - last <= reach) {
+      if (!next) break;
+      last = next.at;
+      reach = gap;
+      continue;
+    }
+    // Too far: the furthest stop still in range gets pumps, or a new gas stop goes in.
+    const inRange = out.filter((s) => s.at > last + 300 && s.at <= last + reach);
+    const pickStop = inRange[inRange.length - 1];
+    if (pickStop) {
+      pickStop.places = ['pumps', ...pickStop.places.slice(0, 3)];
+      last = pickStop.at;
+    } else {
+      let at = last + reach * 0.9;
+      // Not right on top of the next turn-off.
+      const after = out.find((s) => s.at > last && s.at < at + 600);
+      if (after) at = Math.max(last + 300, Math.min(at, after.at - 600));
+      const made = makeGas(at);
+      out.push(made);
+      out.sort((a, b) => a.at - b.at);
+      last = at;
+    }
+    reach = gap;
+  }
+  return out;
+}
+
+/**
  * Places turn-off points along the route. Real turns from the routing data
  * become stops named after the road; gaps are filled with made-up stops so
- * the spacing stays even. Every few stops is guaranteed to have pumps.
+ * the spacing stays even. Every few stops is guaranteed to have pumps, and
+ * when `gasGap` is given (game units: 60% of a full tank's range), pumps are
+ * never further apart than that, so a long trip gets extra gas stops.
  */
-export function generateStops(route: RouteData, pathLength: number, seed: number): Stop[] {
+export function generateStops(route: RouteData, pathLength: number, seed: number, gasGap?: number): Stop[] {
   const rng = makeRng(seed ^ hashString(route.startLabel + route.endLabel));
   const count = Math.max(6, Math.min(14, Math.round(pathLength / 2600)));
   const spacing = pathLength / (count + 1);
@@ -143,7 +185,15 @@ export function generateStops(route: RouteData, pathLength: number, seed: number
   for (let i = 1; i < stops.length; i++) {
     if (stops[i].at - stops[i - 1].at < 500) stops[i].at = stops[i - 1].at + 500;
   }
-  const out = stops.filter((s) => s.at < pathLength - 300);
+  let out = stops.filter((s) => s.at < pathLength - 300);
+  if (gasGap) out = spaceGas(out, pathLength, gasGap, (at) => {
+    const onInterstate = isDivided(classAt(segments, at));
+    const near = nearestTown(at, spacing);
+    const kind: StopKind = rng() < 0.3 ? 'truckstop' : 'gas';
+    let name = near ? `${near.name} ${pick(rng, OUTSKIRTS[kind])}` : pick(rng, MADE_UP_NAMES);
+    if (out.some((st) => st.name === name)) name = `${name} ${pick(rng, OUTSKIRTS[kind])}`;
+    return { id: `stop-g${Math.round(at)}`, at, side: onInterstate || rng() < 0.5 ? 'right' : 'left', kind, name, places: pick(rng, PLACES_BY_KIND[kind]).slice() };
+  });
   // Interstate exits get real-style exit numbers when the state outlines are loaded.
   const map = stateMap();
   if (map && route.points?.length) {
