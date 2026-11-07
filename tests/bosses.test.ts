@@ -27,6 +27,21 @@ describe('boss fights', () => {
     expect(s.status).toBe('won');
   });
 
+  it('waits while you signal for a turn, then meets you when you drive on', () => {
+    const s = newGame(route, 4);
+    s.inv.fuel = 1e9;
+    s.nextEncounterAt = s.nextEventAt = 1e12;
+    const [half] = bossPoints(path.length, s.stops);
+    s.distance = half - 100;
+    // Signalling: drive well past the boss point and nothing happens.
+    expect(advance(s, path, 300, 0, true).boss).toBeUndefined();
+    expect(s.distance).toBeGreaterThan(half);
+    expect(s.bossStage).toBe(0);
+    // Back on the road: the held boss shows up straight away.
+    expect(advance(s, path, 10, 0).boss).toBeDefined();
+    expect(s.bossStage).toBe(1);
+  });
+
   it('a boss fight has no escape and ends when the boss falls', () => {
     const c = createCombat({ seed: 1, progress: 0.5, boss: 'brute' });
     const inv = { fuel: 50, cash: 0, scrap: 0, bullets: 10000, shells: 0, catnip: 0 };

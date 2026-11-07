@@ -1535,7 +1535,8 @@ function showBikeRescue(): void {
     const done = h('button', { class: 'btn primary', disabled: true, onclick: () => {
       overlay.remove();
       hudTick?.();
-      drive?.resume();
+      // Keeps a turn you'd signalled for, or signals for the next stop if it's close.
+      drive?.resume({ signalNext: true });
     } }, 'Back on the road');
     body.replaceChildren(track, lines, done);
     out.story.forEach((line, i) =>

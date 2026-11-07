@@ -176,11 +176,13 @@ export function advance(
   path: Path,
   dist: number,
   fuelRate = fuelPerUnit(path.length),
+  /** Signalling for a turn: the boss waits until you're back on the road (it is never skipped). */
+  holdBoss = false,
 ): { arrived: boolean; outOfFuel: boolean; encounter: boolean; event?: boolean; boss?: BossKind } {
   if (s.status !== 'driving') return { arrived: false, outOfFuel: false, encounter: false };
   const bosses = bossPoints(path.length, s.stops);
-  // Never skip past a boss, even on fast-forward.
-  const toBoss = s.bossStage < 2 ? Math.max(0, bosses[s.bossStage] - s.distance) + 0.001 : Infinity;
+  // Never skip past a boss, even on fast-forward (a held one is met as soon as you drive on).
+  const toBoss = s.bossStage < 2 && !holdBoss ? Math.max(0, bosses[s.bossStage] - s.distance) + 0.001 : Infinity;
   const step = Math.min(dist, path.length - s.distance, toBoss);
   s.distance += step;
   s.inv.fuel = Math.max(0, s.inv.fuel - step * fuelRate * fuelEfficiency(s.upgrades) * rideOf(s).fuel * DIFFICULTIES[s.difficulty].fuel);
@@ -198,7 +200,7 @@ export function advance(
     }
     return { arrived: false, outOfFuel: true, encounter: false };
   }
-  if (s.bossStage < 2 && s.distance >= bosses[s.bossStage]) {
+  if (s.bossStage < 2 && s.distance >= bosses[s.bossStage] && !holdBoss) {
     const boss = bossFor(s, s.bossStage);
     s.bossStage++;
     // Give the player some room after a boss.

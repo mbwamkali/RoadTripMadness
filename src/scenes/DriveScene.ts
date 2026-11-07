@@ -813,11 +813,22 @@ export class DriveScene implements GameScene {
     return !!this.fight;
   }
 
-  resume(): void {
+  resume(opts: { signalNext?: boolean } = {}): void {
     this.turning = null;
-    // A turn that didn't happen must not leave "Turning..." showing.
-    if (this.pendingTurn) this.cb.onPrompt(null, 0);
-    this.pendingTurn = null;
+    const s = this.state;
+    // A turn you signalled for is remembered through whatever stopped the car (running out of gas, say),
+    // as long as the stop is still ahead. One that can't happen any more must not leave "Turning..." showing.
+    const keep = this.pendingTurn && s.distance < this.pendingTurn.at - 0.01 && !s.passed.includes(this.pendingTurn.id) ? this.pendingTurn : null;
+    if (this.pendingTurn && !keep) this.cb.onPrompt(null, 0);
+    this.pendingTurn = keep;
+    // Back from fetching gas with a stop just ahead: come back already signalling for it (Cancel still works).
+    if (!keep && opts.signalNext) {
+      const next = upcomingStop(s, PROMPT_RANGE);
+      if (next) {
+        this.promptStop = next;
+        this.takeTurn(next);
+      }
+    }
     this.stopping = false;
     this.paused = false;
     this.placeCar(true);
@@ -946,7 +957,8 @@ export class DriveScene implements GameScene {
     if (this.pendingTurn && s.distance + step >= this.pendingTurn.at) {
       step = Math.max(0, this.pendingTurn.at - s.distance);
     }
-    const res = advance(s, this.path, step, this.fuelRate * speedFuelFactor(this.mph, limit));
+    // While signalling, no boss, fight or road event gets in the way of the turn.
+    const res = advance(s, this.path, step, this.fuelRate * speedFuelFactor(this.mph, limit), !!this.pendingTurn);
     this.spinWheels(step);
     coolRage(s, step);
     this.roadRage(dt, speed);
