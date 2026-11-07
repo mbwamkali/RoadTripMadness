@@ -4,7 +4,7 @@
  * allow audio after a user gesture, so `unlock()` is called from the first tap.
  */
 import { Radio } from './radio';
-import { STATIONS, type StationId } from './songs';
+import { STATIONS, type SongId, type StationId } from './songs';
 import type { BossKind } from '../game/combat';
 
 export type Station = 'off' | StationId;
@@ -41,9 +41,12 @@ class Sound {
   private engineFilter: BiquadFilterNode | null = null;
   private engineKey = '';
   private radio: Radio | null = null;
+  private backgroundLoading = false;
   /** What the music should be doing: off, the station while driving, or a fight. */
   private musicMode: { kind: 'off' } | { kind: 'drive' } | { kind: 'fight'; boss?: BossKind } = { kind: 'off' };
   settings = loadSettings();
+  /** Called when the radio can't load a song (offline before it ever played). */
+  onRadioFail: ((id: SongId) => void) | null = null;
 
   /** Creates or resumes the audio context. Safe to call on every tap. */
   unlock(): void {
@@ -58,6 +61,7 @@ class Sound {
       this.sfxBus.gain.value = this.settings.sfx ? 1 : 0;
       this.sfxBus.connect(this.master);
       this.radio = new Radio(this.ctx, this.master);
+      this.radio.onFail = (id) => this.onRadioFail?.(id);
       const len = this.ctx.sampleRate;
       this.noiseBuf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
       const d = this.noiseBuf.getChannelData(0);
@@ -338,9 +342,17 @@ class Sound {
   startMusic(): void {
     this.musicMode = { kind: 'drive' };
     this.applyMusic();
-    // Get the Cat Queen's song ready in the background for the end of the trip.
+    // In the background, one after another: the chosen station, the Cat Queen's song for the end of
+    // the trip, then the other stations, so switching later is instant.
     const r = this.radio;
-    if (r && this.settings.station !== 'off') void r.preload(this.settings.station).then((ok) => ok && r.preload('catqueen'));
+    if (r && this.settings.station !== 'off' && !this.backgroundLoading) {
+      this.backgroundLoading = true;
+      const order: SongId[] = [this.settings.station, 'catqueen', ...STATIONS.map((s) => s.id)];
+      void (async () => {
+        for (const id of order) if (!(await r.preload(id))) break;
+        this.backgroundLoading = false;
+      })();
+    }
   }
 
   /**
@@ -355,6 +367,12 @@ class Sound {
   stopMusic(): void {
     this.musicMode = { kind: 'off' };
     this.applyMusic();
+  }
+
+  /** True when the chosen station still has to download before it can play. */
+  get tuning(): boolean {
+    const st = this.settings.station;
+    return st !== 'off' && !!this.radio && !this.radio.isLoaded(st);
   }
 
   get station(): Station {

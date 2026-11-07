@@ -996,8 +996,15 @@ function showDriveHud(fight?: CombatState): void {
     sound.nextStation();
     radioBtn.classList.toggle('off', sound.station === 'off');
     radioBtn.title = stationName();
-    showToast('📻', 'Car radio', stationName());
+    showToast('📻', sound.tuning ? 'Car radio · tuning in…' : 'Car radio', stationName());
   });
+  const radioFailed = new Set<string>();
+  sound.onRadioFail = (id) => {
+    // Once per song per visit, so a fight starting and ending offline doesn't keep repeating it.
+    if (radioFailed.has(id)) return;
+    radioFailed.add(id);
+    showToast('📻', 'Car radio', 'The radio needs internet the first time');
+  };
   menuBtn.addEventListener('click', () => showPauseMenu());
   // Driving: change lanes and pick your speed.
   const pad = (label: string, title: string, fn: () => void) => {

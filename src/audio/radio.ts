@@ -3,7 +3,7 @@
  *
  * Instrument notes, drum hits and cat sounds are small mp3 files in public/audio. A station's
  * files are fetched the first time it plays (the service worker keeps them, so it plays offline
- * after that) and decoded one by one in the background, so starting a station never stalls a frame.
+ * after that), a few at a time, and decoded off the main thread, so starting a station never stalls a frame.
  *
  * Ear guardrails: fade in and out, a gentle low-pass, a limiter, each song levelled to about
  * the same loudness, and the music bus sits under the game sounds and the narrator.
@@ -11,6 +11,8 @@
 import { CAT_PITCH, DRUM_HITS, RELEASE, SONGS, notesUsed, type Band, type Song, type SongId } from './songs';
 
 const BASE = './audio';
+/** Files fetched at once while a station loads: quick to start, without flooding the connection. */
+const PARALLEL = 6;
 
 /** A fixed "human" feel: a tiny timing nudge and loudness change that depend only on where the note falls. */
 function nudge(seed: number): number {
@@ -27,6 +29,9 @@ export class Radio {
   private noiseBuf: AudioBuffer;
   private readonly buffers = new Map<string, AudioBuffer>();
   private readonly loading = new Map<SongId, Promise<boolean>>();
+  private readonly loaded = new Set<SongId>();
+  /** Called when a song's files can't be loaded (offline before it ever played). */
+  onFail: ((id: SongId) => void) | null = null;
   private song: Song | null = null;
   private bar = 0;
   private next = 0;
@@ -76,6 +81,11 @@ export class Radio {
     for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
   }
 
+  /** True once a song's files are downloaded and ready to play at once. */
+  isLoaded(id: SongId): boolean {
+    return this.loaded.has(id);
+  }
+
   /** The song playing now, if any. */
   get playing(): SongId | null {
     return this.song?.id ?? null;
@@ -85,10 +95,16 @@ export class Radio {
   preload(id: SongId): Promise<boolean> {
     let p = this.loading.get(id);
     if (!p) {
-      p = this.load(SONGS[id]).catch(() => {
-        this.loading.delete(id);
-        return false;
-      });
+      p = this.load(SONGS[id]).then(
+        (ok) => {
+          this.loaded.add(id);
+          return ok;
+        },
+        () => {
+          this.loading.delete(id);
+          return false;
+        },
+      );
       this.loading.set(id, p);
     }
     return p;
@@ -101,13 +117,19 @@ export class Radio {
     });
     if (s.drums) files.push(...DRUM_HITS.map((d) => [`drum:${d}`, `${BASE}/drums/${d}.mp3`]));
     if (s.cats) files.push(...Object.keys(CAT_PITCH).map((c) => [`cat:${c}`, `${BASE}/cats/${c}.mp3`]));
-    // One file at a time: decoding runs off the main thread, and this keeps the network and CPU load gentle mid-drive.
-    for (const [key, url] of files) {
-      if (this.buffers.has(key)) continue;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(url);
-      this.buffers.set(key, await this.ctx.decodeAudioData(await res.arrayBuffer()));
-    }
+    // A few files at a time: decoding runs off the main thread, and a small batch keeps the
+    // network and CPU load gentle mid-drive while still starting a station within a second or two.
+    const todo = files.filter(([key]) => !this.buffers.has(key));
+    let i = 0;
+    const worker = async (): Promise<void> => {
+      while (i < todo.length) {
+        const [key, url] = todo[i++];
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(url);
+        this.buffers.set(key, await this.ctx.decodeAudioData(await res.arrayBuffer()));
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(PARALLEL, todo.length) }, worker));
     return true;
   }
 
@@ -116,8 +138,14 @@ export class Radio {
     this.wanted = id;
     this.fight = fight;
     if (this.song?.id === id && this.timer) return;
+    // Not downloaded yet: let the old song go now, so the switch is heard straight away.
+    if (!this.loaded.has(id)) this.fadeOut();
     const ok = await this.preload(id);
-    if (!ok || this.wanted !== id) return;
+    if (this.wanted !== id) return;
+    if (!ok) {
+      this.onFail?.(id);
+      return;
+    }
     this.halt();
     const s = SONGS[id];
     const now = this.ctx.currentTime;
@@ -140,6 +168,10 @@ export class Radio {
   /** Fades out and stops. */
   stop(): void {
     this.wanted = null;
+    this.fadeOut();
+  }
+
+  private fadeOut(): void {
     if (!this.song) return;
     const now = this.ctx.currentTime;
     this.out.gain.cancelScheduledValues(now);
