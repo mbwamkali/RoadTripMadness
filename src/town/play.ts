@@ -15,7 +15,7 @@ import { makeObstacle, makeCar } from '../scenes/common';
 import { hdZombie } from '../scenes/hdModels';
 import { lit } from '../scenes/materials';
 import { person, type Person } from '../scenes/people';
-import type { TownSpot, TownWorld } from './world';
+import { CRATE_GLOW, type TownSpot, type TownWorld } from './world';
 
 /**
  * Playing a town: you turn off the highway onto Main Street in the road
@@ -47,7 +47,14 @@ export interface TownHooks {
   save(): void;
   /** Back on the highway. */
   done(): void;
+  /** Loot just landed in your supplies (the HUD gives them a little bounce). */
+  bump?(): void;
+  /** The part of the screen the HUD leaves clear, in -1..1 screen units (y up), for framing the camera. */
+  clearArea?(): Band | null;
 }
+
+/** The walker is drawn this much bigger inside buildings. */
+const INSIDE_SCALE = 1.3;
 
 /** Town driving speed (units a second, about 22 mph). */
 export const TOWN_SPEED = 10;
@@ -67,6 +74,8 @@ interface Zombie {
   phase: number;
   hurt: number;
   cool: number;
+  /** Height of what it's standing on (a porch, say). */
+  floor?: number;
 }
 
 interface CarMove {
@@ -90,6 +99,10 @@ export class TownPlay {
   private walker: THREE.Object3D;
   private walkerRig: Person | null;
   private walk: { pts: THREE.Vector3[]; speed: number; then: () => void } | null = null;
+  /** Digging into a box you walked over to: opens it when the time runs out. */
+  private dig: { i: number; t: number } | null = null;
+  /** Loot icons flying from a box up to your supplies. */
+  private fly: { obj: THREE.Sprite; from: THREE.Vector3; t: number }[] = [];
   private move: CarMove | null = null;
   private zombies: Zombie[] = [];
   private fx: { obj: THREE.Object3D; life: number; vy: number }[] = [];
@@ -148,7 +161,7 @@ export class TownPlay {
 
   /** The car or the walker is on the move (a tap on a sign waits till it stops). */
   get busy(): boolean {
-    return !!this.move || !!this.walk;
+    return !!this.move || !!this.walk || !!this.dig;
   }
 
   /** Zombies awake within `r` of you (or the car, or the door you went in). */
@@ -195,7 +208,7 @@ export class TownPlay {
       const hits = this.ray.intersectObjects(this.at.crates, true);
       if (hits.length) {
         const i = this.at.crates.findIndex((c) => isChild(hits[0].object, c));
-        if (i >= 0) this.openCrate(i);
+        if (i >= 0) this.tapCrate(i);
         return true;
       }
       return false;
@@ -314,6 +327,10 @@ export class TownPlay {
       this.phase = 'inside';
       sp.shell.visible = false;
       sp.room.visible = true;
+      // Inside, the walker is drawn a bit bigger so a small screen still shows who you are, and the
+      // parked car (out front, under the buttons) steps out of the picture.
+      this.walker.scale.setScalar(INSIDE_SCALE);
+      this.host.car.visible = false;
       // The gas canopy would hide the dollhouse from above.
       showRoofs(sp, false);
       this.search = startScavenge(this.hooks.state, this.storeKey(), sp.lot.place, sp.crates.length);
@@ -328,6 +345,9 @@ export class TownPlay {
   leaveBuilding(run = false, then: () => void = () => {}): void {
     if (this.phase !== 'inside' || !this.at) return;
     const sp = this.at;
+    this.dig = null;
+    this.walker.scale.setScalar(1);
+    this.host.car.visible = true;
     sp.shell.visible = true;
     sp.room.visible = false;
     showRoofs(sp, true);
@@ -340,17 +360,67 @@ export class TownPlay {
     this.walkTo([sp.door.clone().addScaledVector(sp.facing, 2.5)], run ? RUN_SPEED : WALK_SPEED, then);
   }
 
+  private frame = 0;
+  private down = new THREE.Raycaster();
+
+  /**
+   * The height to stand at here: the top of a building's floor, porch or step under this spot if
+   * there is one within knee height, else the ground (the car's level).
+   */
+  private groundAt(p: THREE.Vector3): number {
+    const base = this.host.car.position.y;
+    const sp = this.phase === 'inside' && this.at ? this.at : this.nearestSpot(p);
+    if (!sp) return base;
+    const target = this.phase === 'inside' && this.at === sp ? sp.room : sp.shell;
+    // Only worth a look close to the building.
+    if (p.distanceTo(sp.centre) > Math.max(sp.size.x, sp.size.z) * 0.75 + 3) return base;
+    this.down.set(new THREE.Vector3(p.x, base + 1.0, p.z), new THREE.Vector3(0, -1, 0));
+    this.down.far = 1.4;
+    for (const h of this.down.intersectObject(target, true)) {
+      if (inCrate(h.object, target)) continue;
+      if (h.face && h.face.normal.clone().transformDirection(h.object.matrixWorld).y < 0.6) continue;
+      return Math.max(base, h.point.y);
+    }
+    return base;
+  }
+
+  private nearestSpot(p: THREE.Vector3): TownSpot | null {
+    let best: TownSpot | null = null;
+    let bestD = Infinity;
+    for (const sp of this.world.spots) {
+      const d = sp.centre.distanceToSquared(p);
+      if (d < bestD) {
+        bestD = d;
+        best = sp;
+      }
+    }
+    return best;
+  }
+
+  /** A tap on a box: walk over to it, dig in, and open it. */
+  tapCrate(i: number): void {
+    const sp = this.at;
+    const sc = this.search;
+    if (!sp || !sc || sc.opened[i] || sc.over || this.walk || this.dig) return;
+    const c = sp.crates[i];
+    const at = c.getWorldPosition(new THREE.Vector3());
+    // Stand on the room side of it, facing it.
+    const toward = sp.centre.clone().sub(at).setY(0);
+    const stand = toward.lengthSq() > 0.01 ? at.clone().addScaledVector(toward.normalize(), 1.4) : at.clone();
+    this.walkTo([stand], WALK_SPEED * 1.5, () => {
+      const look = at.clone().sub(this.walker.position).setY(0);
+      if (look.lengthSq() > 0.001) this.walker.rotation.y = Math.atan2(look.x, look.z);
+      this.dig = { i, t: 0.45 };
+    });
+  }
+
   private openCrate(i: number): void {
     const sp = this.at!;
     const sc = this.search!;
     if (sc.opened[i] || sc.over) return;
     const r = openCrate(this.hooks.state, sc, i);
     const c = sp.crates[i];
-    const lid = c.getObjectByName('lid');
-    if (lid) {
-      lid.rotation.x = -1.1;
-      lid.position.set(0, 1.5, -0.55);
-    }
+    emptied(c, true);
     const p = c.getWorldPosition(new THREE.Vector3()).setY(c.getWorldPosition(new THREE.Vector3()).y + 2);
     if (r.ambush) {
       this.hooks.sfx.bad();
@@ -361,8 +431,9 @@ export class TownPlay {
     } else {
       this.hooks.sfx.coin();
       const words: string[] = [];
+      let n = 0;
       for (const [k, v] of Object.entries(r.loot) as [keyof Inventory, number][]) {
-        this.popIcon(LOOT_ICONS[k], p);
+        this.flyIcon(LOOT_ICONS[k], p, n++);
         words.push(`${v} ${k === 'cash' ? 'dollars' : k}`);
       }
       if (!words.length) this.popIcon('💨', p);
@@ -522,6 +593,30 @@ export class TownPlay {
         this.hooks.changed();
       }
     }
+    if (this.dig) {
+      this.dig.t -= dt;
+      // Bend down and dig in.
+      const k = Math.sin(Math.max(0, this.dig.t) * 20) * 0.06;
+      this.walker.scale.set(INSIDE_SCALE, INSIDE_SCALE * (0.9 + k), INSIDE_SCALE);
+      if (this.dig.t <= 0) {
+        const i = this.dig.i;
+        this.dig = null;
+        this.walker.scale.setScalar(INSIDE_SCALE);
+        if (this.phase === 'inside') this.openCrate(i);
+      }
+    }
+    this.frame++;
+    // Stand on whatever is underfoot (a porch, a deck, the room's floor), never sunk into it.
+    if (this.walker.visible) {
+      const y = this.groundAt(this.walker.position);
+      // Step up onto it rather than pop.
+      this.walker.position.y += (y - this.walker.position.y) * Math.min(1, dt * 14);
+    }
+    // A motorcycle stands empty while you're off it.
+    const rider = this.host.car.getObjectByName('rider');
+    if (rider) rider.visible = !this.walker.visible;
+    this.updateCrates(dt);
+    this.updateFly(dt);
     this.updateZombies(dt);
     this.fx = this.fx.filter((f) => {
       f.life -= dt;
@@ -551,7 +646,9 @@ export class TownPlay {
       const stopAt = this.phase === 'inside' ? 1 + (i % 4) * 0.9 : GRAB * 0.8;
       if (dist > stopAt) z.obj.position.addScaledVector(to.normalize(), z.speed * dt);
       z.obj.rotation.set(0, Math.atan2(to.x, to.z), Math.sin(z.phase * 4) * 0.1);
-      z.obj.position.y = (z.hurt > 0 ? z.hurt * 2.4 : Math.abs(Math.sin(z.phase * 4)) * 0.1) + target.y * 0;
+      // On a porch or a deck they walk up it, not through it (checked every few frames, it costs a little).
+      if ((this.frame + i) % 4 === 0) z.floor = this.groundAt(z.obj.position);
+      z.obj.position.y = (z.hurt > 0 ? z.hurt * 2.4 : Math.abs(Math.sin(z.phase * 4)) * 0.1) + (z.floor ?? 0);
       z.hurt = Math.max(0, z.hurt - dt);
       z.cool -= dt;
       if (dist < GRAB && z.cool <= 0) {
@@ -651,6 +748,61 @@ export class TownPlay {
     this.zombies.push({ obj, hp: 2 + Math.floor(threat / 2), speed: (this.hooks.kid ? 1.2 : 1.7) + Math.random() * 0.5 * (awake ? 1 : 0), phase: Math.random() * 6, hurt: 0, cool: 1 });
   }
 
+  /** A loot icon pops out of the box, then flies up to your supplies at the top of the screen. */
+  private flyIcon(icon: string, p: THREE.Vector3, n: number): void {
+    const s = emojiSprite(icon, 1.4);
+    s.position.copy(p);
+    s.renderOrder = 10;
+    this.host.scene.add(s);
+    this.fly.push({ obj: s, from: p.clone().add(new THREE.Vector3((n - 1) * 0.7, 0, 0)), t: -n * 0.12 });
+  }
+
+  private updateFly(dt: number): void {
+    const cam = this.host.camera;
+    // Where the supplies line sits: top left of the screen, a few metres in front of the camera.
+    const to = new THREE.Vector3(-0.55, 0.78, 0.5).unproject(cam).sub(cam.position).normalize().multiplyScalar(4).add(cam.position);
+    this.fly = this.fly.filter((f) => {
+      f.t += dt;
+      const t = Math.max(0, f.t);
+      if (t < 0.45) {
+        // Pop up out of the box first.
+        f.obj.position.copy(f.from).setY(f.from.y + Math.sin((t / 0.45) * Math.PI * 0.5) * 1.2);
+        return true;
+      }
+      const k = Math.min(1, (t - 0.45) / 0.55);
+      const start = f.from.clone().setY(f.from.y + 1.2);
+      f.obj.position.lerpVectors(start, to, k * k);
+      const sc = 1.4 * (1 - k * 0.6);
+      f.obj.scale.set(sc, sc, 1);
+      if (k < 1) return true;
+      this.host.scene.remove(f.obj);
+      disposeSprite(f.obj);
+      this.hooks.bump?.();
+      return false;
+    });
+  }
+
+  /** Unopened boxes bounce and glow; opened ones swing open (lid, door or drawer). */
+  private updateCrates(dt: number): void {
+    const sp = this.at;
+    if (this.phase !== 'inside' || !sp) return;
+    CRATE_GLOW.opacity = 0.75 + 0.25 * Math.sin(this.time * 4);
+    sp.crates.forEach((c, i) => {
+      const opened = !!this.search?.opened[i];
+      const lid = c.getObjectByName('lid');
+      if (lid) {
+        const t = (lid.userData.t = THREE.MathUtils.clamp((lid.userData.t ?? 0) + (opened ? dt : -dt) * 3, 0, 1));
+        const a = lid.userData.closed as { pos: THREE.Vector3; rot: THREE.Euler };
+        const b = lid.userData.open as { pos: THREE.Vector3; rot: THREE.Euler };
+        const e = t * t * (3 - 2 * t);
+        lid.position.lerpVectors(a.pos, b.pos, e);
+        lid.rotation.set(a.rot.x + (b.rot.x - a.rot.x) * e, a.rot.y + (b.rot.y - a.rot.y) * e, a.rot.z + (b.rot.z - a.rot.z) * e);
+      }
+      const bounce = opened || this.search?.over ? 0 : Math.max(0, Math.sin(this.time * 5 + i * 1.7));
+      c.scale.set(1 - bounce * 0.03, 1 + bounce * 0.06, 1 - bounce * 0.03);
+    });
+  }
+
   private popIcon(icon: string, p: THREE.Vector3, size = 1.6, life = 1.2): void {
     const s = emojiSprite(icon, size);
     s.position.copy(p);
@@ -694,18 +846,11 @@ export class TownPlay {
     const fwd = new THREE.Vector3(Math.sin(this.carYaw), 0, Math.cos(this.carYaw));
     const busy = this.nearZombies(20) > 0;
     if (this.phase === 'inside' && this.at) {
-      // The dollhouse: roof and front off, looking down into the room from the street side.
-      // Far enough back that the whole room (every crate) fits the screen, tall phone or sideways.
-      const sp = this.at;
-      const cam = this.host.camera;
-      const vHalf = THREE.MathUtils.degToRad(cam.fov / 2);
-      const hHalf = Math.atan(Math.tan(vHalf) * cam.aspect);
-      const tilt = THREE.MathUtils.degToRad(58);
-      const across = (sp.size.x / 2 + 1.5) / Math.tan(hHalf);
-      const deep = (sp.size.z / 2 + 1.5) * Math.sin(tilt) / Math.tan(vHalf) + (sp.size.z / 2) * Math.cos(tilt);
-      const dist = Math.max(12, across, deep);
-      wantLook.copy(sp.centre).setY(sp.centre.y + 0.5);
-      wantPos.copy(wantLook).addScaledVector(sp.facing, Math.cos(tilt) * dist).setY(wantLook.y + Math.sin(tilt) * dist);
+      // The dollhouse: roof and front off, looking down into the room, as close as it can sit with
+      // the whole room (every box) between the meters and the buttons, tall phone or sideways.
+      const v = this.roomView(this.at);
+      wantPos.copy(v.pos);
+      wantLook.copy(v.look);
     } else if (this.phase === 'walking') {
       // Third person behind the walker: a close-up of the road's chase camera.
       const w = this.walker.position;
@@ -758,7 +903,7 @@ export class TownPlay {
    */
   private streetView(i: number): { key: string; pos: THREE.Vector3; look: THREE.Vector3 } {
     const cam = this.host.camera;
-    const key = `${i}|${cam.aspect.toFixed(3)}|${cam.fov}`;
+    const key = `${i}|${cam.aspect.toFixed(3)}|${cam.fov}|${JSON.stringify(this.band(null))}`;
     const kept = this.views[i];
     if (kept && kept.key === key) return kept;
     const start = this.laneIn[0];
@@ -776,67 +921,62 @@ export class TownPlay {
     const ahead = centre.clone().sub(start).setY(0);
     if (ahead.lengthSq() < 1) ahead.set(Math.sin(this.carYaw), 0, Math.cos(this.carYaw));
     ahead.normalize();
-    // The part of the screen clear of the meters at the top and the buttons at the bottom.
-    const BAND = { x: 0.88, top: 0.68, bottom: -0.5 };
-    const probe = new THREE.PerspectiveCamera(cam.fov, cam.aspect, 0.5, 2000);
-    const q = new THREE.Vector3();
-    const aim = (pos: THREE.Vector3, look: THREE.Vector3) => {
-      probe.position.copy(pos);
-      probe.lookAt(look);
-      probe.updateMatrixWorld(true);
-    };
-    const fits = (pos: THREE.Vector3, look: THREE.Vector3) => {
-      aim(pos, look);
-      return pts.every((p) => {
-        q.copy(p).project(probe);
-        return q.z < 1 && Math.abs(q.x) < BAND.x && q.y < BAND.top && q.y > BAND.bottom;
-      });
-    };
-    /** The closest the camera can sit along `dir` from `look` with everything in the band (or null). */
-    const fit = (look: THREE.Vector3, dir: THREE.Vector3): number | null => {
-      let lo = 6, hi = 400;
-      if (!fits(look.clone().addScaledVector(dir, hi), look)) return null;
-      for (let k = 0; k < 22; k++) {
-        const mid = (lo + hi) / 2;
-        if (fits(look.clone().addScaledVector(dir, mid), look)) hi = mid;
-        else lo = mid;
-      }
-      return hi;
-    };
-    // A few angles around "straight up the street"; take the one that can sit closest. Each one is
-    // re-aimed a few times so the street sits in the middle of the clear band, not just the screen.
-    let best: { pos: THREE.Vector3; look: THREE.Vector3; d: number } | null = null;
-    for (const turn of [0, -0.35, 0.35, -0.7, 0.7]) {
-      for (const pitch of [0.72, 0.9]) {
-        const dir = ahead.clone().applyAxisAngle(UP, turn).multiplyScalar(-Math.cos(pitch)).setY(Math.sin(pitch));
-        const look = centre.clone();
-        let dist = fit(look, dir);
-        for (let k = 0; dist !== null && k < 4; k++) {
-          aim(look.clone().addScaledVector(dir, dist), look);
-          let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
-          for (const p of pts) {
-            q.copy(p).project(probe);
-            x0 = Math.min(x0, q.x); x1 = Math.max(x1, q.x); y0 = Math.min(y0, q.y); y1 = Math.max(y1, q.y);
-          }
-          const depth = q.copy(look).project(probe).z;
-          const shifted = new THREE.Vector3((x0 + x1) / 2, (y0 + y1) / 2 - (BAND.top + BAND.bottom) / 2, depth).unproject(probe);
-          look.copy(shifted);
-          dist = fit(look, dir) ?? dist;
-        }
-        if (dist === null) continue;
-        const d = dist * (1 + Math.abs(turn) * 0.15);
-        if (!best || d < best.d) best = { pos: look.clone().addScaledVector(dir, dist * 1.04), look, d };
-      }
-    }
-    const look = best?.look ?? centre;
-    const pos = best?.pos ?? centre.clone().addScaledVector(ahead, -40).setY(centre.y + 45);
+    const tries: { dir: THREE.Vector3; cost: number }[] = [];
+    for (const turn of [0, -0.35, 0.35, -0.7, 0.7]) for (const pitch of [0.72, 0.9]) tries.push({ dir: viewDir(ahead, turn, pitch), cost: 1 + Math.abs(turn) * 0.5 });
+    const v = fitView(cam, pts, centre, tries, this.band({ left: -0.88, right: 0.88, top: 0.68, bottom: -0.5 }));
+    const look = v?.look ?? centre;
+    const pos = v?.pos ?? centre.clone().addScaledVector(ahead, -40).setY(centre.y + 45);
     return (this.views[i] = { key, pos, look });
+  }
+
+  /** The clear part of the screen as the HUD reports it (rounded, so it doesn't jitter), or `fallback`. */
+  private band<T extends Band | null>(fallback: T): Band | T {
+    const b = this.hooks.clearArea?.();
+    if (!b) return fallback;
+    const r = (v: number) => Math.round(v * 20) / 20;
+    return { left: r(b.left) + 0.1, right: r(b.right) - 0.1, top: r(b.top) - 0.04, bottom: r(b.bottom) + 0.04 };
+  }
+
+  private roomViews = new Map<TownSpot, { key: string; pos: THREE.Vector3; look: THREE.Vector3 }>();
+
+  /** The camera inside a building: from the street side or from either end, whichever fills the screen best. */
+  private roomView(sp: TownSpot): { pos: THREE.Vector3; look: THREE.Vector3 } {
+    const cam = this.host.camera;
+    const key = `${cam.aspect.toFixed(3)}|${cam.fov}|${JSON.stringify(this.band(null))}`;
+    const kept = this.roomViews.get(sp);
+    if (kept && kept.key === key) return kept;
+    sp.room.updateMatrixWorld(true);
+    const hw = sp.size.x / 2;
+    const hd = sp.size.z / 2;
+    const pts: THREE.Vector3[] = [];
+    for (const x of [-hw, hw]) for (const z of [-hd, hd]) pts.push(sp.room.localToWorld(new THREE.Vector3(x, 0, z)));
+    for (const x of [-hw, hw]) pts.push(sp.room.localToWorld(new THREE.Vector3(x, 2.4, -hd)));
+    for (const c of sp.crates) pts.push(c.localToWorld(new THREE.Vector3(0, 1.6, 0)));
+    const centre = new THREE.Box3().setFromPoints(pts).getCenter(new THREE.Vector3());
+    // facing points out of the front (toward the street); the camera looks in from there or from the ends.
+    const inward = sp.facing.clone().setY(0).normalize().negate();
+    const side = new THREE.Vector3(inward.z, 0, -inward.x);
+    const tries: { dir: THREE.Vector3; cost: number }[] = [];
+    for (const pitch of [1.0, 1.12, 1.25]) for (const turn of [0, -0.3, 0.3]) tries.push({ dir: viewDir(inward, turn, pitch), cost: 1 });
+    // From an end the near wall hides less the steeper you look, so only steep views from there.
+    for (const pitch of [1.2, 1.32]) for (const d of [side, side.clone().negate()]) tries.push({ dir: viewDir(d, 0, pitch), cost: 1.05 });
+    const v = fitView(cam, pts, centre, tries, this.band({ left: -0.9, right: 0.9, top: 0.64, bottom: -0.46 }));
+    const out = { key, pos: v?.pos ?? centre.clone().addScaledVector(sp.facing, 10).setY(centre.y + 14), look: v?.look ?? centre };
+    this.roomViews.set(sp, out);
+    return out;
   }
 
   dispose(): void {
     for (const z of this.zombies) this.host.scene.remove(z.obj);
     for (const f of this.fx) this.host.scene.remove(f.obj);
+    for (const f of this.fly) {
+      this.host.scene.remove(f.obj);
+      disposeSprite(f.obj);
+    }
     this.host.scene.remove(this.walker);
+    this.host.car.visible = true;
+    const rider = this.host.car.getObjectByName('rider');
+    if (rider) rider.visible = true;
     for (const sp of this.world.spots) {
       sp.shell.visible = true;
       sp.room.visible = false;
@@ -863,6 +1003,12 @@ function placeName(sp: TownSpot): string {
   return { pumps: 'gas station', motel: 'motel', grocery: 'grocery store', garage: 'garage', hardware: 'hardware store', pharmacy: 'drugstore', police: 'police station', gunshop: 'gun shop', junkyard: 'junkyard', barn: 'farm' }[sp.lot.place];
 }
 
+/** Part of a box to search (never something to stand on). */
+function inCrate(o: THREE.Object3D | null, root: THREE.Object3D): boolean {
+  for (; o && o !== root; o = o.parent) if (o.name === 'crate') return true;
+  return false;
+}
+
 function isChild(o: THREE.Object3D | null, root: THREE.Object3D): boolean {
   for (; o; o = o.parent) if (o === root) return true;
   return false;
@@ -877,12 +1023,113 @@ function yawOf(o: THREE.Object3D): number {
   return Math.atan2(d.x, d.z);
 }
 
+/** The part of the screen not covered by the HUD, in -1..1 screen units (y up). */
+export interface Band {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
+/** Where a camera sits relative to what it looks at: back from `ahead`, turned by `turn`, raised by `pitch` (radians). */
+function viewDir(ahead: THREE.Vector3, turn: number, pitch: number): THREE.Vector3 {
+  return ahead.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), turn).multiplyScalar(-Math.cos(pitch)).setY(Math.sin(pitch));
+}
+
+/**
+ * The closest camera (over a few directions, each with a cost) that keeps every point inside the
+ * clear band of the screen (in -1..1 screen units), re-aimed so the points sit in the middle of the band.
+ */
+function fitView(
+  cam: THREE.PerspectiveCamera,
+  pts: THREE.Vector3[],
+  centre: THREE.Vector3,
+  tries: { dir: THREE.Vector3; cost: number }[],
+  band: Band,
+): { pos: THREE.Vector3; look: THREE.Vector3 } | null {
+  const probe = new THREE.PerspectiveCamera(cam.fov, cam.aspect, 0.5, 2000);
+  const q = new THREE.Vector3();
+  const mx = (band.left + band.right) / 2;
+  const my = (band.top + band.bottom) / 2;
+  /** Camera at `pos`, turned so `anchor` sits in the middle of the band (not the screen). Returns where it looks. */
+  const aim = (pos: THREE.Vector3, anchor: THREE.Vector3): THREE.Vector3 => {
+    probe.position.copy(pos);
+    probe.lookAt(anchor);
+    probe.updateMatrixWorld(true);
+    const look = new THREE.Vector3(-mx, -my, 0.5).unproject(probe);
+    probe.lookAt(look);
+    probe.updateMatrixWorld(true);
+    return look;
+  };
+  const fits = (pos: THREE.Vector3, anchor: THREE.Vector3) => {
+    aim(pos, anchor);
+    return pts.every((p) => {
+      q.copy(p).project(probe);
+      return q.z < 1 && q.x > band.left && q.x < band.right && q.y < band.top && q.y > band.bottom;
+    });
+  };
+  const fit = (anchor: THREE.Vector3, dir: THREE.Vector3): number | null => {
+    let lo = 3, hi = 400;
+    if (!fits(anchor.clone().addScaledVector(dir, hi), anchor)) return null;
+    for (let k = 0; k < 22; k++) {
+      const mid = (lo + hi) / 2;
+      if (fits(anchor.clone().addScaledVector(dir, mid), anchor)) hi = mid;
+      else lo = mid;
+    }
+    return hi;
+  };
+  let best: { pos: THREE.Vector3; look: THREE.Vector3; d: number } | null = null;
+  for (const { dir, cost } of tries) {
+    const anchor = centre.clone();
+    let dist = fit(anchor, dir);
+    // Re-aim a few times so the points sit in the middle of the band, then pull in again.
+    for (let k = 0; dist !== null && k < 4; k++) {
+      aim(anchor.clone().addScaledVector(dir, dist), anchor);
+      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+      for (const p of pts) {
+        q.copy(p).project(probe);
+        x0 = Math.min(x0, q.x);
+        x1 = Math.max(x1, q.x);
+        y0 = Math.min(y0, q.y);
+        y1 = Math.max(y1, q.y);
+      }
+      // Move the anchor to whatever sits where the points' middle should be.
+      const depth = q.copy(anchor).project(probe).z;
+      const shifted = new THREE.Vector3((x0 + x1) / 2, (y0 + y1) / 2, depth).unproject(probe);
+      anchor.add(shifted.sub(new THREE.Vector3(mx, my, depth).unproject(probe)));
+      dist = fit(anchor, dir) ?? dist;
+    }
+    if (dist === null) continue;
+    if (!best || dist * cost < best.d) {
+      const pos = anchor.clone().addScaledVector(dir, dist * 1.04);
+      best = { pos, look: aim(pos, anchor), d: dist * cost };
+    }
+  }
+  return best && { pos: best.pos, look: best.look };
+}
+
 function resetCrate(c: THREE.Group): void {
   const lid = c.getObjectByName('lid');
   if (lid) {
-    lid.rotation.x = 0;
-    lid.position.set(0, 1.08, 0);
+    const a = lid.userData.closed as { pos: THREE.Vector3; rot: THREE.Euler };
+    lid.position.copy(a.pos);
+    lid.rotation.copy(a.rot);
+    lid.userData.t = 0;
   }
+  c.scale.set(1, 1, 1);
+  emptied(c, false);
+}
+
+/** An emptied box goes dark and loses its glow; `false` puts it back as new. */
+function emptied(c: THREE.Group, on: boolean): void {
+  c.traverse((o) => {
+    if (o.name === 'glow') {
+      o.visible = !on;
+      return;
+    }
+    const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
+    if (m?.color && m.userData.base !== undefined) m.color.setHex(m.userData.base).multiplyScalar(on ? 0.4 : 1);
+  });
 }
 
 /** A sprite showing one emoji. */
