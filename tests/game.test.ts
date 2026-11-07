@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildRouteData, pathFromRoute } from '../src/geo/route';
 import { demoRawRoute } from '../src/geo/demoRoute';
-import { advance, buyFuel, fuelAffordable, fuelCost, fuelPrice, fuelPerUnit, gasGapFor, newGame, RANGE_MILES, repair, search, upcomingStop, TANK } from '../src/game/state';
+import { advance, buyFuel, cashScale, foundCash, fuelAffordable, fuelCost, fuelPrice, fuelPerUnit, gasGapFor, newGame, RANGE_MILES, repair, search, upcomingStop, TANK } from '../src/game/state';
 import { hasFuel } from '../src/game/stops';
 import { boost, combatOutcome, createCombat, fireAt, horn, stepCombat } from '../src/game/combat';
 
@@ -145,9 +145,12 @@ describe('combat', () => {
     expect(boost(c, bag)).toBe(false);
   });
 
-  it('gas gets cheaper on long trips, down to 30%', () => {
-    expect(fuelPrice({ route: { realMeters: 300 * 1609.344 } })).toBe(1);
-    expect(fuelPrice({ route: { realMeters: 1600 * 1609.344 } })).toBe(0.5);
-    expect(fuelPrice({ route: { realMeters: 2800 * 1609.344 } })).toBe(0.3);
+  it('money found grows on long trips: x2 up to 800 miles, up to x6.67', () => {
+    const at = (mi: number) => ({ route: { realMeters: mi * 1609.344 } });
+    expect(fuelPrice()).toBe(2);
+    expect(cashScale(at(300))).toBe(2);
+    expect(cashScale(at(1600))).toBe(4);
+    expect(cashScale(at(4000))).toBe(6.67);
+    expect(foundCash(at(300), 25)).toBe(50);
   });
 });

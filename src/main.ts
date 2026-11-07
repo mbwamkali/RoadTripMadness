@@ -22,6 +22,7 @@ import { buildLabel } from './build';
 import { showClassics, showSavedTrips } from './ui/tripScreens';
 import {
   clearSave,
+  foundCash,
   fuelAffordable,
   fuelCost,
   loadGame,
@@ -2212,7 +2213,8 @@ function endCombat(c: CombatState, outcome: 'cleared' | 'escaped' | 'wrecked'): 
     return;
   }
   const found: string[] = [];
-  for (const [k, v] of Object.entries(c.loot) as [keyof typeof s.inv, number][]) {
+  for (const [k, raw] of Object.entries(c.loot) as [keyof typeof s.inv, number][]) {
+    const v = k === 'cash' ? foundCash(s, raw) : raw;
     s.inv[k] += v;
     found.push(`${v} ${k}`);
   }

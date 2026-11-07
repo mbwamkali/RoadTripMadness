@@ -75,21 +75,30 @@ export const TANK = 100;
 
 export const maxHealth = (s: GameState) => Math.round(maxHealthFor(s.upgrades) * rideOf(s).health);
 export const tankSize = (s: GameState) => Math.round(tankFor(s.upgrades) * rideOf(s).tank);
-/** Gas price per fuel unit on trips up to CHEAP_GAS_MILES long. */
-export const FUEL_PRICE = 1;
-/**
- * Longer trips get cheaper gas, so a coast-to-coast trip's many fill-ups cost
- * about what a shorter trip's gas does (the money you find doesn't grow with
- * the miles). Down to 30% of the price. Checked by tests/tripBalance.test.ts.
- */
-export const CHEAP_GAS_MILES = 800;
+/** Gas price per fuel unit, the same on every trip. */
+export const FUEL_PRICE = 2;
+/** Trips up to this long pay out money at the base rate (x2); longer ones pay more, up to MAX_CASH_SCALE. */
+export const RICH_TRIP_MILES = 800;
+export const MAX_CASH_SCALE = 6.67;
 
-/** What a unit of gas costs on this trip, in dollars (to the cent). */
-export function fuelPrice(s: { route: { realMeters: number } }): number {
-  const miles = s.route.realMeters / 1609.344;
-  const k = Math.min(1, Math.max(0.3, CHEAP_GAS_MILES / Math.max(1, miles)));
-  return Math.round(FUEL_PRICE * k * 100) / 100;
+/** What a unit of gas costs, in dollars. */
+export function fuelPrice(_s?: { route: { realMeters: number } }): number {
+  return FUEL_PRICE;
 }
+
+/**
+ * How much more money you find than the base loot tables say: x2 on trips up
+ * to 800 miles, growing with the miles on longer trips (a coast-to-coast trip
+ * needs many more fill-ups), up to x6.67. Applies to searches, crates, fights
+ * and town zombies. Checked by tests/tripBalance.test.ts.
+ */
+export function cashScale(s: { route: { realMeters: number } }): number {
+  const miles = s.route.realMeters / 1609.344;
+  return Math.min(MAX_CASH_SCALE, 2 * Math.max(1, miles / RICH_TRIP_MILES));
+}
+
+/** Found money, scaled for this trip and rounded to whole dollars. */
+export const foundCash = (s: { route: { realMeters: number } }, base: number) => (base > 0 ? Math.round(base * cashScale(s)) : 0);
 
 /** Whole dollars for some units of gas (rounded up; never free). */
 export const fuelCost = (s: { route: { realMeters: number } }, units: number) => (units > 0 ? Math.max(1, Math.ceil(units * fuelPrice(s))) : 0);
@@ -153,6 +162,8 @@ export function newGame(
     hoursSpent: 0,
     inv: {
       ...start,
+      // Starting money buys as much gas as it did before money was scaled (see cashScale).
+      cash: foundCash({ route }, start.cash),
       fuel: Math.round(start.fuel * r.tank),
       bullets: Math.round(start.bullets * r.carry),
       shells: Math.round(start.shells * r.carry),
@@ -380,7 +391,8 @@ export function search(s: GameState, stopId: string, place: PlaceKind): ActionRe
   const factor = (n === 0 ? 1 : n === 1 ? 0.5 : 0.2) * nightLoot(hourOf(s));
   const found: string[] = [];
   for (const [k, v] of Object.entries(loot) as [keyof Inventory, number][]) {
-    const amount = Math.floor((v ?? 0) * factor);
+    const base = Math.floor((v ?? 0) * factor);
+    const amount = k === 'cash' ? foundCash(s, base) : base;
     if (amount <= 0) continue;
     s.inv[k] = k === 'fuel' ? Math.min(tankSize(s), s.inv[k] + amount) : s.inv[k] + amount;
     found.push(`${amount} ${k === 'cash' ? 'dollars' : k}`);
@@ -434,7 +446,8 @@ export function startScavenge(s: GameState, stopId: string, place: PlaceKind, co
   const factor = (n === 0 ? 1 : n === 1 ? 0.5 : 0.2) * nightLoot(hourOf(s));
   const crates: Partial<Inventory>[] = Array.from({ length: count }, () => ({}));
   for (const [k, v] of Object.entries(loot) as [keyof Inventory, number][]) {
-    let amount = Math.floor((v ?? 0) * factor);
+    const base = Math.floor((v ?? 0) * factor);
+    let amount = k === 'cash' ? foundCash(s, base) : base;
     if (amount <= 0) continue;
     // Small amounts go in one or two crates so each find is worth a cheer.
     const parts = Math.max(1, Math.min(count, Math.ceil(amount / 4)));

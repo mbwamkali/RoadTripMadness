@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import {
   buyFuel,
+  foundCash,
   damage,
   openCrate,
   repair,
@@ -715,7 +716,7 @@ export class TownPlay {
     this.popIcon('💨', p, 2.6, 0.8);
     if (!rammed) {
       this.popIcon('💵', p.clone().setY(2.6), 1.3, 1.1);
-      this.hooks.state.inv.cash += 2;
+      this.hooks.state.inv.cash += foundCash(this.hooks.state, 1);
     }
     this.hooks.changed();
   }

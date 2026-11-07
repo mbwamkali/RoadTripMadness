@@ -3,7 +3,7 @@ import { pathFromRoute } from '../geo/route';
 import { DIFFICULTIES, type Difficulty } from './difficulty';
 import { fuelEfficiency } from './upgrades';
 import { rideOf, type Ride } from './rides';
-import { advance, buyFuel, fuelPerUnit, newGame, search, tankSize, type GameState } from './state';
+import { advance, buyFuel, foundCash, fuelPerUnit, newGame, search, tankSize, type GameState } from './state';
 import { hasFuel, type Stop } from './stops';
 
 /**
@@ -54,7 +54,7 @@ export function simulateTrip(route: RouteData, ride: Ride, difficulty: Difficult
     while (s.status === 'driving' && s.distance < to - 0.01) {
       const res = advance(s, path, Math.min(STEP, to - s.distance), rate);
       r.lowestTank = Math.min(r.lowestTank, s.inv.fuel / tankSize(s));
-      if (res.boss) s.inv.cash += BOSS_CASH;
+      if (res.boss) s.inv.cash += foundCash(s, BOSS_CASH);
       if (res.outOfFuel) {
         r.ranDry++;
         if (s.status !== 'driving') return;
