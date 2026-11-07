@@ -1629,7 +1629,8 @@ body.kid .howto-tip b {
 }
 
 .town-actions .btn {
-  flex: 1 1 0;
+  /* Up to three across on a phone; more buttons wrap to a second row instead of squashing. */
+  flex: 1 1 96px;
   min-width: 0;
   min-height: 56px;
   display: inline-flex;
