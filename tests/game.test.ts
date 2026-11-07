@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildRouteData, pathFromRoute } from '../src/geo/route';
 import { demoRawRoute } from '../src/geo/demoRoute';
-import { advance, buyFuel, fuelPerUnit, gasGapFor, newGame, RANGE_MILES, repair, search, upcomingStop, TANK } from '../src/game/state';
+import { advance, buyFuel, fuelAffordable, fuelCost, fuelPrice, fuelPerUnit, gasGapFor, newGame, RANGE_MILES, repair, search, upcomingStop, TANK } from '../src/game/state';
 import { hasFuel } from '../src/game/stops';
 import { boost, combatOutcome, createCombat, fireAt, horn, stepCombat } from '../src/game/combat';
 
@@ -71,10 +71,13 @@ describe('scavenging and shops', () => {
   it('buys only the fuel you can afford', () => {
     const s = newGame(route, 1);
     s.inv.fuel = 50;
-    s.inv.cash = 21;
+    s.inv.cash = 7;
+    const n = fuelAffordable(s);
+    expect(n).toBeGreaterThan(0);
+    expect(fuelCost(s, n + 1)).toBeGreaterThan(7);
     expect(buyFuel(s).ok).toBe(true);
-    expect(s.inv.fuel).toBe(60);
-    expect(s.inv.cash).toBe(1);
+    expect(s.inv.fuel).toBe(50 + n);
+    expect(s.inv.cash).toBe(7 - fuelCost(s, n));
   });
 
   it('repairs using scrap before cash', () => {
@@ -140,5 +143,11 @@ describe('combat', () => {
     expect(boost(c, bag)).toBe(true);
     expect(bag.fuel).toBe(46);
     expect(boost(c, bag)).toBe(false);
+  });
+
+  it('gas gets cheaper on long trips, down to 30%', () => {
+    expect(fuelPrice({ route: { realMeters: 300 * 1609.344 } })).toBe(1);
+    expect(fuelPrice({ route: { realMeters: 1600 * 1609.344 } })).toBe(0.5);
+    expect(fuelPrice({ route: { realMeters: 2800 * 1609.344 } })).toBe(0.3);
   });
 });

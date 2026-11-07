@@ -75,7 +75,31 @@ export const TANK = 100;
 
 export const maxHealth = (s: GameState) => Math.round(maxHealthFor(s.upgrades) * rideOf(s).health);
 export const tankSize = (s: GameState) => Math.round(tankFor(s.upgrades) * rideOf(s).tank);
-export const FUEL_PRICE = 2; // cash per fuel unit
+/** Gas price per fuel unit on trips up to CHEAP_GAS_MILES long. */
+export const FUEL_PRICE = 1;
+/**
+ * Longer trips get cheaper gas, so a coast-to-coast trip's many fill-ups cost
+ * about what a shorter trip's gas does (the money you find doesn't grow with
+ * the miles). Down to 30% of the price. Checked by tests/tripBalance.test.ts.
+ */
+export const CHEAP_GAS_MILES = 800;
+
+/** What a unit of gas costs on this trip, in dollars (to the cent). */
+export function fuelPrice(s: { route: { realMeters: number } }): number {
+  const miles = s.route.realMeters / 1609.344;
+  const k = Math.min(1, Math.max(0.3, CHEAP_GAS_MILES / Math.max(1, miles)));
+  return Math.round(FUEL_PRICE * k * 100) / 100;
+}
+
+/** Whole dollars for some units of gas (rounded up; never free). */
+export const fuelCost = (s: { route: { realMeters: number } }, units: number) => (units > 0 ? Math.max(1, Math.ceil(units * fuelPrice(s))) : 0);
+
+/** How many units the player can pay for right now. */
+export function fuelAffordable(s: GameState): number {
+  let n = Math.floor(s.inv.cash / fuelPrice(s));
+  while (n > 0 && fuelCost(s, n) > s.inv.cash) n--;
+  return n;
+}
 export const REPAIR_SCRAP_PER_HP = 0.5;
 export const REPAIR_CASH_PER_HP = 1;
 
@@ -280,12 +304,12 @@ export interface ActionResult {
 export function buyFuel(s: GameState): ActionResult {
   const want = Math.floor(tankSize(s) - s.inv.fuel);
   if (want <= 0) return { ok: false, message: 'Your tank is already full.' };
-  const afford = Math.floor(s.inv.cash / FUEL_PRICE);
-  const units = Math.min(want, afford);
-  if (units <= 0) return { ok: false, message: `You can't afford gas ($${FUEL_PRICE} a unit).` };
+  const units = Math.min(want, fuelAffordable(s));
+  if (units <= 0) return { ok: false, message: `You can't afford gas ($${fuelPrice(s).toFixed(2)} a unit).` };
+  const cost = fuelCost(s, units);
   s.inv.fuel += units;
-  s.inv.cash -= units * FUEL_PRICE;
-  return { ok: true, message: `Pumped ${units} units of fuel for $${units * FUEL_PRICE}.` };
+  s.inv.cash -= cost;
+  return { ok: true, message: `Pumped ${units} units of fuel for $${cost}.` };
 }
 
 export function repairCost(s: GameState): { hp: number; scrap: number; cash: number } {

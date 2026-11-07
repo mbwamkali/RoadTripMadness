@@ -1,6 +1,6 @@
 import { realKmAt } from '../geo/route';
 import { makeRng } from './rng';
-import { FUEL_PRICE, tankSize, type GameState } from './state';
+import { fuelCost, tankSize, type GameState } from './state';
 import { hasFuel, type Stop } from './stops';
 import { hourOf, isNight } from './time';
 
@@ -54,7 +54,7 @@ export function rideForGas(s: GameState, plan: BikePlan = planBikeRide(s)): Bike
     fuel = Math.round(can * 0.5);
   } else {
     story.push(`You pedal ${plan.km < 10 ? plan.km.toFixed(1) : Math.round(plan.km)} km ${plan.ahead ? 'up the road' : 'back the way you came'} to ${plan.stop.name}.`);
-    const price = can * FUEL_PRICE;
+    const price = fuelCost(s, can);
     if (s.inv.cash >= price) {
       cash = -price;
       fuel = can;

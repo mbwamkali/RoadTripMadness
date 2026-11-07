@@ -22,7 +22,8 @@ import { buildLabel } from './build';
 import { showClassics, showSavedTrips } from './ui/tripScreens';
 import {
   clearSave,
-  FUEL_PRICE,
+  fuelAffordable,
+  fuelCost,
   loadGame,
   maxHealth,
   buyUpgrade,
@@ -1742,7 +1743,7 @@ function showTown(stop: Stop): void {
     } else if (p.phase === 'parked') {
       if (at === 'pumps') {
         const want = Math.max(0, Math.floor(tankSize(s) - s.inv.fuel));
-        const price = Math.min(want * FUEL_PRICE, Math.floor(s.inv.cash / FUEL_PRICE) * FUEL_PRICE);
+        const price = fuelCost(s, Math.min(want, fuelAffordable(s)));
         b.push(button('⛽', want === 0 ? 'Tank is full' : `Fill up ($${price})`, () => p.fillUp(), true, !p.canFill() || p.filling > 0));
       }
       if (at === 'garage') {
