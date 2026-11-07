@@ -298,8 +298,12 @@ export class TownPlay {
     if (this.phase !== 'parked') return;
     const left = new THREE.Vector3(Math.cos(this.carYaw), 0, -Math.sin(this.carYaw));
     this.walker.position.copy(this.host.car.position).addScaledVector(left, 1.9).setY(this.host.car.position.y);
-    this.walker.rotation.y = this.carYaw;
-    this.heading.set(Math.sin(this.carYaw), 0, Math.cos(this.carYaw));
+    // Face the place you parked at, so the camera (behind you) shows it, not the highway.
+    const sp = this.at;
+    const toward = sp ? sp.door.clone().sub(this.walker.position).setY(0) : new THREE.Vector3();
+    if (toward.lengthSq() > 0.01) this.heading.copy(toward.normalize());
+    else this.heading.set(Math.sin(this.carYaw), 0, Math.cos(this.carYaw));
+    this.walker.rotation.y = Math.atan2(this.heading.x, this.heading.z);
     this.walker.visible = true;
     this.phase = 'walking';
     this.hooks.sfx.click();
@@ -359,6 +363,19 @@ export class TownPlay {
     this.heading.copy(sp.facing).setY(0).normalize();
     this.hooks.changed();
     this.walkTo([sp.door.clone().addScaledVector(sp.facing, 2.5)], run ? RUN_SPEED : WALK_SPEED, then);
+  }
+
+  private nearestZombie(p: THREE.Vector3, r: number): Zombie | null {
+    let best: Zombie | null = null;
+    let bestD = r;
+    for (const z of this.zombies) {
+      const d = z.obj.position.distanceTo(p);
+      if (d < bestD) {
+        bestD = d;
+        best = z;
+      }
+    }
+    return best;
   }
 
   private frame = 0;
@@ -855,12 +872,19 @@ export class TownPlay {
     } else if (this.phase === 'walking') {
       // Third person behind the walker: a close-up of the road's chase camera.
       const w = this.walker.position;
+      // Standing still with zombies about: turn to face the nearest, so you can see it coming.
+      const z = !this.walk ? this.nearestZombie(w, 20) : null;
+      if (z) {
+        const to = z.obj.position.clone().sub(w).setY(0);
+        if (to.lengthSq() > 0.01) this.heading.lerp(to.normalize(), Math.min(1, dt * 1.5)).setY(0).normalize();
+      }
       const sp = this.at;
       if (sp && w.distanceTo(sp.door) < 12) {
-        // By a building: from the street side and a little along it, so the camera never ends up in the wall.
+        // By a building: from the street side, a little along, looking between you and the door, so
+        // you and the building are both in view (and the camera never ends up in the wall).
         const along = new THREE.Vector3(sp.facing.z, 0, -sp.facing.x);
-        wantPos.copy(w).addScaledVector(sp.facing, 7).addScaledVector(along, -6).setY(w.y + 5.5);
-        wantLook.copy(w).addScaledVector(sp.facing, 2).setY(w.y + 1.2);
+        wantPos.copy(w).addScaledVector(sp.facing, 8).addScaledVector(along, -3).setY(w.y + 5.5);
+        wantLook.copy(w).lerp(sp.door, 0.5).setY(w.y + 1.4);
       } else {
         wantPos.copy(w).addScaledVector(this.heading, busy ? -7.5 : -8.5).setY(w.y + (busy ? 6.5 : 5.2));
         wantLook.copy(w).addScaledVector(this.heading, 5).setY(w.y + 1.2);
