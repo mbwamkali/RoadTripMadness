@@ -28,12 +28,14 @@ describe('fuel economy readout', () => {
 });
 
 describe('speed costs fuel and adds risk', () => {
-  it('is free up to 5 over, then burns more and more; easing off saves a little', async () => {
+  it('is free up to 5 over, then burns more like a real car; easing off saves a little', async () => {
     const { speedFuelFactor } = await import('../src/game/driving');
     expect(speedFuelFactor(65, 65)).toBe(1);
     expect(speedFuelFactor(70, 65)).toBe(1);
-    expect(speedFuelFactor(100, 75)).toBeCloseTo(1.5625);
-    expect(speedFuelFactor(140, 65)).toBeCloseTo(4);
+    expect(speedFuelFactor(100, 65)).toBeCloseTo(1.54, 2);
+    expect(speedFuelFactor(140, 65)).toBeCloseTo(2.56, 2);
+    expect(speedFuelFactor(100, 75)).toBeCloseTo(1.33, 2);
+    expect(speedFuelFactor(80, 65)).toBeCloseTo(1.16, 2);
     expect(speedFuelFactor(30, 75)).toBeCloseTo(0.8);
     expect(speedFuelFactor(0, 35)).toBeCloseTo(0.8);
     const car = newGame(buildRouteData(demoRawRoute()), 1, 'normal', 'car');

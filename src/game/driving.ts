@@ -54,14 +54,23 @@ function overShare(mph: number, limit: number): number {
 }
 
 /**
+ * Gas per mile at a steady speed, in made-up units: a fixed part plus air
+ * drag, which grows with speed squared. Fitted to Oak Ridge National Lab
+ * tests of 74 cars (DOE Facts #772/#982): about 14% worse mileage from 60
+ * to 70 mph and 27% worse from 60 to 80.
+ */
+function fuelPerMile(mph: number): number {
+  return 0.56 + 0.000123 * mph * mph;
+}
+
+/**
  * How much more (or less) fuel you burn per mile at a speed. Up to 5 over
- * the limit costs nothing extra; past that air drag makes it climb faster
- * and faster (with speed squared), so 100 on a 75 road burns about 56% more
- * and 140 on a 65 road four times as much. Driving under the limit saves a
- * little, down to 20% less.
+ * the limit costs nothing extra; past that it follows real cars (above), so
+ * 100 on a 65 road burns about 1.54x and 140 about 2.56x. Driving under the
+ * limit saves a little, down to 20% less.
  */
 export function speedFuelFactor(mph: number, limit: number): number {
-  if (mph > limit + FREE_OVER) return overShare(mph, limit) ** 2;
+  if (mph > limit + FREE_OVER) return fuelPerMile(mph) / fuelPerMile(limit + FREE_OVER);
   if (mph >= limit) return 1;
   return Math.max(0.8, 1 - (1 - mph / Math.max(1, limit)) * 0.5);
 }
