@@ -21,7 +21,7 @@ export interface GasPrice {
   week: string;
 }
 
-let current: GasPrice = { usd: REFERENCE_USD, week: "2026-11-02" };
+let current: GasPrice = { usd: REFERENCE_USD, week: '2026-11-02' };
 
 /** The latest real price the game knows. */
 export const gasPrice = (): GasPrice => current;
@@ -29,26 +29,19 @@ export const gasPrice = (): GasPrice => current;
 /** Real price ÷ reference price, to two decimals, within MIN_LEVEL..MAX_LEVEL. */
 export function levelFor(usd: number): number {
   if (!Number.isFinite(usd) || usd <= 0) return 1;
-  return (
-    Math.round(
-      Math.min(MAX_LEVEL, Math.max(MIN_LEVEL, usd / REFERENCE_USD)) * 100,
-    ) / 100
-  );
+  return Math.round(Math.min(MAX_LEVEL, Math.max(MIN_LEVEL, usd / REFERENCE_USD)) * 100) / 100;
 }
 
 /** The price level a trip starting now uses. */
 export const priceLevelNow = () => levelFor(current.usd);
 
 /** Reads public/data/gas-price.json; keeps the built-in price if it can't. */
-export async function loadGasPrice(
-  url = `${import.meta.env.BASE_URL}data/gas-price.json`,
-): Promise<GasPrice> {
+export async function loadGasPrice(url = `${import.meta.env.BASE_URL}data/gas-price.json`): Promise<GasPrice> {
   try {
-    const r = await fetch(url, { cache: "no-cache" });
+    const r = await fetch(url, { cache: 'no-cache' });
     if (r.ok) {
       const j = (await r.json()) as Partial<GasPrice>;
-      if (typeof j.usd === "number" && j.usd > 0)
-        current = { usd: j.usd, week: String(j.week ?? "") };
+      if (typeof j.usd === 'number' && j.usd > 0) current = { usd: j.usd, week: String(j.week ?? '') };
     }
   } catch {
     // Offline or missing: the built-in price stands.

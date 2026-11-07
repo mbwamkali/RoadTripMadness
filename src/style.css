@@ -2251,11 +2251,20 @@ body.kid .howto-tip b {
 }
 .title .tag {
   color: #f2e6d8;
-  margin: 0;
+  margin: 0 auto;
+  width: fit-content;
+  max-width: 100%;
+  padding: 3px 12px;
+  border-radius: 14px;
+  /* A soft dark pill, so the line stays readable over the sign, clouds or a passing saucer. */
+  background: rgba(24, 14, 8, 0.45);
 }
 .title .fine {
   margin: 0;
   color: #e8dccd;
+}
+.title .fine a {
+  color: #ffd27a;
 }
 .title .offline-badge {
   width: auto;
