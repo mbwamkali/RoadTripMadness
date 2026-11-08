@@ -14,6 +14,7 @@ export const HD_SPECS = {
   car: { turn: -90 },
   pickup: { turn: -90 },
   saucer: { turn: 0 },
+  mothership: { turn: 0 },
   earl: { turn: -90 },
   warrig: { turn: -90 },
   hermit: { turn: -90 },

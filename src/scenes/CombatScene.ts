@@ -27,6 +27,7 @@ import { castShadows, disposeTree, makeLaneTexture, makeRide, makeRoadTexture, t
 import { modelGeometry, modelMaterial, modelMesh, modelsWanted, treeModelsWanted, type ModelName } from './models';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { sampleBrute, sampleCatship, sampleMothership, sampleOutlaw, sampleWarRig } from './samples';
+import { person, type Person } from './people';
 import { angryCat, paperPlaneGeometry, pizzaGeometryParts, sampleCommandDrone, sampleHermit, sampleKaren, simpleCommandDrone, samplePizzaCar, sampleSweeper, simpleCat, simpleHermit, simpleKaren, simplePizzaCar, simpleSweeper } from './bossModels';
 
 export interface CombatCallbacks {
@@ -882,6 +883,7 @@ export function buildEnemy(type: EnemyType): THREE.Group {
     hitRadius = 2.6;
     barY = 1.9;
   }
+  if (type === 'mothership' && body.getObjectByName('hd')) addQueen(body);
   const hitbox = new THREE.Mesh(new THREE.SphereGeometry(hitRadius, 8, 6), new THREE.MeshBasicMaterial({ visible: false }));
   hitbox.position.y = type === 'catship' || type === 'mothership' || type === 'drones' ? 0.2 : type === 'warrig' ? 1.8 : type === 'pizza' ? 1.4 : type === 'sweeper' ? 2.0 : 1.3;
   hitbox.name = 'hitbox';
@@ -910,8 +912,44 @@ export function buildEnemy(type: EnemyType): THREE.Group {
   return g;
 }
 
+/**
+ * The rigged Cat Queen stands on top of the generated mothership, between its
+ * ears, facing the car (Medium and High, once both have loaded).
+ */
+function addQueen(body: THREE.Object3D): void {
+  const q = person('cat_queen', 5.4);
+  if (!q) return;
+  body.updateMatrixWorld(true);
+  const hd = body.getObjectByName('hd')!;
+  const box = new THREE.Box3().setFromObject(hd);
+  // The ship's top is its ears; she stands a little lower, on the dome in front of them.
+  q.obj.position.set(0, box.min.y + (box.max.y - box.min.y) * 0.78, box.max.z * 0.25);
+  q.obj.name = 'queen';
+  q.play('idle');
+  body.add(q.obj);
+  body.userData.queen = q;
+  // With her on top it stands taller than the old ship: smaller and lower, so she stays below the top of a phone screen.
+  body.scale.setScalar(0.8);
+  body.position.y = -4;
+}
+
 function animateEnemy(g: THREE.Group, e: Enemy, t: number): void {
   const body = g.getObjectByName('body')!;
+  const queen = body.userData.queen as Person | undefined;
+  if (queen) {
+    // The new ship has a face, so it sways toward you instead of spinning; she swipes when the beam charges.
+    const dt = Math.min(0.1, Math.max(0, t - ((body.userData.lastT as number) ?? t)));
+    body.userData.lastT = t;
+    queen.play(e.charging ? 'swipe' : 'idle', 1, 0.2);
+    queen.update(dt);
+    body.rotation.y = Math.sin(t * 0.5) * 0.25;
+    const charge = body.getObjectByName('charge');
+    if (charge) charge.visible = e.charging;
+    body.traverse((o) => {
+      if (o.name === 'light') ((o as THREE.Mesh).material as THREE.MeshBasicMaterial).color.setHex(e.charging ? 0xff40ff : 0xffe040);
+    });
+    return;
+  }
   if (e.type === 'zombie' || e.type === 'brute') {
     const swing = Math.sin(t * (e.type === 'brute' ? 2.5 : 6) + e.id) * 0.5 * (e.stunned > 0 ? 0.1 : 1);
     const legL = body.getObjectByName('legL');

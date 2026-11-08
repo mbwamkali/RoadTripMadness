@@ -466,8 +466,13 @@ export function sampleCatship(): THREE.Group {
   return withHd('alien_cat', codeCatship(), 'height');
 }
 
-/** Mothership (detailed generated model on Medium/High once loaded; built in code otherwise). */
+/** Mothership: the black cat-eared ship (Medium/High once loaded; built in code otherwise). The Cat Queen rides on top in fights. */
 export function sampleMothership(): THREE.Group {
+  return withHd('mothership', codeMothership(), 'height');
+}
+
+/** The open-top "convertible" cat saucer (title screen). */
+export function sampleCatSaucer(): THREE.Group {
   return withHd('saucer', codeMothership(), 'height');
 }
 

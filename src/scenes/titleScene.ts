@@ -8,7 +8,7 @@ import { loadModels, modelMesh, modelsWanted, type ModelName } from './models';
 import { detailTexture } from './textures';
 import { addGroundDetail } from './groundDetail';
 import { makeAnimal } from './animalModels';
-import { sampleCatship, sampleMothership } from './samples';
+import { sampleCatSaucer, sampleCatship } from './samples';
 import { person, type Person } from './people';
 import { quality } from './quality';
 import { sound } from '../audio/sound';
@@ -398,7 +398,7 @@ export class TitleScene implements GameScene {
       case 'cat':
         return { obj: sampleCatship(), person: null };
       case 'saucer': {
-        const s = sampleMothership();
+        const s = sampleCatSaucer();
         s.scale.multiplyScalar(1.6);
         return { obj: s, person: null };
       }
