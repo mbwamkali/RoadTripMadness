@@ -12,6 +12,7 @@ import { hashString, makeRng, range, rangeInt, type Rng } from './rng';
 import { DIFFICULTIES, type Difficulty } from './difficulty';
 import { HALF_BOSSES, type BossKind } from './combat';
 import { rideOf, type Ride } from './rides';
+import { testing } from './testFlag';
 
 export type AmmoKind = 'bullets' | 'shells' | 'catnip';
 
@@ -315,6 +316,7 @@ export function upcomingStop(s: GameState, lookahead: number): Stop | undefined 
 }
 
 export function damage(s: GameState, amount: number): void {
+  if (testing.tough) return;
   s.health = Math.max(0, s.health - amount);
   if (s.health <= 0 && s.status === 'driving') {
     s.status = 'lost';
@@ -556,6 +558,7 @@ export function buyUpgrade(s: GameState, kind: UpgradeKind): ActionResult {
 const SAVE_KEY = 'rtm-save-v1';
 
 export function saveGame(s: GameState): void {
+  if (testing.on) return;
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify(s));
   } catch {
@@ -589,6 +592,7 @@ export function loadGame(): GameState | null {
 }
 
 export function clearSave(): void {
+  if (testing.on) return;
   try {
     localStorage.removeItem(SAVE_KEY);
   } catch {

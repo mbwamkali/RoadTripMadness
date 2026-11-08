@@ -86,14 +86,14 @@ export interface RawRoute {
 }
 
 /** Converts a real-world route into game geometry: project, scale, smooth and resample. */
-export function buildRouteData(raw: RawRoute): RouteData {
+export function buildRouteData(raw: RawRoute, driveSeconds = targetDriveSeconds(raw.realMeters)): RouteData {
   if (raw.coords.length < 2) throw new Error('Route has no geometry');
   const proj = makeProjection(raw.coords[0]);
   const meters = dedupe(raw.coords.map((c) => proj.toLocal(c)));
   if (meters.length < 2) throw new Error('Start and end are the same place');
   const metersPath = new Path(meters);
 
-  const gameLength = targetDriveSeconds(raw.realMeters) * CRUISE_SPEED;
+  const gameLength = driveSeconds * CRUISE_SPEED;
   const scale = metersPath.length / gameLength;
   const scaled: Vec2[] = meters.map((p) => ({ x: p.x / scale, y: p.y / scale }));
 

@@ -2454,3 +2454,8 @@ body.kid .howto-tip b {
     font-size: 24px;
   }
 }
+
+/* Test trip start card (?test=...): clear of the 🛠 test button at the top. */
+.screen.test-start {
+  padding-top: calc(env(safe-area-inset-top) + 72px);
+}

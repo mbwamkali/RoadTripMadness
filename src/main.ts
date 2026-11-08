@@ -78,6 +78,11 @@ import { mountDevPanel } from './ui/devPanel';
 import { devGfx, gfx, loadQualityChoice, nextQualityChoice, quality, QUALITY_NAMES, resolveQuality, saveAutoCap, saveQualityChoice } from './scenes/quality';
 import { AutoTune } from './scenes/autoTune';
 import type { Bloom } from './scenes/bloom';
+import { testing } from './game/testFlag';
+import { describeTest, fuelPerRoadUnit, GASTURN_LEFT, makeTestGame, parseTestFlags, type TestPlan } from './game/testTrip';
+import { townLookup } from './town/fetchTown';
+import { devClock } from './game/time';
+import { makeEvent } from './game/events';
 
 const canvas = document.getElementById('view') as HTMLCanvasElement;
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
@@ -166,6 +171,20 @@ const perf = new PerfMeter(renderer, () => {
     turn: drive.turnInfo,
   };
 });
+// A test trip from the address bar (?test=boss&boss=karen ...; src/game/testTrip.ts). Read before anything else
+// looks at kid mode or the clock; nothing it does is saved.
+const testPlan = parseTestFlags(location.search);
+if (testPlan) {
+  testing.on = true;
+  testing.tough = testPlan.tough;
+  if (testPlan.kid != null) kidMode.force(testPlan.kid);
+  townLookup.off = testPlan.town !== 'real';
+  if (testPlan.hour != null) devClock.hour = testPlan.hour;
+  if (testPlan.weather) devClock.weather = testPlan.weather;
+}
+/** The test trip that's on the road right now (null on a normal trip). */
+let testTrip: { plan: TestPlan; state: GameState; eventShown: boolean; drained: boolean } | null = null;
+const testOn = () => (testTrip && testTrip.state === state ? testTrip : null);
 mountDevPanel(() => {
   applyQuality();
   resize();
@@ -802,14 +821,27 @@ function startTripNow(s: GameState): void {
   path = pathFromRoute(s.route);
   saveGame(s);
   drive = new DriveScene(s, path, {
-    onEncounter: () => startCombat(false),
+    onEncounter: () => {
+      const t = testOn();
+      if (t?.plan.kind !== 'fight') return startCombat(false);
+      testHorde = t.plan.horde;
+      startCombat(false, t.plan.enemy);
+      testHorde = undefined;
+    },
     onArrive: () => setTimeout(showEnd, 600),
     onOutOfFuel: () => setTimeout(() => (state?.status === 'lost' ? showEnd() : showBikeRescue()), 600),
     onPrompt: (stop, dist) => updatePrompt(stop, dist),
     onEnterStop: (stop) => (stop.kind === 'shortcut' ? showShortcut(stop) : showTown(stop)),
     onLandmark: (l) => showLandmarkToast(l),
     onBiome: (icon, name) => showToast(icon, 'Now entering', name),
-    onRoadEvent: () => showRoadEvent(rollEvent(s)),
+    onRoadEvent: () => {
+      const t = testOn();
+      // A test trip's event comes first; any later ones are random as usual.
+      if (t?.plan.event && !t.eventShown) {
+        t.eventShown = true;
+        showRoadEvent(makeEvent(t.plan.event, s));
+      } else showRoadEvent(rollEvent(s));
+    },
     // Bosses arrive right on the road (a name banner and the narrator); the old intro card stays for the fight view.
     onBoss: (boss) => (roadFights ? startCombat(false, undefined, boss) : showBossIntro(boss)),
     onTick: () => hudTick?.(),
@@ -931,6 +963,12 @@ function updatePrompt(stop: Stop | null, dist: number): void {
 }
 
 function chooseTurn(stop: Stop): void {
+  const t = testOn();
+  if (t?.plan.kind === 'gasturn' && !t.drained && state) {
+    // The gas-turn test: the tank runs dry about a second after Turn is tapped.
+    t.drained = true;
+    state.inv.fuel = Math.min(state.inv.fuel, GASTURN_LEFT * fuelPerRoadUnit(state));
+  }
   drive?.takeTurn(stop);
   navigator.vibrate?.(40);
   renderSignalling(stop);
@@ -2303,6 +2341,7 @@ function showEnd(): void {
     ...(s.threat ? { threat: s.threat } : {}),
     date: new Date().toLocaleDateString(),
   };
+  const wasTest = testing.on;
   const { list, rank } = addScore(entry);
   // A finished trip keeps its upgrades and raises the threat for the next one.
   const before = loadCareer();
@@ -2314,6 +2353,7 @@ function showEnd(): void {
       { class: `screen end ${won ? 'won' : 'lost'}` },
       h('h1', {}, won ? 'You made it!' : 'Road trip over'),
       h('p', {}, won ? `Welcome to ${s.route.endLabel}.` : s.lostReason ?? 'Your trip ended early.'),
+      wasTest && h('p', { class: 'note' }, '🧪 Test trip: nothing was saved or scored.'),
       h(
         'ul',
         { class: 'facts' },
@@ -2344,6 +2384,78 @@ function showEnd(): void {
   state = null;
 }
 
+// --------------------------------------------------------------- test trips (?test=...)
+
+/** The test trip's start card: one tap starts it (and lets the sound start). */
+function showTestStart(plan: TestPlan): void {
+  setScene(null);
+  disposeAll();
+  clearUi();
+  const extras = [
+    plan.town === 'none' ? 'no town' : plan.town === 'real' ? 'real town lookup' : 'made-up town',
+    plan.ride && `ride: ${plan.ride}`,
+    plan.difficulty && `difficulty: ${plan.difficulty}`,
+    plan.kid != null && `kid mode ${plan.kid ? 'on' : 'off'}`,
+    plan.hour != null && `time ${clockText(plan.hour)}`,
+    plan.weather && `weather: ${plan.weather}`,
+    plan.cash != null && `cash $${plan.cash}`,
+    plan.gas != null && `gas ${plan.gas}`,
+    plan.tough && 'no damage',
+    plan.radio && `radio: ${plan.radio}`,
+  ].filter(Boolean);
+  const tip: Partial<Record<TestPlan['kind'], string>> = {
+    boss: plan.boss === 'mothership' ? 'The Cat Queen waits about 25 seconds up the road.' : `${plan.town === 'none' ? '' : 'The town comes first (tap Keep driving to skip it). '}The boss is about 45 seconds up the road.`,
+    gasturn: 'Tap Turn at the town: the tank runs dry about a second later.',
+    bike: 'The tank runs dry before the town; the bike goes to its pumps.',
+    event: 'The event pops up a few seconds in.',
+    fight: 'The fight starts a few seconds in.',
+  };
+  ui().append(
+    h(
+      'div',
+      { class: 'screen test-start' },
+      h('h2', {}, `🧪 ${describeTest(plan)}`),
+      h('p', {}, tip[plan.kind] ?? 'Short test trip.'),
+      h('p', { class: 'muted' }, extras.join(' · ')),
+      h('p', { class: 'note' }, 'Test trip: your saved trip, scores and upgrades are left alone.'),
+      h(
+        'div',
+        { class: 'actions' },
+        h('button', { class: 'btn ghost', onclick: () => location.assign(`${location.pathname}?dev=1`) }, 'Title screen'),
+        h('button', { class: 'btn primary', onclick: () => startTestTrip(plan) }, 'Start test'),
+      ),
+    ),
+  );
+}
+
+function startTestTrip(plan: TestPlan): void {
+  const s = makeTestGame(plan);
+  testTrip = { plan, state: s, eventShown: false, drained: false };
+  if (plan.radio) sound.tuneTo(plan.radio);
+  startTrip(s);
+  if (plan.kind !== 'town' && plan.kind !== 'garage') return;
+  // Into the town as soon as the road is up (the models may still be loading), then to the garage.
+  let tries = 0;
+  const wait = setInterval(() => {
+    if (++tries > 120 || state !== s) return clearInterval(wait);
+    if (!drive || !s.stops[0]) return;
+    if (!townPlay) {
+      if (tries === 1 || tries % 20 === 0) {
+        clearUi();
+        showDriveHud();
+        drive.turnInNow(s.stops[0]);
+      }
+      return;
+    }
+    if (plan.kind === 'town') return clearInterval(wait);
+    const garage = townPlay.world.spots.find((x) => x.lot.place === 'garage');
+    if (garage && !townPlay.busy) {
+      townPlay.driveTo(garage);
+      clearInterval(wait);
+    }
+  }, 500);
+}
+
 // Audio may only start after a user gesture; every tap makes sure it's running.
 window.addEventListener('pointerdown', () => sound.unlock(), { capture: true });
 window.addEventListener('click', (e) => {
@@ -2354,7 +2466,8 @@ resize();
 requestAnimationFrame(frame);
 document.body.classList.toggle('kid', kidMode.on);
 narrateUi(ui());
-showTitle();
+if (testPlan) showTestStart(testPlan);
+else showTitle();
 // Map server addresses can be changed on the site without an app update (src/geo/servers.ts).
 void loadServers();
 registerServiceWorker(() => {

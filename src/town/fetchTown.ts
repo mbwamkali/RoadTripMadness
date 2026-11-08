@@ -15,6 +15,9 @@ export const TOWN_LOOKUP_MS = 15_000;
 /** Towns kept on the device. */
 export const TOWNS_KEPT = 40;
 
+/** Test trips (?test=..., not &town=real) skip the lookup and lay towns out from made-up data straight away. */
+export const townLookup = { off: false };
+
 const memory = new Map<string, TownMapData | null>();
 const pending = new Map<string, Promise<TownMapData | null>>();
 
@@ -30,6 +33,10 @@ export function knownTown(p: LatLng): TownMapData | null | undefined {
 export function lookupTown(p: LatLng): Promise<TownMapData | null> {
   const k = keyOf(p);
   if (memory.has(k)) return Promise.resolve(memory.get(k)!);
+  if (townLookup.off) {
+    memory.set(k, null);
+    return Promise.resolve(null);
+  }
   let job = pending.get(k);
   if (!job) {
     job = (async () => {

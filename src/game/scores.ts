@@ -1,6 +1,7 @@
 import { DIFFICULTIES, type Difficulty } from './difficulty';
 import { threatScoreBonus } from './career';
 import type { GameState } from './state';
+import { testing } from './testFlag';
 
 export interface ScoreEntry {
   score: number;
@@ -57,6 +58,8 @@ export function loadScores(): ScoreEntry[] {
 
 /** Adds a score and returns its rank (0-based), or -1 if it didn't make the list. */
 export function addScore(entry: ScoreEntry, list = loadScores()): { list: ScoreEntry[]; rank: number } {
+  // Test trips (?test=...) are never scored.
+  if (testing.on) return { list, rank: -1 };
   const next = [...list, entry].sort((a, b) => b.score - a.score).slice(0, MAX_SCORES);
   const rank = next.indexOf(entry);
   try {

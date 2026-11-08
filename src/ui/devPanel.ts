@@ -7,10 +7,23 @@ import { devGfx, quality } from '../scenes/quality';
  * waiting for it: open the game with ?dev=1 (remembered until ?dev=0). The
  * 🛠 button at the top opens it.
  */
+const TEST_BOSSES: [string, string][] = [
+  ['🧟 Earl', 'brute'],
+  ['🚚 War rig', 'warrig'],
+  ['🧔 Hermit', 'hermit'],
+  ['🍕 Pizza', 'pizza'],
+  ['🧹 Sweeper', 'sweeper'],
+  ['👵 Karen', 'karen'],
+  ['✈️ Drones', 'drones'],
+  ['👑 Cat Queen', 'queen'],
+];
+
 /** `applyGfx` re-applies the graphics settings after a switch changes them. */
 export function mountDevPanel(applyGfx: () => void = () => undefined): void {
-  const q = new URLSearchParams(location.search).get('dev');
-  let on = q === '1';
+  const params = new URLSearchParams(location.search);
+  const q = params.get('dev');
+  // A test trip (?test=...) always brings the panel.
+  let on = q === '1' || (params.has('test') && params.get('test') !== '0') || params.has('boss');
   try {
     if (q === '1') localStorage.setItem('rtm-dev', '1');
     if (q === '0') localStorage.removeItem('rtm-dev');
@@ -123,8 +136,32 @@ export function mountDevPanel(applyGfx: () => void = () => undefined): void {
   gRow.append(...gBtns);
   paintGfx();
 
-  panel.append(tHead, tRow, sRow, wHead, wRow, gHead, gRow);
+  // Test trips: a short made-up road straight to one thing (src/game/testTrip.ts). Each button reloads the page.
+  const xHead = document.createElement('h4');
+  xHead.textContent = 'Test trips (nothing is saved)';
+  const xRow = document.createElement('div');
+  xRow.className = 'row';
+  const go = (label: string, query: string) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.onclick = () => location.assign(`${location.pathname}?dev=1&${query}`);
+    return b;
+  };
+  xRow.append(
+    ...TEST_BOSSES.map(([label, id]) => go(label, `test=boss&boss=${id}`)),
+    go('🏘️ Town', 'test=town'),
+    go('🔧 Garage (bike)', 'test=garage&ride=motorcycle'),
+    go('🚲 Bike rescue', 'test=bike'),
+    go('⛽ Gas out in turn', 'test=gasturn'),
+    go('🧍 Hitchhiker', 'test=event&event=hitchhiker'),
+    go('🧟 Horde', 'test=fight&enemy=zombies&horde=1'),
+    go('🤠 Outlaws', 'test=fight&enemy=outlaws'),
+    go('🐱 Cats', 'test=fight&enemy=cats'),
+  );
+
+  panel.append(tHead, tRow, sRow, wHead, wRow, gHead, gRow, xHead, xRow);
   document.body.append(btn, panel);
-  setHour(null);
-  setWeather(null);
+  // A test trip's &time= and &weather= are already set; show them.
+  setHour(devClock.hour);
+  setWeather(devClock.weather);
 }

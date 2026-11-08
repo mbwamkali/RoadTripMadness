@@ -86,6 +86,13 @@ class Sound {
     if (this.ctx) this.sfxBus.gain.value = on ? 1 : 0;
   }
 
+  /** Tunes the radio to a station for this page load only (test trips: &radio=...). */
+  tuneTo(st: Station): void {
+    if (!STATION_ORDER.includes(st)) return;
+    this.settings.station = st;
+    this.applyMusic();
+  }
+
   /** Cycles the car radio: off, then each station in turn. Returns the new station. */
   nextStation(): Station {
     this.settings.station = STATION_ORDER[(STATION_ORDER.indexOf(this.settings.station) + 1) % STATION_ORDER.length];
