@@ -4,7 +4,7 @@ import { lit } from './materials';
 import { Path, type Vec2 } from '../geo/geo';
 import { CRUISE_SPEED, postedLimit, realKmAt } from '../geo/route';
 import { advance, damage, fuelPerUnit, upcomingStop, type GameState } from '../game/state';
-import { BOOST_MPH, brakeRange, CRUISE_MPH, crashScale, FREE_OVER, SPEED_STEP, speedCap, speedFuelFactor, targetMph, topSpeed } from '../game/driving';
+import { BOOST_MPH, brakeRange, CRUISE_MPH, crashScale, FREE_OVER, PROMPT_MIN, promptRange, SPEED_STEP, speedCap, speedFuelFactor, targetMph, topSpeed } from '../game/driving';
 import { structureAt, type Structure } from '../game/structures';
 import { buildStructurePart } from './structures';
 import { coolRage, HOSTILE_RANGE, hostileShot, rageOf, rollHostile, shootVehicle } from '../game/rage';
@@ -51,7 +51,6 @@ const GROUND_SIZE = 4000;
 /** Ground texture repeats every this many units. */
 const GROUND_TILE = 60;
 const ROAD_HALF = 4.5;
-const PROMPT_RANGE = 320;
 /** Look a town's streets up this far ahead, so the answer is usually in before it's built. */
 const TOWN_LOOKAHEAD = 4000;
 /** Wait for the lookup until the town is this close, then lay it out from made-up data. */
@@ -221,8 +220,6 @@ export function extendPath(path: Path, extra: number): Path {
 /** How much a fight's nitro boost speeds the car up. */
 /** Game units per second for each mph (65 mph = cruise speed). */
 export const UNITS_PER_MPH = CRUISE_SPEED / CRUISE_MPH;
-/** Speed the car eases down to while a stop's Turn button is on offer. */
-const PROMPT_MPH = CRUISE_MPH * 0.7;
 
 export class DriveScene implements GameScene {
   scene = new THREE.Scene();
@@ -843,7 +840,7 @@ export class DriveScene implements GameScene {
     this.pendingTurn = keep;
     // Back from fetching gas with a stop just ahead: come back already signalling for it (Cancel still works).
     if (!keep && opts.signalNext) {
-      const next = upcomingStop(s, PROMPT_RANGE);
+      const next = upcomingStop(s, PROMPT_MIN);
       if (next) {
         this.promptStop = next;
         this.takeTurn(next);
@@ -935,11 +932,9 @@ export class DriveScene implements GameScene {
     const top = topSpeed(s);
     const want = targetMph(limit, this.over, this.cap(limit));
     // About 0 to 60 in four seconds; braking is quicker.
-    const prevPace = this.paceMph;
     this.paceMph = want > this.paceMph ? Math.min(want, this.paceMph + 15 * dt) : Math.max(want, this.paceMph - 30 * dt);
-    // A stop coming up: ease off (gently) so there's time to read the Turn button. Once you've chosen to
-    // turn, the speed is yours again: swipe up or down as usual.
-    if (this.promptStop && !this.pendingTurn) this.paceMph = Math.min(this.paceMph, Math.max(PROMPT_MPH, prevPace - 20 * dt));
+    // A stop coming up doesn't slow you down: the speed is always yours. The Turn buttons show up
+    // sooner when you're going fast instead (promptRange).
     let speed = this.paceMph * UNITS_PER_MPH * this.roadSpeed;
     // Off the road: slower on the shoulder, slower still on the sidewalk, and slowest on grass and dirt.
     if (this.off) speed *= this.offSurface() === 'paved' ? OFFROAD_SPEED.paved : this.offSurface() === 'sidewalk' ? OFFROAD_SPEED.sidewalk : OFFROAD_SPEED.rough;
@@ -1017,7 +1012,7 @@ export class DriveScene implements GameScene {
       return;
     }
     // Stop prompts.
-    const next = upcomingStop(s, PROMPT_RANGE);
+    const next = upcomingStop(s, promptRange(this.speed * this.warp));
     if (this.promptStop && s.distance > this.promptStop.at + 5) {
       this.skipStop(this.promptStop);
     } else if (next && next !== this.promptStop && !this.pendingTurn) {

@@ -80,6 +80,23 @@ export function brakeRange(mph: number, limit: number): number {
   return 16 / Math.max(1, overShare(mph, limit));
 }
 
+/** The Turn buttons show up at least this far ahead of a stop (game units). */
+export const PROMPT_MIN = 320;
+/** ...and never further ahead than this (turn-offs are kept 600 units apart). */
+export const PROMPT_MAX = 600;
+/** Seconds of warning the Turn buttons give at your current speed (when that's further than PROMPT_MIN). */
+export const PROMPT_LEAD_S = 4;
+
+/**
+ * How far ahead of a stop its Turn buttons show up. The car isn't slowed down for a turn any more,
+ * so going fast shows them sooner: 4 s ahead at the current speed, but never closer than 320 units
+ * (so normal speeds see them as early as before) and never further than 600.
+ * `unitsPerSecond` is real-time speed (game speed × time warp).
+ */
+export function promptRange(unitsPerSecond: number): number {
+  return Math.min(PROMPT_MAX, Math.max(PROMPT_MIN, unitsPerSecond * PROMPT_LEAD_S));
+}
+
 /** Crashing at speed hurts more: with speed squared above 65 mph, so 100 hurts about twice as much as 70. */
 export function crashScale(mph: number): number {
   return Math.max(1, mph / CRUISE_MPH) ** 2;

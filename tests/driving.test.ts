@@ -74,3 +74,15 @@ describe('speed choice', () => {
     expect(speedCap(75, 95)).toBe(95);
   });
 });
+
+describe('turn prompt range', () => {
+  it('keeps 320 units at normal speeds and gives 4 s of warning when fast, up to 600', async () => {
+    const { promptRange } = await import('../src/game/driving');
+    const ups = (mph: number) => (mph * 38) / 65;
+    expect(promptRange(0)).toBe(320);
+    expect(promptRange(ups(65))).toBe(320);
+    expect(promptRange(ups(120))).toBe(320);
+    expect(promptRange(ups(140))).toBeCloseTo(327.4, 1);
+    expect(promptRange(ups(140) * 3)).toBe(600);
+  });
+});
