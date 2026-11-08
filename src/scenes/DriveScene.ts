@@ -2042,7 +2042,17 @@ export class DriveScene implements GameScene {
     const fwd = new THREE.Vector3(f.x, 0, -f.y);
     this.town?.dispose();
     this.town = null;
-    this.town = new TownPlay({ scene: this.scene, camera: this.camera, car: this.car, exit: { pos, fwd } }, world, {
+    // The car is read fresh each time: an upgrade at the garage rebuilds it (refreshCar) mid-visit.
+    const drive = this;
+    const host = {
+      scene: this.scene,
+      camera: this.camera,
+      get car() {
+        return drive.car;
+      },
+      exit: { pos, fwd },
+    };
+    this.town = new TownPlay(host, world, {
       ...hooks,
       done: () => {
         this.town?.dispose();
