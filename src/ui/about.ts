@@ -36,6 +36,8 @@ export const CREDITS: Credit[] = [
     links: [
       ['Nominatim', 'https://nominatim.org'],
       ['Overpass API', 'https://overpass-api.de'],
+      ['private.coffee Overpass (backup)', 'https://overpass.private.coffee'],
+      ['Contact about this game', `${REPO_URL}/issues`],
     ],
   },
   {
@@ -157,6 +159,8 @@ export function showAbout(back: () => void, buildLine: () => HTMLElement): void 
           link('Apache License 2.0', `${REPO_URL}/blob/main/LICENSE`),
           ': anyone may use, change and share it, as long as they credit mbwamkali. ',
           link('Source code on GitHub', REPO_URL),
+          '. Questions, bugs or map problems: ',
+          link('contact us on GitHub', `${REPO_URL}/issues`),
           '.',
         ),
       ),

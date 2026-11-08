@@ -18,6 +18,7 @@ import { fetchLiveConditions, liveEnabled, setLiveEnabled, type LiveConditions }
 import { isOffline, planTrip, prefetchStreets, searchAnywhere, type PlanStep, type StepId } from './offline/planner';
 import { tripCache } from './offline/tripCache';
 import { checkForUpdate, registerServiceWorker } from './offline/registerSw';
+import { loadServers } from './geo/servers';
 import { buildLabel } from './build';
 import { showClassics, showSavedTrips } from './ui/tripScreens';
 import {
@@ -2354,6 +2355,8 @@ requestAnimationFrame(frame);
 document.body.classList.toggle('kid', kidMode.on);
 narrateUi(ui());
 showTitle();
+// Map server addresses can be changed on the site without an app update (src/geo/servers.ts).
+void loadServers();
 registerServiceWorker(() => {
   // A new build just took over. Off the road, reload straight into it; mid-trip, offer it (the trip is saved).
   if (!state || state.status !== 'driving') {

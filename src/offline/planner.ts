@@ -83,7 +83,6 @@ export async function addFeatures(raw: RawRoute, progress: (message: string) => 
  * done by the time the player presses Plan. Does nothing offline.
  */
 export function prefetchStreets(p: LatLng): void {
-  if (isOffline()) return;
   loadRoadIndex()
     .then((index) => lookupStreets(p, index.q, index.attribution))
     .catch(() => {});
@@ -132,21 +131,26 @@ export async function planTrip(
   const own = async () => {
     const index = await loadRoadIndex();
     // The street lookups (often started when the places were picked) run while the highway map loads.
-    const lookups = isOffline() ? [] : [from, to].map((p) => lookupStreets(p, index.q, index.attribution));
+    // Offline they can still find streets remembered on the device.
+    const lookups = [from, to].map((p) => lookupStreets(p, index.q, index.attribution));
     progress('Loading the highway map…', { id: 'map', state: 'active', detail: 'checking' });
     const highways = await loadHighways([from, to], (m) =>
       progress('Loading the highway map…', { id: 'map', state: 'active', detail: m.message, ...(m.total && m.received ? { fraction: m.received / m.total } : {}) }),
     );
     progress('Highway map ready', { id: 'map', state: 'done' });
     let streets: RoadFile[] = [];
-    if (!lookups.length) progress('No connection, so no local streets', { id: 'streets', state: 'skipped', detail: 'offline' });
-    else {
+    {
       const got = await waitForStreets(lookups, progress, skipStreets);
       if (got?.length) {
         streets = got;
         const n = got.reduce((k, f) => k + f.edges.length, 0);
         progress('Local streets found', { id: 'streets', state: 'done', detail: `${n.toLocaleString()} street pieces` });
-      } else progress('Going without local streets', { id: 'streets', state: 'skipped', detail: got ? 'none found' : 'skipped, or the server was too slow' });
+      } else
+        progress('Going without local streets', {
+          id: 'streets',
+          state: 'skipped',
+          detail: isOffline() ? 'offline, and none saved for these places' : got ? 'none found' : 'skipped, or the server was too slow',
+        });
     }
     progress('Building the road network…', { id: 'network', state: 'active' });
     await nextFrame();
