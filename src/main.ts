@@ -227,7 +227,11 @@ function frame(now: number): void {
       noteError(e, 'update');
     }
     try {
-      if (bloom) bloom.render(active.scene, active.camera);
+      if (bloom) {
+        // Inside a building the pale room fills the screen: a softer glow keeps it from washing out.
+        bloom.glow = townPlay?.phase === 'inside' ? 0.3 : 1;
+        bloom.render(active.scene, active.camera);
+      }
       else renderer.render(active.scene, active.camera);
     } catch (e) {
       noteError(e, 'render');
@@ -1852,7 +1856,8 @@ function showTown(stop: Stop): void {
         const top = (hudTop.getBoundingClientRect().bottom || 0) + 4;
         const r = bottom.getBoundingClientRect();
         if (!W || !H || !r.width) return null;
-        const beside = r.left > W * 0.35;
+        // Sideways phones pin the buttons to the right edge; a wide screen centres them below the view.
+        const beside = r.left > W * 0.35 && r.right > W * 0.92;
         const nx = (px: number) => (px / W) * 2 - 1;
         const ny = (py: number) => 1 - (py / H) * 2;
         return { left: -0.98, right: beside ? nx(r.left - 6) : 0.98, top: ny(top), bottom: beside ? -0.96 : ny(r.top - 4) };

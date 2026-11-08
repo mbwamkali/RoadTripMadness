@@ -65,6 +65,11 @@ export class Bloom {
     this.composer.addPass(new OutputPass());
   }
 
+  /** How strong the glow is, 1 = normal. */
+  set glow(v: number) {
+    this.bloom.strength = 0.35 * v;
+  }
+
   setSize(w: number, h: number, pixelRatio: number): void {
     this.composer.setPixelRatio(pixelRatio);
     this.composer.setSize(w, h);

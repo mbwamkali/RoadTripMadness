@@ -678,7 +678,10 @@ function furnish(g: THREE.Group, place: PlaceKind, size: THREE.Vector3, mat: Mat
   const poster = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.5), new THREE.MeshBasicMaterial({ map: signTexture(place), toneMapped: false }));
   add(poster, 0, 1.55, -d / 2 + 0.17);
   // Warm light from above, and two lamps on the back wall.
+  // Its strength is set by the time of day when you go in (TownPlay.goIn): the roof is off, so the sun lights it by day.
   const light = new THREE.PointLight(0xfff0d0, 22, 24, 1.3);
+  light.name = 'roomLight';
+  light.userData.full = 22;
   light.position.set(0, 5, 0);
   g.add(light);
   const lamp = mat({ color: 0xfff2c0, emissive: 0xffe0a0, emissiveIntensity: 1.2 });

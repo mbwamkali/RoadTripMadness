@@ -17,6 +17,7 @@ import { hdZombie } from '../scenes/hdModels';
 import { lit } from '../scenes/materials';
 import { person, type Person } from '../scenes/people';
 import { CRATE_GLOW, type TownSpot, type TownWorld } from './world';
+import { daylight, hourOf } from '../game/time';
 
 /**
  * Playing a town: you turn off the highway onto Main Street in the road
@@ -338,6 +339,9 @@ export class TownPlay {
       this.host.car.visible = false;
       // The gas canopy would hide the dollhouse from above.
       showRoofs(sp, false);
+      // The room's ceiling light matters at night; by day (roof off, in the sun) it would wash the room out.
+      const lamp = sp.room.getObjectByName('roomLight') as THREE.PointLight | undefined;
+      if (lamp) lamp.intensity = lamp.userData.full * (1 - 0.8 * daylight(hourOf(this.hooks.state)));
       this.search = startScavenge(this.hooks.state, this.storeKey(), sp.lot.place, sp.crates.length);
       for (const c of sp.crates) resetCrate(c);
       this.hooks.save();
