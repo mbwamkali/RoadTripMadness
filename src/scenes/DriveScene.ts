@@ -1,7 +1,7 @@
 import type { BossKind } from '../game/combat';
 import * as THREE from 'three';
 import { lit } from './materials';
-import type { Path, Vec2 } from '../geo/geo';
+import { Path, type Vec2 } from '../geo/geo';
 import { CRUISE_SPEED, postedLimit, realKmAt } from '../geo/route';
 import { advance, damage, fuelPerUnit, upcomingStop, type GameState } from '../game/state';
 import { BOOST_MPH, brakeRange, CRUISE_MPH, crashScale, FREE_OVER, SPEED_STEP, speedCap, speedFuelFactor, targetMph, topSpeed } from '../game/driving';
@@ -204,8 +204,19 @@ export interface RoadFight {
   boss: boolean;
 }
 
-/** A boss fight never rolls you over the finish: the car stops this far short of it. */
-const BOSS_HOLD = 40;
+/** Road past the finish (straight on), for a last boss fight that's still going when you get there. */
+const OVERTIME = CHUNK * 14;
+/** The stretch past the finish repeats every this many road units (two chunks), so it can loop. */
+const LOOP = CHUNK * 2;
+
+/** The path with a straight stretch of `extra` added past its end (continuing its last heading). */
+export function extendPath(path: Path, extra: number): Path {
+  const end = path.pointAt(path.length);
+  const f = path.directionAt(path.length - 8, 8);
+  const pts = [...path.points];
+  for (let d = 10; d <= extra; d += 10) pts.push({ x: end.x + f.x * d, y: end.y + f.y * d });
+  return new Path(pts);
+}
 
 /** How much a fight's nitro boost speeds the car up. */
 /** Game units per second for each mph (65 mph = cruise speed). */
@@ -285,6 +296,10 @@ export class DriveScene implements GameScene {
   private geos: Record<string, THREE.BufferGeometry>;
   private biomes: BiomeSpan[];
   private lastBiome: BiomeId | null = null;
+  /** The route as planned; `path` is the same with the straight stretch past the finish added. */
+  private realPath: Path;
+  /** Where the trip ends (the destination), in road units. */
+  private finish: number;
   private camPos = new THREE.Vector3();
   private camLook = new THREE.Vector3();
   private promptStop: Stop | null = null;
@@ -309,6 +324,10 @@ export class DriveScene implements GameScene {
     private path: Path,
     private cb: DriveCallbacks,
   ) {
+    // The road carries straight on past the finish, so a last boss fight never runs out of road.
+    this.realPath = path;
+    this.finish = path.length;
+    this.path = extendPath(path, OVERTIME);
     this.car = makeRide(state.ride ?? 'car', state.upgrades);
     this.fuelRate = fuelPerUnit(state.route.scale);
     this.rageRng = makeRng(state.seed ^ 0x2a6e);
@@ -341,26 +360,27 @@ export class DriveScene implements GameScene {
       polygonOffsetFactor: -1,
       polygonOffsetUnits: -2,
     });
-    this.segments = roadSegments(state.route, path.length);
+    this.segments = roadSegments(state.route, this.path.length);
     this.townList = state.landmarks
       .filter((l) => l.kind === 'citysign' && !/^Leaving |^Welcome to /.test(l.name))
       .map((l) => ({ mid: l.at + (l.big ? 380 : 170), radius: l.big ? 620 : 240, big: !!l.big }));
     this.laneClass = classAt(this.segments, state.distance);
     this.playerLane = defaultLane(this.laneClass);
     this.lane = this.laneAt(state.distance);
-    const zones = urbanZones(state.route, path.length);
-    this.traffic = new Traffic(this.segments, path.length, CRUISE_SPEED, state.seed ^ Math.floor(state.distance), {
+    // The city around the finish carries on along the road past it.
+    const zones = urbanZones(state.route, this.finish).map((z) => (z.to >= this.finish ? { ...z, to: this.path.length } : z));
+    this.traffic = new Traffic(this.segments, this.path.length, CRUISE_SPEED, state.seed ^ Math.floor(state.distance), {
       urbanAt: (d) => (zones.some((z) => d >= z.from && d <= z.to) ? 1 : 0),
       paceAt: (d) => this.speedLimit(d) * UNITS_PER_MPH,
     });
-    this.obstacles = new Obstacles(this.segments, path.length, state.seed ^ Math.floor(state.distance), state.distance, DIFFICULTIES[state.difficulty].gap);
+    this.obstacles = new Obstacles(this.segments, this.path.length, state.seed ^ Math.floor(state.distance), state.distance, DIFFICULTIES[state.difficulty].gap);
     // Animals cross more often in Texas and the desert; never in towns or on bridges and in tunnels.
     const animalTowns = state.landmarks.filter((l) => l.kind === 'citysign').map((l) => l.at);
     const desert = (d: number) => {
       const b = biomeAtDistance(this.biomes, d);
       return b === 'desert' || b === 'sagebrush';
     };
-    this.animals = new Animals(this.segments, path.length, state.seed ^ Math.floor(state.distance), state.distance, {
+    this.animals = new Animals(this.segments, this.path.length, state.seed ^ Math.floor(state.distance), state.distance, {
       edgeAt: (d) => this.outer(d),
       desertAt: desert,
       boost: (d) => (desert(d) || stateMap()?.stateAt(latLngAt(state.route, path, d))?.code === 'TX' ? 2 : 1),
@@ -463,8 +483,8 @@ export class DriveScene implements GameScene {
 
   /** How built-up it is here, 0 (open country) to 1 (downtown): near the start, the end, town stops and town signs. */
   urbanAt(d: number): number {
-    const total = this.path.length;
-    let u = Math.max(d < 1500 ? 1 - d / 1500 : 0, d > total - 1500 ? 1 - (total - d) / 1500 : 0);
+    const total = this.finish;
+    let u = Math.min(1, Math.max(d < 1500 ? 1 - d / 1500 : 0, d > total - 1500 ? 1 - (total - d) / 1500 : 0));
     for (const s of this.state.stops) if (s.kind === 'town' || s.kind === 'mall') u = Math.max(u, 1 - Math.abs(s.at - d) / 260);
     for (const t of this.townList) u = Math.max(u, 1 - Math.abs(t.mid - d) / t.radius);
     return u;
@@ -946,19 +966,15 @@ export class DriveScene implements GameScene {
     this.speed = speed;
     this.announceAnimals();
     let step = speed * dt;
-    // A boss still fighting at the end of the trip: the car pulls up short of the finish and waits.
-    if (this.fight?.boss) {
-      const room = Math.max(0, this.path.length - BOSS_HOLD - s.distance);
-      if (step >= room) {
-        step = room;
-        this.fight.setPace(0);
-      }
-    }
+    // A boss still fighting at the end of the trip: drive on past the finish (the road carries on),
+    // and if it goes on and on, the last straight loops round seamlessly. You arrive once it's over.
+    const overtime = !!this.fight?.boss && s.distance + step >= this.finish - 1;
+    if (overtime && s.distance + step > this.loopAt()) this.loopBack();
     if (this.pendingTurn && s.distance + step >= this.pendingTurn.at) {
       step = Math.max(0, this.pendingTurn.at - s.distance);
     }
     // While signalling, no boss, fight or road event gets in the way of the turn.
-    const res = advance(s, this.path, step, this.fuelRate * speedFuelFactor(this.mph, limit), !!this.pendingTurn);
+    const res = advance(s, this.realPath, step, this.fuelRate * speedFuelFactor(this.mph, limit), !!this.pendingTurn, overtime);
     this.spinWheels(step);
     coolRage(s, step);
     this.roadRage(dt, speed);
@@ -1528,6 +1544,45 @@ export class DriveScene implements GameScene {
 
   // ------------------------------------------------------------ world streaming
 
+  /** Past here (on the straight beyond the finish) the road loops back, keeping the full view ahead built. */
+  private loopAt(): number {
+    return Math.max(this.finish + LOOP + BEHIND + CHUNK * 2, this.path.length - this.ahead - CHUNK);
+  }
+
+  /**
+   * The last boss is still going near the end of the straight past the finish: step everything back
+   * one loop length. The road there is straight, so the chunks in view just slide back with the car
+   * and nothing on screen changes; road things (traffic, junk, animals) keep their places around you.
+   */
+  private loopBack(): void {
+    const s = this.state;
+    const d = s.distance;
+    const delta = to3(this.path.pointAt(d - LOOP)).sub(to3(this.path.pointAt(d)));
+    s.distance -= LOOP;
+    for (const o of [this.car.position, this.camPos, this.camLook, this.camera.position]) o.add(delta);
+    for (const v of this.traffic.vehicles) v.d -= LOOP;
+    for (const o of this.obstacles.list) o.d -= LOOP;
+    for (const a of this.animals.list) a.d -= LOOP;
+    const shift = LOOP / CHUNK;
+    const keep = Math.floor(this.finish / CHUNK) + 1;
+    const chunks = new Map<number, THREE.Group>();
+    const solids = new Map<number, Solid[]>();
+    for (const [k, g] of this.chunks) {
+      if (k - shift < keep) {
+        this.scene.remove(g);
+        disposeChunk(g);
+        continue;
+      }
+      g.position.add(delta);
+      chunks.set(k - shift, g);
+      const list = this.solids.get(k) ?? [];
+      for (const so of list) so.d -= LOOP;
+      solids.set(k - shift, list);
+    }
+    this.chunks = chunks;
+    this.solids = solids;
+  }
+
   private streamChunks(): void {
     const d = this.state.distance;
     const first = Math.max(0, Math.floor((d - BEHIND) / CHUNK));
@@ -1721,15 +1776,18 @@ export class DriveScene implements GameScene {
     for (const stop of this.state.stops) {
       if (stop.at >= from && stop.at < from + CHUNK) g.add(this.buildStop(stop));
     }
-    this.addMileMarkers(g, from, to);
-    this.addSigns(g, k, from, Math.min(this.path.length, from + CHUNK));
+    // Past the finish (the stretch kept for a last boss fight) there are no more mile markers or road signs.
+    if (from < this.finish) {
+      this.addMileMarkers(g, from, Math.min(to, this.finish));
+      this.addSigns(g, k, from, Math.min(this.finish, from + CHUNK));
+    }
     for (const l of this.state.landmarks) {
       if (l.at >= from && l.at < from + CHUNK) g.add(buildLandmark(l, this.path, (d) => this.outer(d)));
     }
     for (const st of this.structures) {
       if (st.to > from && st.from < to) g.add(buildStructurePart(st, this.path, from, to, (d) => this.outer(d)));
     }
-    if (k === Math.floor(this.path.length / CHUNK)) g.add(this.buildFinish());
+    if (k === Math.floor(this.finish / CHUNK)) g.add(this.buildFinish());
     if (this.shadows) castShadows(g, true);
     return g;
   }
@@ -1930,7 +1988,7 @@ export class DriveScene implements GameScene {
     const d = from + 220;
     if (k % 7 === 3 && d < to && free(d) && this.urbanAt(d) < 0.3) {
       const towns = this.state.landmarks.filter((l) => l.kind === 'citysign' && !/^Leaving |^Welcome to /.test(l.name)).map((l) => ({ at: l.at, name: l.name }));
-      const end = { at: this.path.length, name: route.endLabel.split(',')[0] };
+      const end = { at: this.finish, name: route.endLabel.split(',')[0] };
       const lines = distanceSignLines(d, towns, end, miles);
       put(greenSign(lines.map((l) => ({ text: l.name, right: String(l.miles) }))), d, this.outer(d) + 2.6);
     }
@@ -2095,7 +2153,7 @@ export class DriveScene implements GameScene {
 
   private buildFinish(): THREE.Group {
     const g = new THREE.Group();
-    const d = this.path.length - 30;
+    const d = this.finish - 30;
     const p = this.path.pointAt(d);
     const f = this.path.directionAt(d);
     const sign = textSprite(this.state.route.endLabel.split(',')[0], 'Destination', '#2b4f8a');

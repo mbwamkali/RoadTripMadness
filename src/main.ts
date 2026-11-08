@@ -1184,7 +1184,7 @@ function showDriveHud(fight?: CombatState): void {
       lastInv = key;
     }
     (progress.firstChild as HTMLElement).style.width = `${(s.distance / p.length) * 100}%`;
-    const left = realKmAt(s.route, p.length - s.distance);
+    const left = realKmAt(s.route, Math.max(0, p.length - s.distance));
     const hour = hourOf(s);
     const wx = weatherAt(s);
     const road = roadAt(s.route, s.distance);

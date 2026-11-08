@@ -242,20 +242,25 @@ export function advance(
   fuelRate = fuelPerUnit(s.route.scale),
   /** Signalling for a turn: the boss waits until you're back on the road (it is never skipped). */
   holdBoss = false,
+  /** A boss fight is on: the car may drive on past the finish, and you arrive once it's over. */
+  overtime = false,
 ): { arrived: boolean; outOfFuel: boolean; encounter: boolean; event?: boolean; boss?: BossKind } {
   if (s.status !== 'driving') return { arrived: false, outOfFuel: false, encounter: false };
   const bosses = bossPoints(path.length, s.stops);
   // Never skip past a boss, even on fast-forward (a held one is met as soon as you drive on).
   const toBoss = s.bossStage < 2 && !holdBoss ? Math.max(0, bosses[s.bossStage] - s.distance) + 0.001 : Infinity;
-  const step = Math.min(dist, path.length - s.distance, toBoss);
+  const step = Math.max(0, Math.min(dist, overtime ? Infinity : path.length - s.distance, toBoss));
+  // Road past the finish (boss overtime) is free: no gas, fights or events, only the boss.
+  const burn = Math.max(0, Math.min(step, path.length - s.distance));
   s.distance += step;
-  s.inv.fuel = Math.max(0, s.inv.fuel - step * fuelRate * fuelEfficiency(s.upgrades) * rideOf(s).fuel * DIFFICULTIES[s.difficulty].fuel);
-  const arrived = s.distance >= path.length - 0.01;
+  s.inv.fuel = Math.max(0, s.inv.fuel - burn * fuelRate * fuelEfficiency(s.upgrades) * rideOf(s).fuel * DIFFICULTIES[s.difficulty].fuel);
+  const arrived = !overtime && s.distance >= path.length - 0.01;
   if (arrived) {
     s.status = 'won';
     s.log.push(`Rolled into ${s.route.endLabel}.`);
     return { arrived, outOfFuel: false, encounter: false };
   }
+  if (overtime && s.distance >= path.length) return { arrived: false, outOfFuel: false, encounter: false };
   if (s.inv.fuel <= 0) {
     // The first time, there's a bike in the ditch (the caller offers it).
     if (s.bikeUsed) {
