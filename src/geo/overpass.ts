@@ -148,6 +148,14 @@ function kindFor(tags: Record<string, string>): MapFeature['kind'] | null {
 }
 
 /** A Wikipedia (or Wikidata) page for a map feature, from its tags. */
+/** A peak's height in metres from its ele tag ("1234", "1234 m", "4000 ft"), or undefined. */
+export function eleOf(ele?: string): number | undefined {
+  const m = ele?.replace(',', '.').match(/^\s*(-?\d+(?:\.\d+)?)\s*(m|ft|feet)?/);
+  if (!m) return undefined;
+  const v = Number(m[1]) * (m[2] === 'ft' || m[2] === 'feet' ? 0.3048 : 1);
+  return v > -100 && v < 9000 ? Math.round(v) : undefined;
+}
+
 export function wikiUrl(tags: Record<string, string>): string | undefined {
   const m = tags.wikipedia?.match(/^([a-z-]{2,12}):(.+)$/);
   if (m) return `https://${m[1]}.wikipedia.org/wiki/${encodeURIComponent(m[2].trim().replace(/ /g, '_'))}`;
@@ -188,7 +196,8 @@ export function parseOverpass(json: { elements?: OsmElement[] }): MapFeature[] {
       out.push({ kind, name, point, ...(truck ? { truck: true } : {}) });
     } else {
       const wiki = wikiUrl(tags);
-      out.push({ kind, name, point, ...(kind === 'citysign' && isBigPlace(tags) ? { big: true } : {}), ...(wiki ? { wiki } : {}) });
+      const ele = kind === 'peak' ? eleOf(tags.ele) : undefined;
+      out.push({ kind, name, point, ...(kind === 'citysign' && isBigPlace(tags) ? { big: true } : {}), ...(wiki ? { wiki } : {}), ...(ele != null ? { ele } : {}) });
     }
   }
   return out;

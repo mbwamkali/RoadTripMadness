@@ -11,6 +11,7 @@ import { biomeAtDistance, biomeSpans, type BiomeId, type BiomeSpan } from './bio
 export type LandmarkKind =
   | 'river'
   | 'peak'
+  | 'hill'
   | 'monument'
   | 'tower'
   | 'lighthouse'
@@ -50,11 +51,14 @@ export interface Landmark {
   big?: boolean;
   /** Wikipedia page from the map data. */
   wiki?: string;
+  /** Peaks: real height in metres, when the map has it. */
+  ele?: number;
 }
 
 export const LANDMARK_TITLES: Record<LandmarkKind, string> = {
   river: 'River',
   peak: 'Mountain',
+  hill: 'Hill',
   monument: 'Monument',
   tower: 'Tower',
   lighthouse: 'Lighthouse',
@@ -79,6 +83,7 @@ export const LANDMARK_TITLES: Record<LandmarkKind, string> = {
 export const LANDMARK_ICONS: Record<LandmarkKind, string> = {
   river: '🌉',
   peak: '⛰️',
+  hill: '🌳',
   monument: '🗿',
   tower: '📡',
   lighthouse: '🗼',
@@ -101,7 +106,7 @@ export const LANDMARK_ICONS: Record<LandmarkKind, string> = {
 };
 
 /** Kinds that are big enough to announce in the HUD as you pass. */
-export const ANNOUNCED: ReadonlySet<LandmarkKind> = new Set(['river', 'peak', 'monument', 'tower', 'lighthouse', 'castle', 'attraction', 'viewpoint', 'citysign', 'stateline', 'giant', 'grain', 'lookout', 'mesa', 'ghosttown']);
+export const ANNOUNCED: ReadonlySet<LandmarkKind> = new Set(['river', 'peak', 'hill', 'monument', 'tower', 'lighthouse', 'castle', 'attraction', 'viewpoint', 'citysign', 'stateline', 'giant', 'grain', 'lookout', 'mesa', 'ghosttown']);
 
 // ------------------------------------------------------------ real map features
 
@@ -119,6 +124,8 @@ export interface MapFeature {
   point?: LatLng;
   /** A line feature (rivers). */
   line?: LatLng[];
+  /** Peaks: height in metres, when the map has it. */
+  ele?: number;
 }
 
 /**
@@ -240,7 +247,7 @@ export function placeFeatures(route: RouteData, path: Path, features: MapFeature
     // The world is shrunk, so pull things in close enough to see; peaks stay on the horizon.
     if (f.kind === 'peak') {
       if (far > 1500) continue;
-      out.push({ at, side: lateral < 0 ? -1 : 1, offset: Math.max(350, Math.min(900, far)), kind: 'peak', name: f.name, real: true, ...(f.wiki ? { wiki: f.wiki } : {}) });
+      out.push({ at, side: lateral < 0 ? -1 : 1, offset: Math.max(350, Math.min(900, far)), kind: 'peak', name: f.name, real: true, ...(f.wiki ? { wiki: f.wiki } : {}), ...(f.ele != null ? { ele: f.ele } : {}) });
     } else if (f.kind === 'citysign') {
       if (far > 250) continue;
       out.push({ at, side: 1, offset: 9, kind: 'citysign', name: f.name, real: true, ...(f.big ? { big: true } : {}), ...(f.wiki ? { wiki: f.wiki } : {}) });
@@ -337,11 +344,29 @@ export const BILLBOARDS = [
  * coming up: creeks with bridges, water towers, windmills, billboards,
  * roadside oddities, and mountains on the horizon. Also adds town signs.
  */
+/** Regions with real mountains (made-up ranges show only here). */
+export const MOUNTAIN_LAND: ReadonlySet<BiomeId> = new Set(['mountains', 'pinewoods', 'tundra', 'sagebrush', 'desert']);
+
+/** A real map "peak" that is a mountain, not a hill: in mountain country, tall enough, not called a mound or hill. */
+export function isMountain(l: Pick<Landmark, 'name' | 'ele'>, biome: BiomeId | null): boolean {
+  if (/\b(mound|hill|knob|knoll|hummock)s?\b/i.test(l.name)) return false;
+  if (l.ele != null && l.ele < 600) return false;
+  return biome == null || MOUNTAIN_LAND.has(biome);
+}
+
 export function fillLandmarks(route: RouteData, pathLength: number, stops: Stop[], real: Landmark[], seed: number): Landmark[] {
   const rng = makeRng(seed ^ hashString(`landmarks:${route.startLabel}`));
   used.clear();
-  const all = real.slice();
-  const near = (d: number, gap: number) => all.some((l) => l.kind !== 'peak' && l.kind !== 'mountains' && Math.abs(l.at - d) < gap);
+  let spans: BiomeSpan[] | null = null;
+  try {
+    spans = route.points?.length ? biomeSpans(route) : null;
+  } catch {
+    spans = null;
+  }
+  // Mountains only where the land has them: a "peak" in flat country (a mound near Houston) is a hill.
+  const biome = (d: number) => (spans ? biomeAtDistance(spans, d) : null);
+  const all = real.map((l) => (l.kind === 'peak' && !isMountain(l, biome(l.at)) ? { ...l, kind: 'hill' as const, offset: Math.min(l.offset, 260) } : l));
+  const near = (d: number, gap: number) => all.some((l) => l.kind !== 'peak' && l.kind !== 'hill' && l.kind !== 'mountains' && Math.abs(l.at - d) < gap);
 
   all.push({ at: 60, side: -1, offset: 9, kind: 'citysign', name: `Leaving ${route.startLabel.split(',')[0]}`, real: true });
   all.push({ at: pathLength - 160, side: 1, offset: 9, kind: 'citysign', name: `Welcome to ${route.endLabel.split(',')[0]}`, real: true });
@@ -372,12 +397,6 @@ export function fillLandmarks(route: RouteData, pathLength: number, stops: Stop[
   const realSights = real.filter((l) => l.kind !== 'citysign' && l.kind !== 'roadsign' && l.kind !== 'stateline').length;
   const sparse = realSights / Math.max(1, pathLength / 1000) < 0.4;
   const [gapMin, gapMax] = sparse ? [320, 560] : [450, 800];
-  let spans: BiomeSpan[] | null = null;
-  try {
-    spans = route.points?.length ? biomeSpans(route) : null;
-  } catch {
-    spans = null;
-  }
   let d = range(rng, 300, 600);
   let made = 0;
   while (d < pathLength - 300) {
@@ -390,6 +409,8 @@ export function fillLandmarks(route: RouteData, pathLength: number, stops: Stop[
   }
   // Distant mountain ranges every so often, for a sense of scale.
   for (let m = range(rng, 800, 2000); m < pathLength; m += range(rng, 2500, 5000)) {
+    const b = biome(m);
+    if (b && !MOUNTAIN_LAND.has(b)) continue;
     all.push({ at: m, side: rng() < 0.5 ? -1 : 1, offset: range(rng, 600, 900), kind: 'mountains', name: '', real: false });
   }
   return all.sort((a, b) => a.at - b.at);

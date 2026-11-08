@@ -15,7 +15,7 @@ Output: features/<x>_<y>.json, one per 2 x 2 degree square, in this format:
 
   q       coordinates are integers in 1/q degrees
   kinds   feature kinds, indexed by points and lines
-  points  [kind, name, lng, lat, flags, wiki]
+  points  [kind, name, lng, lat, flags, wiki, ele?] (ele: peaks only, metres, when tagged)
           flags bit 0 = truck stop, bit 1 = city (50,000 people or more),
           bit 2 = village;
           wiki is "lang:Title" (a Wikipedia page), "Q123" (Wikidata) or ""
@@ -58,6 +58,15 @@ def kind_of(t):
     if tour in TOURISM:
         return ('viewpoint' if tour == 'viewpoint' else 'attraction'), 2000
     return None, 0
+
+
+def ele_of(t):
+    """A peak's height in metres from its ele tag ("1234", "1234 m", "4000 ft"), or None."""
+    m = re.match(r'\s*(-?[0-9]+(?:\.[0-9]+)?)\s*(m|ft|feet)?', t.get('ele', '').replace(',', '.'))
+    if not m:
+        return None
+    v = float(m.group(1)) * (0.3048 if m.group(2) in ('ft', 'feet') else 1)
+    return round(v) if -100 < v < 9000 else None
 
 
 def wiki_of(t):
@@ -187,7 +196,13 @@ class FeatureReader(osmium.SimpleHandler):
             flags |= 2
         if t.get('place') == 'village':
             flags |= 4
-        self._tile(lon, lat)['points'].append([K[kind], name, round(lon * self.q), round(lat * self.q), flags, '' if kind == 'fuel' else wiki_of(t)])
+        row = [K[kind], name, round(lon * self.q), round(lat * self.q), flags, '' if kind == 'fuel' else wiki_of(t)]
+        # Peaks keep their height (metres), so the game can tell a 30 m mound from a real mountain.
+        if kind == 'peak':
+            ele = ele_of(t)
+            if ele is not None:
+                row.append(ele)
+        self._tile(lon, lat)['points'].append(row)
         self.count[kind] = self.count.get(kind, 0) + 1
 
     def node(self, n):

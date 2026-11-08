@@ -1777,7 +1777,7 @@ export class DriveScene implements GameScene {
       this.addSigns(g, k, from, Math.min(this.finish, from + CHUNK));
     }
     for (const l of this.state.landmarks) {
-      if (l.at >= from && l.at < from + CHUNK) g.add(buildLandmark(l, this.path, (d) => this.outer(d)));
+      if (l.at >= from && l.at < from + CHUNK) g.add(buildLandmark(l, this.path, (d) => this.outer(d), biomeAtDistance(this.biomes, l.at)));
     }
     for (const st of this.structures) {
       if (st.to > from && st.from < to) g.add(buildStructurePart(st, this.path, from, to, (d) => this.outer(d)));

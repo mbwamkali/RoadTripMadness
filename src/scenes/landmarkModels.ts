@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { lit } from './materials';
 import type { Path } from '../geo/geo';
 import { LANDMARK_TITLES, type Landmark } from '../game/landmarks';
+import type { BiomeId } from '../game/biomes';
 import { hashString, makeRng, range } from '../game/rng';
 import { textSprite, to3 } from './common';
 import { hdBuilding, type HdBuilding } from './hdBuildings';
@@ -134,29 +135,131 @@ function buildRiver(l: Landmark, path: Path, half = ROAD_HALF): THREE.Group {
   return g;
 }
 
-function buildPeak(rng: () => number): THREE.Object3D {
+/** Rock, forest and snow colours for mountains by region. */
+const MOUNTAIN_LOOK: Partial<Record<BiomeId, { low: number; high: number }>> = {
+  pinewoods: { low: 0x34502f, high: 0x6d6f66 },
+  forest: { low: 0x3f5f34, high: 0x6f7468 },
+  tundra: { low: 0x5f6a5c, high: 0x8a8f88 },
+  desert: { low: 0xa8643e, high: 0x8a5a44 },
+  sagebrush: { low: 0x8a7a5e, high: 0x77706a },
+};
+const ROCK = { low: 0x55604c, high: 0x7a7a7e };
+
+/**
+ * One craggy mountain: a cone with its rim and slopes pushed about so it has ridges and
+ * shoulders, coloured from trees or rock at the bottom to bare rock, with snow on tall ones.
+ */
+function craggy(rng: () => number, r: number, h: number, look: { low: number; high: number }, snow: boolean): THREE.BufferGeometry {
+  const geo = new THREE.ConeGeometry(r, h, 11, 5).toNonIndexed();
+  const pos = geo.attributes.position as THREE.BufferAttribute;
+  // The same corner must move the same way in every face that shares it, or the slope tears.
+  const moved = new Map<string, [number, number, number]>();
+  const lo = new THREE.Color(look.low);
+  const hi = new THREE.Color(look.high);
+  const white = new THREE.Color(0xf2f5fa);
+  const colors: number[] = [];
+  const c = new THREE.Color();
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const y = pos.getY(i);
+    const z = pos.getZ(i);
+    const key = `${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)}`;
+    let m = moved.get(key);
+    if (!m) {
+      const t = (y + h / 2) / h; // 0 at the foot, 1 at the top
+      const k = t > 0.98 ? 0 : 1 + (rng() - 0.5) * 0.55;
+      m = [x * k, y + (t > 0.02 && t < 0.98 ? (rng() - 0.5) * h * 0.12 : 0), z * k];
+      moved.set(key, m);
+    }
+    pos.setXYZ(i, m[0], m[1], m[2]);
+    const t = (m[1] + h / 2) / h;
+    c.copy(lo).lerp(hi, Math.min(1, t * 1.6));
+    if (snow && t > 0.68) c.lerp(white, 0.9);
+    colors.push(c.r, c.g, c.b);
+  }
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geo.computeVertexNormals();
+  return geo;
+}
+
+function mountainMat(): THREE.MeshStandardMaterial {
+  return mat(0xffffff, { vertexColors: true, flatShading: true, roughness: 1 });
+}
+
+/** A real mountain: one main summit with lower shoulders either side, never wider than it is set back. */
+function buildPeak(rng: () => number, biome?: BiomeId, ele?: number): THREE.Object3D {
   const g = new THREE.Group();
-  const h = range(rng, 260, 420);
-  const r = h * range(rng, 0.7, 1);
-  g.add(mesh(new THREE.ConeGeometry(r, h, 7), mat(0x7a7f8f, { flatShading: true }), 0, h / 2, 0));
-  const capH = h * 0.28;
-  g.add(mesh(new THREE.ConeGeometry(r * 0.29, capH, 7), mat(0xf4f6fa, { flatShading: true }), 0, h - capH / 2 + 1, 0));
-  for (let i = 0; i < 2; i++) {
-    const hh = h * range(rng, 0.45, 0.7);
-    g.add(mesh(new THREE.ConeGeometry(hh * 0.9, hh, 6), mat(0x8a8f9c, { flatShading: true }), (i ? 1 : -1) * r * 0.8, hh / 2, range(rng, -40, 40)));
+  const look = (biome && MOUNTAIN_LOOK[biome]) ?? ROCK;
+  // Taller for taller real mountains (when the map says), within what fits the shrunk world.
+  const h = ele != null ? Math.max(150, Math.min(380, ele / 10)) : range(rng, 200, 320);
+  const r = h * range(rng, 0.7, 0.9);
+  const m = mountainMat();
+  const snow = (ele ?? 3000) > 2600 && biome !== 'desert';
+  g.add(mesh(craggy(rng, r, h, look, snow), m, 0, h / 2 - 2, 0));
+  for (let i = 0; i < 3; i++) {
+    const hh = h * range(rng, 0.4, 0.7);
+    g.add(mesh(craggy(rng, hh * 0.85, hh, look, snow && hh > 200), m, (i - 1) * r * 0.75 + range(rng, -20, 20), hh / 2 - 2, range(rng, -r * 0.5, -r * 0.1)));
   }
   return g;
 }
 
-function buildMountains(rng: () => number): THREE.Object3D {
+/** A made-up range on the horizon: a row of uneven peaks, the middle ones tallest. */
+function buildMountains(rng: () => number, biome?: BiomeId): THREE.Object3D {
   const g = new THREE.Group();
-  const n = 3 + Math.floor(rng() * 4);
-  const color = new THREE.Color().setHSL(0.62 + rng() * 0.08, 0.15, 0.45 + rng() * 0.1);
+  const look = (biome && MOUNTAIN_LOOK[biome]) ?? ROCK;
+  const m = mountainMat();
+  const n = 4 + Math.floor(rng() * 4);
   for (let i = 0; i < n; i++) {
-    const h = range(rng, 120, 280);
-    g.add(mesh(new THREE.ConeGeometry(h * range(rng, 0.9, 1.4), h, 6), mat(color.getHex(), { flatShading: true }), (i - n / 2) * 160 + range(rng, -40, 40), h / 2, range(rng, -80, 80)));
+    const mid = 1 - Math.abs(i - (n - 1) / 2) / n;
+    const h = range(rng, 110, 220) * (0.7 + mid * 0.5);
+    g.add(mesh(craggy(rng, h * range(rng, 0.8, 1.1), h, look, h > 190 && biome !== 'desert'), m, (i - (n - 1) / 2) * 130 + range(rng, -30, 30), h / 2 - 2, range(rng, -60, 60)));
   }
   return g;
+}
+
+/** A low, round, grassy hill with a few trees: what a "peak" is in flat country. */
+function buildHill(rng: () => number): THREE.Object3D {
+  const g = new THREE.Group();
+  const r = range(rng, 55, 90);
+  const h = range(rng, 18, 32);
+  const dome = new THREE.SphereGeometry(r, 18, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+  dome.scale(1, h / r, 1);
+  g.add(mesh(dome, mat(0x6a8a48, { flatShading: true, roughness: 1 }), 0, -1, 0));
+  const leaf = mat(0x3f6a2e, { flatShading: true });
+  const trunk = mat(0x6a4a2e);
+  for (let i = 0; i < 6; i++) {
+    const a = rng() * Math.PI * 2;
+    const d = r * range(rng, 0.1, 0.6);
+    const y = h * Math.sqrt(Math.max(0, 1 - (d / r) ** 2)) - 1.5;
+    const s = range(rng, 4, 7);
+    g.add(mesh(new THREE.CylinderGeometry(0.5, 0.7, s, 5), trunk, Math.cos(a) * d, y + s / 2, Math.sin(a) * d));
+    g.add(mesh(new THREE.IcosahedronGeometry(s * 0.7, 0), leaf, Math.cos(a) * d, y + s * 1.1, Math.sin(a) * d));
+  }
+  return g;
+}
+
+/** Big scenery (mountains, hills, mesas) moved back from the road until its foot is this clear of it everywhere nearby. */
+const SCENERY_CLEAR = 60;
+
+/** Pushes a big shape away from the road until its foot is SCENERY_CLEAR from every bit of road near it (bends too). */
+function keepOffRoad(model: THREE.Object3D, path: Path, at: number, away: THREE.Vector3, edge: number): void {
+  model.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(model);
+  const size = box.getSize(new THREE.Vector3());
+  const radius = Math.max(size.x, size.z) / 2;
+  const centre = box.getCenter(new THREE.Vector3());
+  for (let tries = 0; tries < 6; tries++) {
+    let worst = Infinity;
+    for (let d = Math.max(0, at - radius * 2 - 200); d <= Math.min(path.length, at + radius * 2 + 200); d += 20) {
+      const q = to3(path.pointAt(d));
+      worst = Math.min(worst, Math.hypot(q.x - centre.x, q.z - centre.z));
+    }
+    const short = radius + edge + SCENERY_CLEAR - worst;
+    if (short <= 0) return;
+    const step = away.clone().setY(0).normalize().multiplyScalar(short + 10);
+    model.position.add(step);
+    centre.add(step);
+  }
 }
 
 /** A flat-topped desert butte in layered red rock, set far back from the road. */
@@ -697,13 +800,15 @@ function withHdLandmark(l: Landmark, code: THREE.Object3D): THREE.Object3D {
   return hdBuilding(name, Math.max(h, 6), 'height') ?? code;
 }
 
-export function buildLandmark(l: Landmark, path: Path, edgeAt: (d: number) => number = () => ROAD_HALF): THREE.Object3D {
+export function buildLandmark(l: Landmark, path: Path, edgeAt: (d: number) => number = () => ROAD_HALF, biome?: BiomeId): THREE.Object3D {
   if (l.kind === 'river') return buildRiver(l, path, edgeAt(l.at));
-  const wide = l.kind === 'peak' || l.kind === 'mountains' || l.kind === 'mesa' ? 0 : edgeAt(l.at) - ROAD_HALF;
+  const big = l.kind === 'peak' || l.kind === 'mountains' || l.kind === 'mesa' || l.kind === 'hill';
+  const wide = big ? 0 : edgeAt(l.at) - ROAD_HALF;
   const rng = makeRng(hashString(`${l.kind}${l.name}${Math.round(l.at)}`));
   const builders: Partial<Record<Landmark['kind'], () => THREE.Object3D>> = {
-    peak: () => buildPeak(rng),
-    mountains: () => buildMountains(rng),
+    peak: () => buildPeak(rng, biome, l.ele),
+    hill: () => buildHill(rng),
+    mountains: () => buildMountains(rng, biome),
     monument: buildMonument,
     tower: buildTower,
     lighthouse: buildLighthouse,
@@ -731,6 +836,8 @@ export function buildLandmark(l: Landmark, path: Path, edgeAt: (d: number) => nu
   const toRoad = right.clone().multiplyScalar(-l.side);
   const face = l.kind === 'billboard' || l.kind === 'citysign' || l.kind === 'stateline' || l.kind === 'roadsign' ? toRoad.multiplyScalar(0.35).addScaledVector(fwd, -1).normalize() : toRoad;
   model.rotation.y = Math.atan2(face.x, face.z);
+  // Mountains, hills and mesas never sit on the road, even where it bends toward them.
+  if (big) keepOffRoad(model, path, l.at, right.clone().multiplyScalar(l.side), edgeAt(l.at));
   out.add(model);
   if (l.kind !== 'citysign' && l.kind !== 'stateline' && l.kind !== 'roadsign' && l.kind !== 'billboard' && l.kind !== 'mountains' && l.kind !== 'watertower' && l.kind !== 'windmill' && l.kind !== 'farmstead') {
     out.add(poiSign(l, path, edgeAt(Math.max(0, l.at - 70))));
