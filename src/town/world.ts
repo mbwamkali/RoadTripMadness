@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { PlaceKind } from '../game/stops';
 import { lit } from '../scenes/materials';
-import { placeBuilding, fitted, HD_HOUSES, PLACE_BUILDINGS } from '../scenes/hdBuildings';
+import { placeBuilding, placeDoor, fitted, HD_HOUSES, PLACE_BUILDINGS } from '../scenes/hdBuildings';
 import { modelMesh, type ModelName } from '../scenes/models';
 import { textSprite } from '../scenes/common';
 import { makeRng } from '../game/rng';
@@ -49,9 +49,12 @@ export interface TownSpot {
   room: THREE.Group;
   /** Car path into the lot, from Main Street to the parking spot. */
   park: THREE.Vector3[];
-  /** Front door: outside and just inside. */
+  /** Front door: where you stand outside it, the doorstep, and just inside. */
   door: THREE.Vector3;
+  threshold: THREE.Vector3;
   inside: THREE.Vector3;
+  /** The door that opens when you go in or out (a dark opening and a panel named 'doorPanel'). */
+  doorway: THREE.Group;
   /** Crates in the room. */
   crates: THREE.Group[];
   /** The fuel pump, at a gas station. */
@@ -284,6 +287,8 @@ export function buildTownWorld(layout: TownLayout, mats: TownMaterials, seed: nu
       shell = codeBuilding(lot.place, width, mat);
       size = new THREE.Vector3(width, 5, 11);
     }
+    // The building's own front door (its model's door, turned to face the street), found while it stands at the origin.
+    const dk = hd ? placeDoor(lot.place, hd) : { x: 0, z: size.z / 2, y: 0 };
     const back = LOT_NEAR + LOT_DEPTH - size.z / 2 - 1.5;
     shell.position.copy(at(back, 0));
     shell.rotation.y = yawToStreet;
@@ -293,8 +298,16 @@ export function buildTownWorld(layout: TownLayout, mats: TownMaterials, seed: nu
     });
     g.add(shell);
     const front = back - size.z / 2;
-    const door = at(front - 1.8, 0);
-    const inside = at(front + 2.2, 0);
+    shell.updateMatrix();
+    const local = (x: number, z: number, y = 0) => new THREE.Vector3(x, y, z).applyMatrix4(shell.matrix);
+    const door = local(dk.x, dk.z + 1.6);
+    const threshold = local(dk.x, dk.z + 0.35);
+    const inside = local(dk.x, Math.min(dk.z, size.z / 2) - 1.6);
+    // The door you go in by: a dark opening and a door that swings out (hidden until you use it).
+    const doorway = doorwayAt(mat);
+    doorway.position.copy(local(dk.x, dk.z + 0.04, dk.y));
+    doorway.rotation.y = yawToStreet;
+    g.add(doorway);
     // The big picture sign at the corner of the lot, angled toward cars coming up the street.
     const sign = pictureSign(lot.place, lot.name);
     sign.position.copy(at(LOT_NEAR + 1.2, -LOT_ALONG / 2 + 2.5));
@@ -367,7 +380,7 @@ export function buildTownWorld(layout: TownLayout, mats: TownMaterials, seed: nu
     room.visible = false;
     room.position.copy(at(back, 0));
     room.rotation.y = yawToStreet;
-    furnish(room, lot.place, size, mat);
+    furnish(room, lot.place, size, mat, dk.x);
     const crates: THREE.Group[] = [];
     const spotsIn: [number, number][] = [
       [-size.x / 2 + 2, -size.z / 2 + 1.8],
@@ -391,6 +404,8 @@ export function buildTownWorld(layout: TownLayout, mats: TownMaterials, seed: nu
       room,
       park,
       door,
+      threshold,
+      doorway,
       inside,
       crates,
       pump,
@@ -453,6 +468,32 @@ export function buildTownWorld(layout: TownLayout, mats: TownMaterials, seed: nu
       });
     },
   };
+}
+
+/**
+ * The door you walk through: a dark opening on the wall and a wooden door hinged at its left
+ * edge ('doorPanel', rotation.y 0 = shut, about -1.7 = swung out). Hidden until it's used.
+ */
+function doorwayAt(mat: Mat): THREE.Group {
+  const g = new THREE.Group();
+  g.name = 'doorway';
+  g.visible = false;
+  const W = 1.3;
+  const H = 2.3;
+  const hole = new THREE.Mesh(new THREE.PlaneGeometry(W, H), new THREE.MeshBasicMaterial({ color: 0x0b0806 }));
+  hole.position.y = H / 2 + 0.05;
+  g.add(hole);
+  const panel = new THREE.Group();
+  panel.name = 'doorPanel';
+  panel.position.set(-W / 2, 0, 0.03);
+  const leaf = box(W, H, 0.08, mat({ color: 0x6a4428, roughness: 0.7 }));
+  leaf.position.set(W / 2, H / 2 + 0.05, 0);
+  panel.add(leaf);
+  const knob = box(0.1, 0.1, 0.14, mat({ color: 0xd8b04a, metalness: 0.6, roughness: 0.3 }));
+  knob.position.set(W - 0.18, 1.15, 0.06);
+  panel.add(knob);
+  g.add(panel);
+  return g;
 }
 
 /** Simple building for Low graphics or before the models load: walls, roof, door, the place's colour. */
@@ -640,7 +681,7 @@ function floorTexture(place: PlaceKind, w: number, d: number): THREE.CanvasTextu
 
 /** Furniture a 5-year-old can name, so every place has its own room: a car on a lift in the garage,
  * shelves of fruit and a till at the grocery, a bed in the motel, hay in the barn. */
-function furnish(g: THREE.Group, place: PlaceKind, size: THREE.Vector3, mat: Mat): void {
+function furnish(g: THREE.Group, place: PlaceKind, size: THREE.Vector3, mat: Mat, doorX = 0): void {
   const w = size.x;
   const d = size.z;
   const add = (m: THREE.Object3D, x: number, y: number, z: number) => {
@@ -668,12 +709,16 @@ function furnish(g: THREE.Group, place: PlaceKind, size: THREE.Vector3, mat: Mat
   add(box(0.34, 0.35, d, trim), -w / 2, 2.25, 0);
   add(box(0.34, 0.35, d, trim), w / 2, 2.25, 0);
   // The front: low walls either side of the doorway, an open door and a mat, so you see where you came in.
-  add(box(w / 2 - 1.4, 0.9, 0.3, wall), -w / 4 - 0.7, 0.45, d / 2);
-  add(box(w / 2 - 1.4, 0.9, 0.3, wall), w / 4 + 0.7, 0.45, d / 2);
+  // The doorway lines up with the building's own door, wherever it is along the front.
+  const dx = Math.max(-w / 2 + 2, Math.min(w / 2 - 2, doorX));
+  const leftLen = dx - 1.4 + w / 2;
+  const rightLen = w / 2 - dx - 1.4;
+  add(box(leftLen, 0.9, 0.3, wall), -w / 2 + leftLen / 2, 0.45, d / 2);
+  add(box(rightLen, 0.9, 0.3, wall), w / 2 - rightLen / 2, 0.45, d / 2);
   const frame = mat({ color: 0x5a3a22 });
-  for (const x of [-1.4, 1.4]) add(box(0.25, 2.6, 0.35, frame), x, 1.3, d / 2);
-  add(box(3.05, 0.3, 0.4, trim), 0, 2.65, d / 2);
-  add(box(2.2, 0.03, 1.2, mat({ color: trimC, roughness: 0.95 })), 0, FLOOR_Y + 0.02, d / 2 - 0.9);
+  for (const x of [-1.4, 1.4]) add(box(0.25, 2.6, 0.35, frame), dx + x, 1.3, d / 2);
+  add(box(3.05, 0.3, 0.4, trim), dx, 2.65, d / 2);
+  add(box(2.2, 0.03, 1.2, mat({ color: trimC, roughness: 0.95 })), dx, FLOOR_Y + 0.02, d / 2 - 0.9);
   // A big picture of the place on the back wall (the same as its sign out front).
   const poster = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.5), new THREE.MeshBasicMaterial({ map: signTexture(place), toneMapped: false }));
   add(poster, 0, 1.55, -d / 2 + 0.17);
