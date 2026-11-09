@@ -18,6 +18,10 @@ export interface FeatureFile {
   points: [number, string, number, number, number, string, number?][];
   /** [kind, name, wiki, [lng, lat, dlng, dlat, ...]] (river pieces around highway crossings). */
   lines: [number, string, string, number[]][];
+  /** Main streets crossing the highways: [lng, lat, mainDeg, crossDeg, kind, both, lanes, name] (see scripts/osm_features.py). */
+  crossings?: [number, number, number, number, number, number, number, string][];
+  /** Highways on bridges over other highways: [lng, lat, deg of the upper road]. */
+  bridges?: [number, number, number][];
 }
 
 /** How near the route each kind must be, in metres. */
@@ -108,11 +112,17 @@ const fileLoads = new Map<string, Promise<FeatureFile>>();
  * has none (built before they were added) or they can't be loaded.
  */
 export async function loadRouteFeatures(coords: LatLng[]): Promise<MapFeature[] | null> {
+  const files = await loadFeatureFiles(coords);
+  return files ? featuresNear(files, coords) : null;
+}
+
+/** The baked feature files a route passes through (cached), or null when this road build has none. */
+export async function loadFeatureFiles(coords: LatLng[]): Promise<FeatureFile[] | null> {
   try {
     const index = await loadRoadIndex();
     if (!index.features) return null;
     const v = encodeURIComponent(index.built);
-    const files = await Promise.all(
+    return await Promise.all(
       featureTilesAlong(index, coords).map(([x, y]) => {
         const name = `features/${x}_${y}.json?v=${v}`;
         let load = fileLoads.get(name);
@@ -124,7 +134,6 @@ export async function loadRouteFeatures(coords: LatLng[]): Promise<MapFeature[] 
         return load;
       }),
     );
-    return featuresNear(files, coords);
   } catch {
     return null;
   }

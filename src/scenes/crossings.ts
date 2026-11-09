@@ -16,6 +16,12 @@ import { makeTrafficVehicle } from './common';
 
 /** Overpass sizes (game units, about metres). The deck clears the chase camera (at most about 8.5 up). */
 export const OVERPASS = { bottom: 10.2, deck: 1.4, ramp: 60, ground: 220, width: 11, widthBig: 16, slope: 1.5 };
+/**
+ * Underpass sizes: the crossing road dips into a cut under the trip, which
+ * stays flat (real hills are parked). The cut is drawn below the ground and the
+ * ground is masked off over it (see HOLE).
+ */
+export const UNDERPASS = { depth: 7.5, ramp: 70, ground: 200, width: 10, widthBig: 14 };
 /** Flat crossing sizes. */
 export const FLAT = { width: 8, widthBig: 12, length: 260 };
 
@@ -66,6 +72,13 @@ const RED_LIGHT = new THREE.MeshBasicMaterial({ color: 0x5a1010 });
 RED_LIGHT.userData.shared = true;
 const STOP_RED = lit({ color: 0xc8202a, side: THREE.DoubleSide });
 STOP_RED.userData.shared = true;
+/**
+ * The ground has no holes, so over a cut: the cut is drawn first (render order
+ * -2), then this invisible lid writes depth just above the ground (order -1),
+ * so the ground (drawn after, pushed back) loses there and the cut shows.
+ */
+const HOLE = new THREE.MeshBasicMaterial({ colorWrite: false });
+HOLE.userData.shared = true;
 const embankMats = new Map<number, THREE.Material>();
 function embankMat(ground: number): THREE.Material {
   let m = embankMats.get(ground);
@@ -178,6 +191,15 @@ function mesh(parts: THREE.BufferGeometry[], m: THREE.Matrix4, mat: THREE.Materi
 const yawFor = (v: Vec2) => Math.atan2(v.x, -v.y);
 
 /** Overpass layout along the crossing road: half-span of the deck S, ramp R, whole half-length L. */
+/** Underpass layout along the crossing road: half-span under the trip S, ramp R, whole half-length L. */
+function underDims(c: RoadCrossing, fit: CrossingFit, cos: number) {
+  const P = UNDERPASS;
+  const W = c.big ? P.widthBig : P.width;
+  const outer = Math.max(fit.outer(c.at - 20), fit.outer(c.at), fit.outer(c.at + 20));
+  const S = (outer + 3) / cos + (W / 2 + 1) * Math.abs(Math.tan(c.angle));
+  return { W, S, R: P.ramp, L: S + P.ramp + P.ground, D: P.depth };
+}
+
 function overDims(c: RoadCrossing, fit: CrossingFit, cos: number) {
   const P = OVERPASS;
   const W = c.big ? P.widthBig : P.width;
@@ -203,6 +225,13 @@ export function crossingFootprint(c: RoadCrossing, path: Path, fit: CrossingFit)
       return a <= L + 4 && Math.abs(p.w) < (a < S + R + 4 ? W / 2 + top * OVERPASS.slope + 3 : W / 2 + 4);
     };
   }
+  if (c.kind === 'under') {
+    const { W, L } = underDims(c, fit, F.cos);
+    return (x, z) => {
+      const p = F.local(x, -z);
+      return Math.abs(p.s) <= L + 4 && Math.abs(p.w) < W / 2 + 4;
+    };
+  }
   const Wc = c.big ? FLAT.widthBig : FLAT.width;
   return (x, z) => {
     const q = F.local(x, -z);
@@ -212,7 +241,7 @@ export function crossingFootprint(c: RoadCrossing, path: Path, fit: CrossingFit)
 }
 
 export function buildCrossing(c: RoadCrossing, path: Path, fit: CrossingFit, mats: CrossingMats): BuiltCrossing {
-  const b = c.kind === 'over' ? overpass(c, path, fit, mats) : flatCrossing(c, path, fit, mats);
+  const b = c.kind === 'over' ? overpass(c, path, fit, mats) : c.kind === 'under' ? underpass(c, path, fit, mats) : flatCrossing(c, path, fit, mats);
   b.group.name = `crossing:${c.kind}`;
   return b;
 }
@@ -304,6 +333,100 @@ function overpass(c: RoadCrossing, path: Path, fit: CrossingFit, mats: CrossingM
       const slope = Math.abs(s) > S && Math.abs(s) < S + R ? (top / R) * Math.sign(s) * dir : 0;
       v.rotation.set(0, yawFor(heading), 0);
       v.rotateX(slope);
+    };
+    tick(0);
+  }
+  return { group: g, solids, covers, tick, trees };
+}
+
+function underpass(c: RoadCrossing, path: Path, fit: CrossingFit, mats: CrossingMats): BuiltCrossing {
+  const F = frame(c, path);
+  const g = new THREE.Group();
+  const { W, S, R, L, D } = underDims(c, fit, F.cos);
+  const floor = (s: number) => {
+    const a = Math.abs(s);
+    return a <= S ? -D : a <= S + R ? -D * (1 - (a - S) / R) : 0.07;
+  };
+  const ss: number[] = [-L, -S - R];
+  for (let i = 1; i < 10; i++) ss.push(-S - R + (R * i) / 10);
+  ss.push(-S, S);
+  for (let i = 1; i < 10; i++) ss.push(S + (R * i) / 10);
+  ss.push(S + R, L);
+  const cut: [THREE.Mesh | null, number][] = [];
+  cut.push([mesh([stripAlong(ss, W / 2, (s) => floor(s) + 0.03, 8)], F.m, mats.asphalt), -2]);
+  cut.push([mesh([stripAlong(ss, 0.09, (s) => floor(s) + 0.06, 8, 0.14), stripAlong(ss, 0.09, (s) => floor(s) + 0.06, 8, -0.14)], F.m, PAINT_YELLOW), -2]);
+  // Retaining walls down both sides of the cut, with a low parapet along the top that you see from the road.
+  const walls: THREE.BufferGeometry[] = [];
+  const cutLen = 2 * (S + R);
+  for (const side of [-1, 1]) {
+    walls.push(box(0, -D / 2 - 0.05, side * (W / 2 + 0.4), cutLen, D - 0.1, 0.6));
+    // Only out beside the road: none across the trip's own road.
+    for (const end of [-1, 1]) walls.push(box(end * (S + R / 2), 0.4, side * (W / 2 + 0.9), R, 0.8, 0.5));
+  }
+  // The trip's road spans the cut on a deck: its underside and the walls it sits on.
+  walls.push(box(0, -0.65, 0, 2 * S - 1, 1.3, W + 0.6));
+  for (const side of [-1, 1]) walls.push(box(side * (S - 0.3), -D / 2, 0, 0.6, D, W + 1));
+  cut.push([mesh(walls, F.m, CONCRETE), -2]);
+  // The lid over the cut (see HOLE), and the cut's own surfaces drawn before it.
+  cut.push([mesh([stripAlong([-S - R, S + R], W / 2 + 0.7, () => 0.02, 8)], F.m, HOLE), -1]);
+  for (const [m, order] of cut) {
+    if (!m) continue;
+    m.renderOrder = order;
+    g.add(m);
+  }
+  // Low concrete parapets along both edges of the trip's road as it crosses.
+  const span = (W / 2 + 3) / F.cos;
+  const solids: BuiltCrossing['solids'] = [];
+  const rails: THREE.BufferGeometry[] = [];
+  for (const side of [-1, 1]) {
+    for (let d = c.at - span; d < c.at + span; d += 4) {
+      const p = path.pointAt(d);
+      const f = path.directionAt(d, 10);
+      const x = side * (fit.outer(d) + 0.3);
+      const geo = new THREE.BoxGeometry(0.5, 1, 4.1).rotateY(yawFor(f)).translate(p.x + f.y * x, 0.5, -(p.y - f.x * x));
+      rails.push(geo);
+      solids.push({ d, x, r: 0.8 });
+    }
+  }
+  const railMesh = mesh(rails, new THREE.Matrix4(), CONCRETE);
+  if (railMesh) g.add(railMesh);
+  // The street's name on a sign by the parapet.
+  if (c.name) {
+    const near = c.at - span - 3;
+    const p = path.pointAt(near);
+    const f = path.directionAt(near, 10);
+    const x = fit.outer(near) + 1.2;
+    const blade = greenPanel([{ text: signName(c.name) }], Math.min(5, 1.6 + signName(c.name).length * 0.25));
+    blade.scale.setScalar(0.6);
+    blade.position.set(p.x + f.y * x, 2.4, -(p.y - f.x * x));
+    blade.rotation.y = yawFor({ x: -f.x, y: -f.y });
+    g.add(blade);
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 2.4, 6), POLE);
+    pole.position.set(p.x + f.y * x, 1.2, -(p.y - f.x * x));
+    g.add(pole);
+  }
+  const covers = crossingFootprint(c, path, fit);
+  // Now and then a car drives through underneath.
+  const trees: THREE.Object3D[] = [];
+  let tick: BuiltCrossing['tick'];
+  if (mats.cars) {
+    const dir = c.at % 2 < 1 ? 1 : -1;
+    const kinds = ['car', 'pickup', 'van', 'car'] as const;
+    const v = makeTrafficVehicle(kinds[Math.floor(c.at) % kinds.length], [0x2d5d9b, 0xc23b22, 0xdedad2, 0x2f6b3e][Math.floor(c.at / 7) % 4]);
+    v.traverse((o) => (o.renderOrder = -2));
+    trees.push(v);
+    g.add(v);
+    const heading = { x: F.u.x * dir, y: F.u.y * dir };
+    const lane = dir * (W / 4);
+    const span2 = 2 * L;
+    const phase = (c.at * 11) % span2;
+    tick = (t) => {
+      const s = (((t * 14 + phase) % span2) - L) * dir;
+      const px = F.o.x + F.u.x * s + F.n.x * lane, py = F.o.y + F.u.y * s + F.n.y * lane;
+      v.position.set(px, floor(s), -py);
+      const slope = Math.abs(s) > S && Math.abs(s) < S + R ? (D / R) * Math.sign(s) * dir : 0;
+      v.rotation.set(0, yawFor(heading), 0);
+      v.rotateX(-slope);
     };
     tick(0);
   }
@@ -420,6 +543,7 @@ function flatCrossing(c: RoadCrossing, path: Path, fit: CrossingFit, mats: Cross
 
 /** Width of the crossing road along the trip (game units), for keeping sidewalks and signs off it. */
 export function crossingHalfSpan(c: RoadCrossing): number {
-  const w = c.kind === 'over' ? (c.big ? OVERPASS.widthBig : OVERPASS.width) : c.big ? FLAT.widthBig : FLAT.width;
+  const w =
+    c.kind === 'over' ? (c.big ? OVERPASS.widthBig : OVERPASS.width) : c.kind === 'under' ? (c.big ? UNDERPASS.widthBig : UNDERPASS.width) : c.big ? FLAT.widthBig : FLAT.width;
   return w / 2 / Math.cos(c.angle);
 }

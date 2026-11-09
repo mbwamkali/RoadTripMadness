@@ -95,3 +95,40 @@ describe('names on crossing signs', async () => {
     expect(signName('Elm St')).toBe('Elm St');
   });
 });
+
+describe('crossings baked into the road build', async () => {
+  const { applyBakedCrossings } = await import('../src/offline/bakedCrossings');
+  const coords = [{ lat: 40, lng: -100 }, { lat: 40, lng: -99.9 }];
+  const file = {
+    version: 1 as const,
+    q: Q,
+    kinds: [],
+    points: [],
+    lines: [],
+    crossings: [
+      // On the trip's road (an east-west highway), a street going under it.
+      [Math.round(-99.95 * Q), Math.round(40 * Q), 0, 90, 2, 1, 2, 'Mill St'],
+      // On a north-south road that only passes near: not ours.
+      [Math.round(-99.92 * Q), Math.round(40.0001 * Q), 90, 0, 0, 1, 2, 'Oak St'],
+      // Too far off the line.
+      [Math.round(-99.93 * Q), Math.round(40.01 * Q), 0, 90, 0, 1, 2, 'Far Rd'],
+    ] as [number, number, number, number, number, number, number, string][],
+    bridges: [[Math.round(-99.98 * Q), Math.round(40 * Q), 0]] as [number, number, number][],
+  };
+  const found = [
+    { location: { lat: 40, lng: -99.98 }, toward: { lat: 40.001, lng: -99.98 }, name: 'US 1', kind: 'over' as const, cls: 2, lanes: 2, both: true },
+    { location: { lat: 40, lng: -99.91 }, toward: { lat: 40.001, lng: -99.91 }, name: 'US 2', kind: 'over' as const, cls: 2, lanes: 2, both: true },
+  ];
+
+  it('adds main streets on the trip’s road and turns a bridge round where the trip is on top', () => {
+    const out = applyBakedCrossings(found, [file], coords);
+    expect(out.map((c) => [c.name, c.kind])).toEqual([
+      ['US 1', 'under'],
+      ['US 2', 'over'],
+      ['Mill St', 'under'],
+    ]);
+    const mill = out[2];
+    expect(mill.cls).toBe(3);
+    expect(mill.toward.lat).toBeGreaterThan(mill.location.lat);
+  });
+});

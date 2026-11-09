@@ -741,9 +741,9 @@ export interface RawCrossing {
   /** A point along the crossing road, for its direction. */
   toward: LatLng;
   name: string;
-  /** 'over' = no shared junction (a bridge one way or the other); 'flat' = they meet at a light. */
-  kind: 'over' | 'flat';
-  /** Road class of the crossing road: 0 motorway, 1 trunk, 2 primary. */
+  /** 'over' = the crossing road goes over the trip; 'under' = the trip goes over it; 'flat' = they meet at a light. */
+  kind: 'over' | 'under' | 'flat';
+  /** Road class of the crossing road: 0 motorway, 1 trunk, 2 primary, 3 a main street (secondary, baked). */
   cls: number;
   lanes: number;
   /** A flat crossing that carries on across the trip (false: it only runs off one side, toward `toward`). */
