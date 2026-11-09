@@ -44,6 +44,8 @@ export interface TownHooks {
   /** Searches are counted per stop and place, as before (state.ts). */
   stopId: string;
   say(text: string, speak?: boolean): void;
+  /** A quick fade to dark and back, while you step through a door. */
+  fade?(): void;
   sfx: { coin(): void; bad(): void; click(): void; shot?(): void };
   changed(): void;
   save(): void;
@@ -114,6 +116,10 @@ export class TownPlay {
   private walker: THREE.Object3D;
   private walkerRig: Person | null;
   private walk: { pts: THREE.Vector3[]; speed: number; then: () => void } | null = null;
+  /** On the way in through a door (walking up, door opening, stepping through). */
+  entering: TownSpot | null = null;
+  /** A door swinging open or shut (0.35 s). */
+  private doorAnim: { sp: TownSpot; t: number; open: boolean; then: () => void } | null = null;
   /** Digging into a box you walked over to: opens it when the time runs out. */
   private dig: { i: number; t: number } | null = null;
   /** Loot icons flying from a box up to your supplies. */
@@ -152,6 +158,7 @@ export class TownPlay {
       sp.park = sp.park.map(W);
       sp.door = W(sp.door);
       sp.inside = W(sp.inside);
+      sp.threshold = W(sp.threshold);
       sp.centre = W(sp.centre);
       if (sp.pump) sp.pump = W(sp.pump);
       sp.facing = sp.facing.clone().transformDirection(world.group.matrixWorld);
@@ -181,7 +188,7 @@ export class TownPlay {
 
   /** The car or the walker is on the move (a tap on a sign waits till it stops). */
   get busy(): boolean {
-    return !!this.move || !!this.walk || !!this.dig;
+    return !!this.move || !!this.walk || !!this.dig || !!this.doorAnim || !!this.entering;
   }
 
   /** Zombies awake within `r` of you (or the car, or the door you went in). */
@@ -334,7 +341,7 @@ export class TownPlay {
       this.leaveBuilding(run, () => this.backToCar(run));
       return;
     }
-    if (this.phase !== 'walking') return;
+    if (this.phase !== 'walking' || this.entering) return;
     const left = new THREE.Vector3(Math.cos(this.carYaw), 0, -Math.sin(this.carYaw));
     this.walkTo([this.host.car.position.clone().addScaledVector(left, 1.9)], run ? RUN_SPEED : WALK_SPEED, () => {
       this.walker.visible = false;
@@ -345,8 +352,44 @@ export class TownPlay {
   }
 
   goIn(sp: TownSpot): void {
-    if (this.phase !== 'walking') return;
-    this.walkTo([sp.door, sp.inside], WALK_SPEED, () => {
+    if (this.phase !== 'walking' || this.entering) return;
+    // Up to the building's own door, it swings open, step through, and you're inside.
+    this.entering = sp;
+    this.hooks.changed();
+    this.walkTo([sp.door], WALK_SPEED, () => {
+      this.swingDoor(sp, true, () =>
+        this.walkTo([sp.threshold], WALK_SPEED, () => {
+          this.hooks.fade?.();
+          this.walkTo([sp.inside], WALK_SPEED, () => this.enterRoom(sp));
+        }),
+      );
+    });
+  }
+
+  /** Swings a building's door open or shut, then carries on. */
+  private swingDoor(sp: TownSpot, open: boolean, then: () => void): void {
+    sp.doorway.visible = true;
+    this.doorAnim = { sp, t: 0, open, then };
+    if (open) this.hooks.sfx.click();
+  }
+
+  private updateDoor(dt: number): void {
+    const a = this.doorAnim;
+    if (!a) return;
+    a.t = Math.min(1, a.t + dt / 0.35);
+    const k = a.open ? a.t : 1 - a.t;
+    const panel = a.sp.doorway.getObjectByName('doorPanel');
+    if (panel) panel.rotation.y = -1.75 * (1 - (1 - k) * (1 - k));
+    if (a.t < 1) return;
+    this.doorAnim = null;
+    if (!a.open) a.sp.doorway.visible = false;
+    a.then();
+  }
+
+  private enterRoom(sp: TownSpot): void {
+    {
+      this.entering = null;
+      sp.doorway.visible = false;
       this.at = sp;
       this.phase = 'inside';
       sp.shell.visible = false;
@@ -365,7 +408,7 @@ export class TownPlay {
       this.hooks.save();
       this.hooks.say(this.hooks.kid ? 'Tap the boxes!' : `Inside the ${placeName(sp)}. Quiet now...`);
       this.hooks.changed();
-    });
+    }
   }
 
   /** Out of the building to just outside the door. */
@@ -380,11 +423,19 @@ export class TownPlay {
     showRoofs(sp, true);
     this.search = null;
     this.phase = 'walking';
-    // Out the door facing the street, so the camera sees what's coming.
-    this.walker.position.copy(sp.door).setY(this.walker.position.y);
+    // Out through the open door facing the street (so the camera sees what's coming); it shuts behind you.
+    this.hooks.fade?.();
+    this.walker.position.copy(sp.threshold).setY(this.walker.position.y);
     this.heading.copy(sp.facing).setY(0).normalize();
+    sp.doorway.visible = true;
+    const panel = sp.doorway.getObjectByName('doorPanel');
+    if (panel) panel.rotation.y = -1.75;
     this.hooks.changed();
-    this.walkTo([sp.door.clone().addScaledVector(sp.facing, 2.5)], run ? RUN_SPEED : WALK_SPEED, then);
+    const speed = run ? RUN_SPEED : WALK_SPEED;
+    this.walkTo([sp.door], speed, () => {
+      this.swingDoor(sp, false, () => {});
+      this.walkTo([sp.door.clone().addScaledVector(sp.facing, 1.5)], speed, then);
+    });
   }
 
   private nearestZombie(p: THREE.Vector3, r: number): Zombie | null {
@@ -687,6 +738,7 @@ export class TownPlay {
   update(dt: number): void {
     dt = Math.min(dt, 0.05);
     this.time += dt;
+    this.updateDoor(dt);
     const car = this.host.car;
     if (this.move) {
       const m = this.move;
