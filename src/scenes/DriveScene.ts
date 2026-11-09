@@ -2072,7 +2072,7 @@ export class DriveScene implements GameScene {
     if (this.sidewalkAt(d) || structureAt(this.structures, d, 30)) return 'none';
     // Power lines stop at an overpass's ramp, and carry on over a side street.
     const on = this.onCrossing(d, 7.5 + this.widen(d));
-    if (on) return on.kind === 'over' ? 'none' : 'sign';
+    if (on) return on.kind === 'flat' ? 'sign' : 'none';
     for (const l of this.state.landmarks) {
       if (l.kind === 'mountains' || l.kind === 'peak' || l.kind === 'mesa') continue;
       if (l.kind === 'river' ? Math.abs(l.at - d) < 45 : l.side === 1 && Math.abs(l.at - d) < (WIDE_SIGHTS.has(l.kind) ? 75 : 30)) return 'none';

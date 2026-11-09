@@ -29,7 +29,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if gh release download osm-roads -p osm-roads.tar.gz -D "$RUNNER_TEMP"; then
+          # A road build made from this branch's scripts (osm-roads-preview, see osm-roads.yml) wins
+          # over the live one, so the preview can try road-build changes without touching the live game.
+          if gh release download osm-roads-preview -p osm-roads.tar.gz -D "$RUNNER_TEMP" || gh release download osm-roads -p osm-roads.tar.gz -D "$RUNNER_TEMP"; then
             mkdir -p dist/data/osm
             tar -xzf "$RUNNER_TEMP/osm-roads.tar.gz" -C dist/data/osm
           fi

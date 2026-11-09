@@ -48,7 +48,7 @@ from datetime import datetime, timezone
 
 import osmium
 
-from osm_features import KINDS as FEATURE_KINDS, FeatureReader, RoadGrid
+from osm_features import KINDS as FEATURE_KINDS, BridgeGrid, FeatureReader, RoadGrid
 
 Q = 100_000  # 1e-5 degree, about 1 m; fine enough that shared nodes line up exactly
 TILE_DEG = 2
@@ -101,6 +101,9 @@ class Reader(osmium.SimpleHandler):
         self.seen_towns = set()
         # Road segments (pairs of node ids, smaller first) on bridges and in tunnels.
         self.structure = {}
+        # Bridge segments of any length as (lon, lat, lon, lat), for crossing points (osm_features.py).
+        self.bridge_segs = []
+        self.seen_bridge = set()
 
     def node(self, n):
         t = n.tags
@@ -136,6 +139,9 @@ class Reader(osmium.SimpleHandler):
             for i in range(1, len(pts)):
                 u, v = pts[i - 1][0], pts[i][0]
                 self.structure[(u, v) if u < v else (v, u)] = kind
+                if kind == 1 and (u, v) not in self.seen_bridge:
+                    self.seen_bridge.add((u, v))
+                    self.bridge_segs.append((pts[i - 1][1], pts[i - 1][2], pts[i][1], pts[i][2]))
         ow = oneway in ('yes', '1', 'true', '-1') or (hw in ('motorway', 'motorway_link') and oneway != 'no') or t.get('junction') == 'roundabout'
         self.ways.append({
             'c': c,
@@ -466,10 +472,12 @@ def main():
         'kinds': ['city', 'town'], 'towns': r.towns})
 
     # Landmarks: a second pass over the same files, keeping what lies near the highways.
-    grid = RoadGrid(simplify([(p[1], p[2]) for p in e['pts']], SIMPLIFY_DEG) for e in edges)
-    fr = FeatureReader(grid, Q, TILE_DEG)
+    grid = RoadGrid((simplify([(p[1], p[2]) for p in e['pts']], SIMPLIFY_DEG), e['c']) for e in edges)
+    fr = FeatureReader(grid, Q, TILE_DEG, BridgeGrid(r.bridge_segs))
     for f in args.pbf:
         fr.apply_file(f, locations=True)
+    # Which road is on top where two highways cross (the game draws the upper one as the bridge).
+    fr.add_bridges(r.bridge_segs)
     del grid
     os.makedirs(os.path.join(args.out, 'features'), exist_ok=True)
     feature_list = []
@@ -477,7 +485,8 @@ def main():
         name = f'features/{x}_{y}.json'
         sizes[name] = write_json(os.path.join(args.out, name), {
             'version': 1, 'q': Q, 'attribution': ATTRIBUTION, 'license': 'ODbL-1.0', 'tile': [x, y], 'tileDeg': TILE_DEG,
-            'kinds': FEATURE_KINDS, 'points': t['points'], 'lines': t['lines']})
+            'kinds': FEATURE_KINDS, 'points': t['points'], 'lines': t['lines'],
+            **({'crossings': t['crossings']} if t['crossings'] else {}), **({'bridges': t['bridges']} if t['bridges'] else {})})
         feature_list.append([x, y, sizes[name][1]])
 
     with open(os.path.join(args.out, 'LICENSE-ODbL.txt'), 'w') as f:

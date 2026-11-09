@@ -5,7 +5,8 @@ import { LOCAL_TIMEOUT_MS, lookupStreets, type StreetLookup } from '../geo/local
 import { fetchMapFeatures } from '../geo/overpass';
 import type { RawRoute } from '../geo/route';
 import { loadAtlas } from './atlas';
-import { loadRouteFeatures } from './features';
+import { loadFeatureFiles, loadRouteFeatures } from './features';
+import { applyBakedCrossings } from './bakedCrossings';
 import { loadHighways, loadRoadIndex, nextFrame, type RoadFile } from './roadNet';
 import { tripCache } from './tripCache';
 
@@ -72,6 +73,14 @@ export async function addFeatures(raw: RawRoute, progress: (message: string) => 
     } finally {
       clearTimeout(timer);
       scout?.(null);
+    }
+  }
+  // Main streets crossing the trip, and which road is on top where two highways cross (step 2 of the road build).
+  if (raw.source === 'osm') {
+    const files = await loadFeatureFiles(raw.coords);
+    if (files?.some((f) => f.crossings || f.bridges)) {
+      const all = applyBakedCrossings(raw.crossings ?? [], files, raw.coords);
+      if (all.length) raw.crossings = all;
     }
   }
   // Gas stations alone don't make a trip interesting; borrow the atlas's sights if the lookup found none.

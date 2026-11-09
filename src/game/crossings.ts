@@ -11,8 +11,8 @@ import { makeRng } from './rng';
 export interface RoadCrossing {
   /** Game distance where the crossing road meets the trip. */
   at: number;
-  /** 'over': the crossing road goes over on a bridge. 'flat': it meets the trip at a light or stop sign. */
-  kind: 'over' | 'flat';
+  /** 'over': the crossing road goes over on a bridge. 'under': the trip goes over it. 'flat': it meets the trip at a light or stop sign. */
+  kind: 'over' | 'under' | 'flat';
   name: string;
   /** Angle of the crossing road away from square to the trip (radians, + leans forward on the right). */
   angle: number;
@@ -42,7 +42,7 @@ const NAMES = ['County Rd {n}', 'Farm Rd {n}', 'Ranch Rd {n}', 'Old Mill Rd', 'S
 
 export interface RawPlaced {
   at: number;
-  kind: 'over' | 'flat';
+  kind: RoadCrossing['kind'];
   name: string;
   angle: number;
   side: -1 | 0 | 1;
@@ -106,9 +106,11 @@ export function planCrossings(candidates: RoadCrossing[], plan: CrossingPlan): R
       if (d === undefined) continue;
       const over = plan.divided(d);
       const flatSide: -1 | 0 | 1 = rng() < 0.7 ? 0 : rng() < 0.5 ? -1 : 1;
+      // On a freeway, now and then it's the freeway that goes over.
+      const under = over && rng() < 0.35;
       out.push({
         at: d,
-        kind: over ? 'over' : 'flat',
+        kind: under ? 'under' : over ? 'over' : 'flat',
         name: NAMES[Math.floor(rng() * NAMES.length)].replace('{n}', String(1 + Math.floor(rng() * 60))),
         angle: (rng() - 0.5) * 0.5,
         side: over ? 0 : flatSide,
@@ -148,7 +150,7 @@ const REF_TAIL = /\s((?:I|US|[A-Z]{2}|CR|SR)\s?[0-9]+[A-Z]?(?:\s(?:Bus|Business|
 
 /** What fits on a sign: abbreviated, and just the route number when the full name is long. */
 export function signName(name: string, max = 20): string {
-  let s = name.trim();
+  let s = name.split(';')[0].trim();
   for (const [re, to] of ABBREV) s = s.replace(re, to);
   if (s.length <= max) return s;
   const m = s.match(REF_TAIL);
