@@ -7,7 +7,7 @@ import { loadStats } from '../game/loadStats';
  * The generated town buildings and landmarks (public/models/hd/b/, about 6k
  * triangles each). They load in the background once a trip starts, so they
  * never hold up the start; until they arrive, or on Low, the code-built ones
- * show. Every file faces +z already.
+ * show. Every file faces +z (turned at load where its door is on another side, see DOORS).
  */
 export const HD_BUILDINGS = [
   'barn', 'gas_station', 'garage', 'grocery', 'hardware', 'supply', 'pharmacy', 'police', 'junkyard', 'motel',
@@ -16,6 +16,25 @@ export const HD_BUILDINGS = [
 ] as const;
 export type HdBuilding = (typeof HD_BUILDINGS)[number];
 export const HD_HOUSES: HdBuilding[] = ['house_ranch', 'house_farm', 'house_bungalow'];
+
+/**
+ * Where each town building's own front door is (looked up from the models: scripts in the
+ * walkable-town thread render each from four sides). `turn` spins the model at load so that
+ * door faces +z (the street); `x` is then the door's place across the front, as a fraction of
+ * the width (-0.5 left edge to 0.5 right edge, seen from the street).
+ */
+export const DOORS: Partial<Record<HdBuilding, { turn: number; x: number }>> = {
+  police: { turn: Math.PI / 2, x: 0 },
+  pharmacy: { turn: -Math.PI / 2, x: -0.03 },
+  gas_station: { turn: Math.PI / 2, x: -0.27 },
+  motel: { turn: 0, x: 0.12 },
+  grocery: { turn: 0, x: -0.02 },
+  hardware: { turn: 0, x: -0.16 },
+  supply: { turn: 0, x: 0.1 },
+  garage: { turn: 0, x: 0 },
+  junkyard: { turn: 0, x: 0.02 },
+  barn: { turn: 0, x: 0 },
+};
 
 /** Which building stands for each place in a town, and the words on its sign (null: no sign). */
 export const PLACE_BUILDINGS: Record<PlaceKind, { model: HdBuilding; sign: string | null; color: string }> = {
@@ -52,6 +71,7 @@ export function loadHdBuildings(base = `${import.meta.env.BASE_URL}models/hd/b/`
         try {
           const gltf = await loader.loadAsync(`${base}${name}.glb`);
           const pivot = new THREE.Group();
+          gltf.scene.rotation.y = DOORS[name]?.turn ?? 0;
           pivot.add(gltf.scene);
           pivot.updateMatrixWorld(true);
           const box = new THREE.Box3().setFromObject(pivot);
@@ -79,6 +99,7 @@ export function loadHdBuildings(base = `${import.meta.env.BASE_URL}models/hd/b/`
       HD_ROADSIDE.map(async (name) => {
         try {
           const gltf = await loader.loadAsync(`${base}lod/${name}.glb`);
+          gltf.scene.rotation.y = DOORS[name]?.turn ?? 0;
           gltf.scene.updateMatrixWorld(true);
           let mesh: THREE.Mesh | null = null;
           gltf.scene.traverse((o) => {
@@ -182,12 +203,24 @@ export function shopSign(text: string, color: string, w: number): THREE.Mesh {
 }
 
 const RAY = new THREE.Raycaster();
-/** How far forward (+z) the building's front reaches at height y, found by casting a ray at it. */
-function frontAt(b: THREE.Object3D, y: number, depth: number): number {
+/** How far forward (+z) the building's front reaches at height y (and across at x), found by casting a ray at it. */
+export function frontAt(b: THREE.Object3D, y: number, depth: number, x = 0): number {
   b.updateMatrixWorld(true);
-  RAY.set(new THREE.Vector3(0, y, depth * 2 + 5), new THREE.Vector3(0, 0, -1));
-  const hit = RAY.intersectObject(b, true)[0];
+  RAY.set(new THREE.Vector3(x, y, depth * 2 + 5), new THREE.Vector3(0, 0, -1));
+  const hit = RAY.intersectObjects(b.children.filter((o) => o.name !== 'sign'), true)[0];
   return hit ? hit.point.z : depth * 0.4;
+}
+
+/** A place's front door, in the building's own frame (it stands at the origin facing +z): across (x) and the wall (z). */
+export function placeDoor(place: PlaceKind, b: THREE.Object3D): { x: number; z: number; y: number } {
+  const s = b.userData.size as THREE.Vector3;
+  const x = (DOORS[PLACE_BUILDINGS[place].model]?.x ?? 0) * s.x;
+  // The wall at door height; a porch post or a barrel in the way is no wall, so take the deepest of three.
+  const z = Math.min(...[-0.35, 0, 0.35].map((dx) => frontAt(b, 1.3, s.z, x + dx)));
+  // The doorstep: the top of any steps or porch just in front of the door.
+  RAY.set(new THREE.Vector3(x, s.y + 2, z + 0.25), new THREE.Vector3(0, -1, 0));
+  const step = RAY.intersectObjects(b.children.filter((o) => o.name !== 'sign'), true).find((h) => h.point.y < 1.6);
+  return { x, z: Math.min(z, s.z / 2), y: step ? Math.max(0, step.point.y) : 0 };
 }
 
 /**

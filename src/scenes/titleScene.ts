@@ -1,16 +1,16 @@
 import * as THREE from 'three';
 import { Atmosphere } from './atmosphere';
-import { Backdrop } from './backdrop';
 import { BLINK_OFF, BLINK_ON, castShadows, disposeTree, makeAsphaltTexture, makeObstacle, makeRide, makeStripeTexture, type GameScene } from './common';
 import { hdModelsReady, hdZombie, loadHdModels } from './hdModels';
 import { lit } from './materials';
-import { loadModels, modelMesh, modelsWanted, type ModelName } from './models';
+import { loadModels, modelMaterial, modelMesh, modelsWanted, type ModelName } from './models';
 import { detailTexture } from './textures';
 import { addGroundDetail } from './groundDetail';
 import { makeAnimal } from './animalModels';
 import { sampleCatSaucer, sampleCatship } from './samples';
 import { person, type Person } from './people';
-import { quality } from './quality';
+import { onPhone, quality } from './quality';
+import { makeMountain, makeRange, saguaroGeometry, scatterScrub } from './titleLand';
 import { sound } from '../audio/sound';
 
 /**
@@ -35,7 +35,10 @@ export const TAP_LINES: Record<Tapped, { icon: string; text: string }[]> = {
     { icon: '👽', text: 'Mrrrow! This planet has yarn!' },
   ],
   saucer: [{ icon: '🛸', text: 'Beep boop… meow!' }],
-  cow: [{ icon: '🐄', text: 'Moooove over!' }],
+  cow: [
+    { icon: '🐄', text: 'Moooove over! I\'m flying!' },
+    { icon: '🐄', text: 'Look, no hooves!' },
+  ],
   queen: [{ icon: '👑', text: 'Bow to the Cat Queen!' }],
   car: [
     { icon: '🚗', text: "Beep beep! Let's go!" },
@@ -49,21 +52,30 @@ export const TAP_LINES: Record<Tapped, { icon: string; text: string }[]> = {
  * through the car, the sign or each other. `margin` is how far past the edge
  * of the picture it starts and ends (about half its own width, plus a bit).
  */
-const PATHS: Record<Passer, { z: number; y: number; speed: number; margin: number }> = {
-  zombie: { z: 4.8, y: 0, speed: 1.1, margin: 2 },
-  cat: { z: -11, y: 0, speed: 2.6, margin: 3 },
-  queen: { z: -16, y: 0, speed: 1.8, margin: 2 },
-  cow: { z: -21, y: 0, speed: 1.0, margin: 3 },
-  saucer: { z: -80, y: 9, speed: 9, margin: 12 },
+const PATHS: Record<Passer, { z: number; y: number; speed: number; margin: number; blob: number }> = {
+  zombie: { z: 4.8, y: 0, speed: 1.1, margin: 2, blob: 1.1 },
+  cat: { z: -11, y: 0, speed: 2.6, margin: 3, blob: 1.6 },
+  queen: { z: -16, y: 0, speed: 1.8, margin: 2, blob: 1.3 },
+  cow: { z: -21, y: 0, speed: 1.8, margin: 3, blob: 2.6 },
+  saucer: { z: -80, y: 9, speed: 9, margin: 12, blob: 9 },
 };
 /** Scenery stays this far from every lane, and off the road. */
 const LANE_CLEAR = 2.6;
+/** The flying cow never comes lower than this (metres, under its hooves): over the car roof and the sign. */
+const COW_FLOOR = 2.3;
 const ROAD_HALF = 4;
 const SHOULDER = 1.6;
-/** Desert colours from the driving view (biomes.ts). */
+/** Sonoran desert at golden hour. */
 const SKY = 0xf2c58f;
-const SAND = 0xd8b07a;
-const VERGE = 0xb88c5a;
+const SAND = 0xb3916a;
+const VERGE = 0xa8835c;
+const ZENITH = new THREE.Color(0x3d6fb4);
+const HORIZON = new THREE.Color(0xf4c08a);
+const HAZE = new THREE.Color(0xe6c4a0);
+/** Roughly where the camera looks (flat), for placing the mountain and the scrub. */
+const LOOK = new THREE.Vector3(7.4, 0, -12.5).normalize();
+/** Where the road runs off to: the mountain sits between it and the middle of the view. */
+const TOWARD_MOUNTAIN = new THREE.Vector3(0.3, 0, -1).normalize();
 
 interface Walker {
   kind: Passer;
@@ -73,6 +85,12 @@ interface Walker {
   /** Where it is across the road (world x), and where it leaves the picture. */
   x: number;
   end: number;
+  /** A soft dark patch on the ground under it, so it never looks like it floats. */
+  blob: THREE.Mesh;
+  /** How far to raise it so its lowest point sits on the ground (some models are centred, not standing). */
+  lift: number;
+  /** Shifts its wandering so no two crossings look the same. */
+  seed: number;
   /** Which way it faces (the models face +z at 0). */
   heading: number;
   t: number;
@@ -82,16 +100,18 @@ interface Walker {
 const CAR_X = 1.9;
 const TMP_BOX = new THREE.Box3();
 const TMP_V = new THREE.Vector3();
+const BLOB_GEO = new THREE.CircleGeometry(0.5, 24);
+BLOB_GEO.userData.shared = true;
 
 export class TitleScene implements GameScene {
   readonly scene = new THREE.Scene();
-  readonly camera = new THREE.PerspectiveCamera(45, 1, 0.5, 1600);
+  readonly camera = new THREE.PerspectiveCamera(45, 1, 0.5, 4000);
   private atmosphere: Atmosphere;
-  private backdrop = new Backdrop(1300);
   private car: THREE.Group;
   /** Exhaust puffs are points, not sprites: the High quality shading pass skips points, so they never turn into dark boxes. */
   private puffs: THREE.Points[] = [];
   private puffTex = puffTexture();
+  private blobMat = new THREE.MeshBasicMaterial({ map: blobTexture(), transparent: true, depthWrite: false, opacity: 0.5, color: 0x000000, polygonOffset: true, polygonOffsetFactor: -8, polygonOffsetUnits: -16 });
   private hdTried = false;
   private walkers: Walker[] = [];
   private bag: Passer[] = [];
@@ -107,17 +127,29 @@ export class TitleScene implements GameScene {
 
   constructor() {
     const q = quality.profile;
-    // The same desert look as the driving view: warm sky, haze from 300 m, far mesas.
-    this.atmosphere = new Atmosphere(this.scene, SKY, 300, 1300, q.shadows ? { size: Math.min(1024, q.shadowSize), range: 30 } : null);
-    this.atmosphere.set(17.6, 'clear');
-    this.backdrop.setBiome('desert');
-    this.scene.add(this.backdrop.group);
+    // Golden hour in the Sonoran desert: blue overhead, warm at the horizon, sunset-lit clouds, light haze far off.
+    this.atmosphere = new Atmosphere(this.scene, SKY, 600, 3200, q.shadows ? { size: Math.min(2048, q.shadowSize), range: 45 } : null);
+    this.atmosphere.afterApply = ({ fog, sky, uniforms }) => {
+      fog.near = 900;
+      fog.far = 3800;
+      fog.color.copy(HAZE);
+      sky.copy(HAZE);
+      (uniforms.horizon.value as THREE.Color).copy(HORIZON);
+      (uniforms.zenith.value as THREE.Color).copy(ZENITH);
+      uniforms.clouds.value = 0.55;
+      uniforms.sunset.value = 1;
+      (uniforms.sunsetDir.value as THREE.Vector3).copy(LOOK);
+    };
+    this.atmosphere.set(17.4, 'clear');
+    this.addLand();
     this.addGround();
     this.addSign();
     // The plant and rock models are usually loaded by now; until they are (and on Low) simple shapes stand in.
     if (this.extras) {
       void loadModels().then((ok) => {
-        if (!this.disposed) this.addScenery(ok);
+        if (this.disposed) return;
+        this.addScenery(ok);
+        if (ok) this.addScrub();
       });
     } else this.addScenery(false);
 
@@ -146,6 +178,28 @@ export class TitleScene implements GameScene {
     this.scene.remove(this.car);
     disposeTree(this.car);
     this.car = this.makeCar();
+  }
+
+  /** The big rocky mountain the road heads for, blue ranges round the horizon, and (once the models are in) desert scrub. */
+  private addLand(): void {
+    const peak = makeMountain(2000, 700, 330, 3);
+    peak.position.copy(TOWARD_MOUNTAIN).multiplyScalar(1500);
+    peak.rotation.y = Math.atan2(-TOWARD_MOUNTAIN.x, -TOWARD_MOUNTAIN.z);
+    this.scene.add(peak);
+    this.scene.add(makeRange(2700, 70, 230, 0x8a92b4, 3));
+    this.scene.add(makeRange(1900, 25, 90, 0xa88672, 11));
+  }
+
+  private addScrub(): void {
+    const lanes = Object.values(PATHS).filter((p) => p.y === 0).map((p) => p.z);
+    const eye = new THREE.Vector3(-6.5, 0, 10.5);
+    const blocked = (x: number, z: number) =>
+      Math.abs(x) < ROAD_HALF + SHOULDER + 0.8 ||
+      lanes.some((l) => Math.abs(z - l) < LANE_CLEAR) ||
+      Math.hypot(x - CAR_X, z) < 6 ||
+      Math.hypot(x - 7.8, z + 26) < 4 ||
+      Math.hypot(x - eye.x, z - eye.z) < 14;
+    this.scene.add(scatterScrub({ blocked, eye, look: LOOK, amount: (quality.level === 'high' ? 1 : 0.5) * (onPhone ? 0.6 : 1) }));
   }
 
   /** Sand with the photo grain and soft patches, an asphalt road with painted lines, and gravel verges. */
@@ -254,7 +308,7 @@ export class TitleScene implements GameScene {
     ];
     for (const [x, z, name, k] of spots) {
       if (Math.abs(x) < ROAD_HALF + SHOULDER + 1 || Object.values(PATHS).some((p) => p.y === 0 && Math.abs(p.z - z) < LANE_CLEAR)) continue;
-      let obj: THREE.Object3D | null = models ? modelMesh(name) : null;
+      let obj: THREE.Object3D | null = models ? (name.startsWith('cactus') ? new THREE.Mesh(saguaroGeometry(1 + (Math.abs(x) % 2), Math.round(x * 7 + z)), modelMaterial) : modelMesh(name)) : null;
       if (!obj) {
         const g = new THREE.Group();
         if (name.startsWith('cactus')) {
@@ -288,7 +342,6 @@ export class TitleScene implements GameScene {
     this.camera.lookAt(0.9, 0.9, -2);
     this.size.set(w, h);
     this.fitGap();
-    this.backdrop.follow(this.camera);
   }
 
   /**
@@ -357,7 +410,7 @@ export class TitleScene implements GameScene {
     if (!this.bag.length) {
       this.bag = shuffle<Passer>(['zombie', 'cat', 'saucer', 'cow', 'zombie', 'cat']);
       // The first one is always a zombie, so there's something walking straight away.
-      if (this.time < 1) this.bag.unshift('zombie');
+      if (this.time < 3) this.bag.unshift(firstPasser());
       else if (Math.random() < 0.5) this.bag.push('queen');
     }
     const i = this.bag.findIndex((k) => !this.walkers.some((w) => w.kind === k));
@@ -381,8 +434,29 @@ export class TitleScene implements GameScene {
       heading: 0,
       t: Math.random() * 10,
       scared: 0,
+      blob: new THREE.Mesh(BLOB_GEO, this.blobMat),
+      lift: 0,
+      seed: Math.random() * 100,
     };
-    w.obj.position.set(w.x, path.y, path.z);
+    if (path.y === 0 && !made.person) {
+      // Measure it standing upright, then lift it so its feet (or the bottom of the cat's saucer) touch the sand.
+      w.obj.position.set(0, 0, 0);
+      w.obj.rotation.set(0, 0, 0);
+      w.obj.updateMatrixWorld(true);
+      const box = new THREE.Box3();
+      w.obj.traverseVisible((x) => {
+        const m = x as THREE.Mesh;
+        if (m.isMesh) box.union(TMP_BOX.setFromObject(m, true));
+      });
+      // A little extra for the ones that tip and lean as they go.
+      if (!box.isEmpty()) w.lift = -box.min.y + (kind === 'cat' ? 0.22 : 0.03);
+    }
+    w.blob.scale.set(path.blob, path.blob * (kind === 'cow' ? 0.6 : 1), 1);
+    w.blob.rotation.x = -Math.PI / 2;
+    w.blob.position.set(w.x, 0.05, path.z);
+    w.blob.renderOrder = 1;
+    this.scene.add(w.blob);
+    w.obj.position.set(w.x, path.y + w.lift, path.z);
     w.heading = (dir * Math.PI) / 2;
     w.obj.rotation.y = w.heading;
     castShadows(w.obj, quality.profile.shadows);
@@ -425,11 +499,12 @@ export class TitleScene implements GameScene {
     const fast = w.scared > 0 ? 3.2 : 1;
     const o = w.obj;
     let speed = path.speed * fast;
+    let zOff = 0;
     switch (w.kind) {
       case 'zombie': {
         // A lurching shamble: surge, stall, lean.
         speed *= 0.45 + 0.75 * Math.abs(Math.sin(w.t * 2.3));
-        o.position.y = Math.abs(Math.sin(w.t * 4.6)) * 0.08;
+        o.position.y = w.lift + Math.abs(Math.sin(w.t * 4.6)) * 0.08;
         o.rotation.z = Math.sin(w.t * 2.3) * 0.12;
         o.rotation.x = 0.12 + Math.sin(w.t * 4.6) * 0.04;
         const arm = Math.sin(w.t * 4.6) * 0.3;
@@ -445,7 +520,7 @@ export class TitleScene implements GameScene {
       case 'cat': {
         // Bouncy hops.
         const hop = Math.abs(Math.sin(w.t * 5.5));
-        o.position.y = path.y + hop * (w.scared > 0 ? 2.2 : 0.9);
+        o.position.y = w.lift + hop * (w.scared > 0 ? 2.2 : 0.9);
         o.rotation.x = Math.cos(w.t * 5.5) * 0.15;
         o.rotation.y = w.scared > 0 ? o.rotation.y + dt * 14 : w.heading;
         break;
@@ -455,18 +530,29 @@ export class TitleScene implements GameScene {
         o.rotation.z = Math.sin(w.t * 1.7) * 0.08;
         o.rotation.y += dt * (w.scared > 0 ? 6 : 0.6);
         break;
-      case 'cow':
-        o.position.y = Math.abs(Math.sin(w.t * 3)) * 0.05;
-        o.rotation.z = Math.sin(w.t * 3) * 0.03;
-        if (w.scared > 0) o.position.y += Math.abs(Math.sin(w.t * 9)) * 0.6;
+      case 'cow': {
+        // The flying cow: drifts up and down, wobbles in and out, slows and even backs up now and then,
+        // and lazily turns and rolls. It stays in its own lane (clear of cacti and the others) and well off the ground.
+        const t = w.t + w.seed;
+        o.position.y = w.lift + COW_FLOOR + 1.6 + Math.sin(t * 0.55) * 1.3 + Math.sin(t * 1.37) * 0.5 + (w.scared > 0 ? (1.2 - w.scared) * 3 : 0);
+        o.rotation.z = Math.sin(t * 0.6) * 0.45;
+        o.rotation.x = Math.sin(t * 0.83) * 0.25;
+        o.rotation.y = w.heading + Math.sin(t * 0.31) * 1.3 + (w.scared > 0 ? (1.2 - w.scared) * 6 : 0);
+        speed *= 0.25 + 1.1 * Math.sin(t * 0.4) ** 2 - 0.35 * Math.max(0, Math.sin(t * 0.17));
+        zOff = Math.sin(t * 0.47) * 0.9;
+        // Its shadow fades and spreads the higher it goes.
+        w.blob.scale.set(path.blob * 1.3, path.blob * 0.8, 1);
         break;
+      }
       case 'queen':
         w.person?.update(dt * fast);
         break;
     }
     w.x += w.dir * speed * dt;
     o.position.x = w.x;
-    o.position.z = path.z;
+    o.position.z = path.z + zOff;
+    w.blob.position.z = path.z + zOff;
+    w.blob.position.x = w.x;
     if ((w.x - w.end) * w.dir > 0) this.remove(w);
   }
 
@@ -486,6 +572,7 @@ export class TitleScene implements GameScene {
   }
 
   private remove(w: Walker): void {
+    this.scene.remove(w.blob);
     this.scene.remove(w.obj);
     disposeTree(w.obj);
     this.walkers = this.walkers.filter((x) => x !== w);
@@ -540,7 +627,8 @@ export class TitleScene implements GameScene {
     this.disposed = true;
     for (const w of [...this.walkers]) this.remove(w);
     this.puffTex.dispose();
-    this.backdrop.dispose();
+    this.blobMat.map?.dispose();
+    this.blobMat.dispose();
     this.atmosphere.dispose();
     disposeTree(this.scene);
   }
@@ -586,4 +674,24 @@ function signCanvas(text: string, sub: string): HTMLCanvasElement {
   g.font = '40px system-ui, sans-serif';
   g.fillText(sub, 256, 150);
   return c;
+}
+
+/** A soft round shadow (black in the middle, fading out), for under the passers-by. */
+function blobTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d')!;
+  const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0, 'rgba(255,255,255,1)');
+  grad.addColorStop(0.5, 'rgba(255,255,255,0.6)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(c);
+}
+
+/** Testing: ?title=cow (or cat, saucer, queen) makes that one come by first. */
+function firstPasser(): Passer {
+  const k = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('title');
+  return k && k in PATHS ? (k as Passer) : 'zombie';
 }

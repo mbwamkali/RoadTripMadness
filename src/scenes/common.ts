@@ -584,7 +584,8 @@ function profile(width: number, pts: [number, number][]): THREE.BufferGeometry {
 }
 
 /** A sprite with text drawn on it, for road signs. */
-export function textSprite(text: string, sub = '', bg = '#1f6b3a'): THREE.Sprite {
+/** The rounded sign picture behind textSprite and roadside board signs: a title over an optional smaller line. */
+export function signTexture(text: string, sub = '', bg = '#1f6b3a'): THREE.CanvasTexture {
   const c = document.createElement('canvas');
   c.width = 512;
   c.height = 192;
@@ -599,14 +600,21 @@ export function textSprite(text: string, sub = '', bg = '#1f6b3a'): THREE.Sprite
   g.fillStyle = '#ffffff';
   g.textAlign = 'center';
   g.font = 'bold 60px system-ui, sans-serif';
-  g.fillText(text.slice(0, 18), 256, sub ? 92 : 115);
+  // Long names squeeze to fit instead of running off the edge.
+  g.fillText(text.slice(0, 26), 256, sub ? 92 : 115, 460);
   if (sub) {
     g.font = '40px system-ui, sans-serif';
-    g.fillText(sub.slice(0, 26), 256, 150);
+    g.fillText(sub.slice(0, 34), 256, 150, 460);
   }
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
-  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthWrite: false }));
+  return tex;
+}
+
+export function textSprite(text: string, sub = '', bg = '#1f6b3a'): THREE.Sprite {
+  // Writes depth (cut out at the rounded corners) so the shading pass on High
+  // doesn't paint the shadow of whatever stands behind it across the words.
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: signTexture(text, sub, bg), alphaTest: 0.5 }));
   s.scale.set(8, 3, 1);
   return s;
 }

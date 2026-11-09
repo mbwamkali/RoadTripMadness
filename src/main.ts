@@ -1862,6 +1862,11 @@ function showTown(stop: Stop): void {
         const ny = (py: number) => 1 - (py / H) * 2;
         return { left: -0.98, right: beside ? nx(r.left - 6) : 0.98, top: ny(top), bottom: beside ? -0.96 : ny(r.top - 4) };
       },
+      fade: () => {
+        const f = h('div', { class: 'door-fade' });
+        ui().append(f);
+        setTimeout(() => f.remove(), 700);
+      },
       bump: () => {
         invEl.classList.remove('bump');
         void invEl.offsetWidth;

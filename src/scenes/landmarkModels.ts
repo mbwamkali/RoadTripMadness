@@ -4,7 +4,8 @@ import type { Path } from '../geo/geo';
 import { LANDMARK_TITLES, type Landmark } from '../game/landmarks';
 import type { BiomeId } from '../game/biomes';
 import { hashString, makeRng, range } from '../game/rng';
-import { textSprite, to3 } from './common';
+import { to3 } from './common';
+import { boardSign } from './roadside';
 import { hdBuilding, type HdBuilding } from './hdBuildings';
 
 /**
@@ -128,9 +129,9 @@ function buildRiver(l: Landmark, path: Path, half = ROAD_HALF): THREE.Group {
   }
   // Blue river name sign before the bridge.
   const sf = frame(path, l.at - span / 2 - 30);
-  const sign = textSprite(l.name, '', '#2a5f9e');
-  sign.position.copy(to3(sf.p).addScaledVector(sf.right, half + 4)).setY(4.5);
-  sign.scale.set(7, 2.6, 1);
+  const sign = boardSign(l.name, '', '#2a5f9e', 7, 2.6, 3.2);
+  sign.position.copy(to3(sf.p).addScaledVector(sf.right, half + 4)).setY(0);
+  sign.rotation.y = Math.atan2(-sf.fwd.x, -sf.fwd.z);
   g.add(sign);
   return g;
 }
@@ -771,12 +772,30 @@ function buildRoadSign(l: Landmark): THREE.Object3D {
   return g;
 }
 
+/** How far before a landmark its brown sign stands. */
+const POI_LEAD = 70;
+const SIGN_KINDS = new Set<Landmark['kind']>(['citysign', 'stateline', 'roadsign', 'billboard']);
+const NO_POI = new Set<Landmark['kind']>(['citysign', 'stateline', 'roadsign', 'billboard', 'mountains', 'watertower', 'windmill', 'farmstead']);
+
+/**
+ * Where along the road a landmark puts writing people should read: its brown
+ * sign, or the landmark itself when it is a sign or billboard. Null for none.
+ * Poles and posts keep clear of these so they never stand in front of the words.
+ */
+export function landmarkSignAt(l: Landmark): number | null {
+  if (SIGN_KINDS.has(l.kind)) return l.at;
+  // The blue river sign stands 50 to 70 before the water, on the right.
+  if (l.kind === 'river') return l.at - 60;
+  if (NO_POI.has(l.kind)) return null;
+  return Math.max(0, l.at - POI_LEAD);
+}
+
 /** Brown "point of interest" sign that announces a landmark ahead. */
 function poiSign(l: Landmark, path: Path, edge = ROAD_HALF): THREE.Object3D {
-  const f = frame(path, Math.max(0, l.at - 70));
-  const sign = textSprite(l.name, LANDMARK_TITLES[l.kind], '#6b3f1f');
-  sign.position.copy(to3(f.p).addScaledVector(f.right, (l.side > 0 ? 1 : -1) * (edge + 4))).setY(4.5);
-  sign.scale.set(7, 2.6, 1);
+  const f = frame(path, Math.max(0, l.at - POI_LEAD));
+  const sign = boardSign(l.name, LANDMARK_TITLES[l.kind], '#6b3f1f', 7, 2.6, 3.2);
+  sign.position.copy(to3(f.p).addScaledVector(f.right, (l.side > 0 ? 1 : -1) * (edge + 4))).setY(0);
+  sign.rotation.y = Math.atan2(-f.fwd.x, -f.fwd.z);
   return sign;
 }
 
@@ -839,8 +858,8 @@ export function buildLandmark(l: Landmark, path: Path, edgeAt: (d: number) => nu
   // Mountains, hills and mesas never sit on the road, even where it bends toward them.
   if (big) keepOffRoad(model, path, l.at, right.clone().multiplyScalar(l.side), edgeAt(l.at));
   out.add(model);
-  if (l.kind !== 'citysign' && l.kind !== 'stateline' && l.kind !== 'roadsign' && l.kind !== 'billboard' && l.kind !== 'mountains' && l.kind !== 'watertower' && l.kind !== 'windmill' && l.kind !== 'farmstead') {
-    out.add(poiSign(l, path, edgeAt(Math.max(0, l.at - 70))));
+  if (!NO_POI.has(l.kind)) {
+    out.add(poiSign(l, path, edgeAt(Math.max(0, l.at - POI_LEAD))));
   }
   return out;
 }

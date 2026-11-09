@@ -2278,6 +2278,11 @@ body.kid .howto-tip b {
 .title-bar .gap {
   flex: 1;
 }
+/* Testing only: the speed readout and the Test badge sit at the top middle; keep the icons clear of them. */
+body.perf-on .screen.title > .title-bar,
+body.devp-on .screen.title > .title-bar {
+  margin-top: 72px;
+}
 .btn.icon-btn {
   display: flex;
   flex-direction: column;
@@ -2458,4 +2463,19 @@ body.kid .howto-tip b {
 /* Test trip start card (?test=...): clear of the 🛠 test button at the top. */
 .screen.test-start {
   padding-top: calc(env(safe-area-inset-top) + 72px);
+}
+
+/* Stepping through a building's door: a quick fade to dark and back. */
+.door-fade {
+  position: fixed;
+  inset: 0;
+  background: #000;
+  pointer-events: none;
+  z-index: 5;
+  animation: door-fade 0.65s ease-in-out forwards;
+}
+@keyframes door-fade {
+  0% { opacity: 0; }
+  60% { opacity: 0.92; }
+  100% { opacity: 0; }
 }
