@@ -375,16 +375,16 @@ export function repair(s: GameState): ActionResult {
 type Loot = Partial<Inventory>;
 
 const LOOT: Record<PlaceKind, (rng: Rng) => Loot> = {
-  pumps: (r) => ({ fuel: rangeInt(r, 5, 25) }),
+  pumps: (r) => ({ fuel: rangeInt(r, 5, 25), bullets: rangeInt(r, 0, 10) }),
   garage: (r) => ({ scrap: rangeInt(r, 4, 14), fuel: rangeInt(r, 0, 8) }),
   grocery: (r) => ({ cash: rangeInt(r, 5, 30), catnip: r() < 0.4 ? 1 : 0 }),
-  hardware: (r) => ({ scrap: rangeInt(r, 3, 10), shells: rangeInt(r, 0, 4) }),
-  gunshop: (r) => ({ bullets: rangeInt(r, 20, 60), shells: rangeInt(r, 2, 8) }),
+  hardware: (r) => ({ scrap: rangeInt(r, 3, 10), shells: rangeInt(r, 0, 4), bullets: rangeInt(r, 10, 25) }),
+  gunshop: (r) => ({ bullets: rangeInt(r, 30, 70), shells: rangeInt(r, 2, 8) }),
   pharmacy: (r) => ({ cash: rangeInt(r, 10, 40), catnip: rangeInt(r, 0, 2) }),
-  police: (r) => ({ bullets: rangeInt(r, 15, 40), shells: rangeInt(r, 0, 6) }),
+  police: (r) => ({ bullets: rangeInt(r, 25, 50), shells: rangeInt(r, 0, 6) }),
   junkyard: (r) => ({ scrap: rangeInt(r, 8, 20) }),
   barn: (r) => ({ fuel: rangeInt(r, 0, 15), catnip: rangeInt(r, 0, 3), scrap: rangeInt(r, 0, 5) }),
-  motel: (r) => ({ cash: rangeInt(r, 10, 35), bullets: rangeInt(r, 0, 15) }),
+  motel: (r) => ({ cash: rangeInt(r, 10, 35), bullets: rangeInt(r, 10, 25) }),
 };
 
 export const PLACE_TITLES: Record<PlaceKind, string> = {
