@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { blankBack } from './materials';
 import { modelsWanted } from './models';
 import type { PlaceKind } from '../game/stops';
 import { loadStats } from '../game/loadStats';
@@ -31,7 +32,7 @@ export const DOORS: Partial<Record<HdBuilding, { turn: number; x: number }>> = {
   grocery: { turn: 0, x: -0.02 },
   hardware: { turn: 0, x: -0.16 },
   supply: { turn: 0, x: 0.1 },
-  garage: { turn: 0, x: 0 },
+  garage: { turn: Math.PI / 2, x: 0.2 }, // its plain side door, not the roll-up
   junkyard: { turn: 0, x: 0.02 },
   barn: { turn: 0, x: 0 },
 };
@@ -192,12 +193,12 @@ export function shopSign(text: string, color: string, w: number): THREE.Mesh {
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.anisotropy = 4;
-    mat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide, toneMapped: false });
+    mat = new THREE.MeshBasicMaterial({ map: tex, toneMapped: false });
     mat.userData.shared = true;
     signCache.set(key, mat);
   }
   const geo = new THREE.PlaneGeometry(w, w / 4);
-  const m = new THREE.Mesh(geo, mat);
+  const m = blankBack(new THREE.Mesh(geo, mat));
   m.name = 'sign';
   return m;
 }
@@ -221,6 +222,44 @@ export function placeDoor(place: PlaceKind, b: THREE.Object3D): { x: number; z: 
   RAY.set(new THREE.Vector3(x, s.y + 2, z + 0.25), new THREE.Vector3(0, -1, 0));
   const step = RAY.intersectObjects(b.children.filter((o) => o.name !== 'sign'), true).find((h) => h.point.y < 1.6);
   return { x, z: Math.min(z, s.z / 2), y: step ? Math.max(0, step.point.y) : 0 };
+}
+
+/**
+ * The model's own door, as a flat leaf that can swing: a grid over the door
+ * (w by h, its bottom middle at `at`) whose every point takes its picture from
+ * the wall straight behind it. Null if the wall there has no picture.
+ */
+export function doorSkin(b: THREE.Object3D, at: { x: number; z: number; y: number }, w: number, h: number): THREE.Mesh | null {
+  b.updateMatrixWorld(true);
+  const parts = b.children.filter((o) => o.name !== 'sign');
+  const nx = 8, ny = 12;
+  const geo = new THREE.PlaneGeometry(w, h, nx, ny);
+  const pos = geo.attributes.position;
+  const uv = geo.attributes.uv;
+  const maps = new Map<THREE.Texture, number>();
+  let mat: THREE.MeshStandardMaterial | null = null;
+  let missed = 0;
+  for (let i = 0; i < pos.count; i++) {
+    const x = at.x + pos.getX(i);
+    const y = at.y + h / 2 + pos.getY(i);
+    RAY.set(new THREE.Vector3(x, y, at.z + 1.5), new THREE.Vector3(0, 0, -1));
+    const hit = RAY.intersectObjects(parts, true)[0];
+    const m = (hit?.object as THREE.Mesh | undefined)?.material as THREE.MeshStandardMaterial | undefined;
+    if (!hit?.uv || !m?.map) {
+      missed++;
+      continue;
+    }
+    uv.setXY(i, hit.uv.x, hit.uv.y);
+    maps.set(m.map, (maps.get(m.map) ?? 0) + 1);
+    if (!mat || (maps.get(m.map) ?? 0) > (maps.get(mat.map!) ?? 0)) mat = m;
+  }
+  if (!mat || missed > pos.count / 3) {
+    geo.dispose();
+    return null;
+  }
+  const leaf = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: mat.map, roughness: 0.8, side: THREE.DoubleSide }));
+  leaf.castShadow = true;
+  return leaf;
 }
 
 /**

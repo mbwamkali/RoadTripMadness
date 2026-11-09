@@ -1,6 +1,6 @@
 import type { BossKind } from '../game/combat';
 import * as THREE from 'three';
-import { lit } from './materials';
+import { blankBack, lit } from './materials';
 import { Path, type Vec2 } from '../geo/geo';
 import { CRUISE_SPEED, postedLimit, realKmAt } from '../geo/route';
 import { advance, damage, fuelPerUnit, upcomingStop, type GameState } from '../game/state';
@@ -24,6 +24,7 @@ import { STOP_TITLES, type Stop } from '../game/stops';
 import { hashString, makeRng, pick, type Rng } from '../game/rng';
 import { ANNOUNCED, roadAt, type Landmark } from '../game/landmarks';
 import { interstateNumber, latLngAt, stateMap } from '../geo/states';
+import { person, RIDE_POSE, type Person } from './people';
 import { castShadows, disposeTree, makeAsphaltTexture, makeObstacle, makeRide, makeStripeTexture, makeTrafficVehicle, makeRoadTexture, setBlinkers, to3, type GameScene } from './common';
 import { classAt, crossSectionAt, isDivided, PROFILES, roadSegments, SPEED, urbanZones, type CrossSection, type RoadClass, type RoadSegment } from '../game/roads';
 import { buildLandmark, landmarkSignAt, waterTexture } from './landmarkModels';
@@ -223,6 +224,10 @@ export function extendPath(path: Path, extra: number): Path {
 /** Game units per second for each mph (65 mph = cruise speed). */
 export const UNITS_PER_MPH = CRUISE_SPEED / CRUISE_MPH;
 
+/** The seated player on the motorcycle: height, and how high the feet start so the seat is under them. */
+const RIDER_HEIGHT = 1.6;
+const RIDER_SEAT_Y = 0.38;
+
 export class DriveScene implements GameScene {
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(60, 1, 0.5, 2500);
@@ -306,6 +311,8 @@ export class DriveScene implements GameScene {
   private turning: { stop: Stop; t: number; from: THREE.Vector3; mid: THREE.Vector3; to: THREE.Vector3 } | null = null;
   private stopping = false;
   private clock = 0;
+  /** Frames since the motorcycle last looked for the rigged rider. */
+  private riderTries = 0;
   private rageRng: Rng;
   private structures: Structure[];
   /** Roads crossing the trip (overpasses and flat crossings), see game/crossings.ts. */
@@ -902,8 +909,35 @@ export class DriveScene implements GameScene {
     this.placeCar(true);
   }
 
+  /**
+   * On a motorcycle, the player you walk around town as rides it too (same
+   * model, sitting, red helmet). Swapped in once the rigged person loads;
+   * the code rider stays on Low or until then.
+   */
+  private seatRider(dt: number): void {
+    const rider = this.car.getObjectByName('rider');
+    if (!rider) return;
+    let p = rider.userData.person as Person | undefined;
+    if (!p && !rider.userData.tried) {
+      if (++this.riderTries % 30 !== 0) return;
+      const made = person('player_walker', RIDER_HEIGHT, RIDE_POSE);
+      if (!made) return;
+      p = made;
+      rider.userData.tried = true;
+      for (const c of rider.children) c.visible = false;
+      p.play('idle', 0.6);
+      p.addHelmet();
+      p.obj.position.set(0, RIDER_SEAT_Y, 0.14);
+      castShadows(p.obj, this.shadows);
+      rider.add(p.obj);
+      rider.userData.person = p;
+    }
+    if (p && rider.visible) p.update(dt);
+  }
+
   update(dt: number): void {
     this.clock += dt;
+    this.seatRider(dt);
     const sig = this.signalling;
     const blinkOn = Math.floor(this.clock * 3) % 2 === 0;
     setBlinkers(this.car, sig ? (sig.side === 'left' ? 'L' : 'R') : null, !!sig && blinkOn);
@@ -924,7 +958,10 @@ export class DriveScene implements GameScene {
     }
     // The clock moves every frame so dawn and dusk come on smoothly.
     this.atmosphere.set(hourOf(this.state), weatherAt(this.state));
-    this.atmosphere.update(dt, this.camera, this.car.position);
+    // In town on foot, the shadows close in around you and sharpen.
+    const near = this.town?.shadowFocus ?? null;
+    this.atmosphere.closeShadows(near ? 24 : null);
+    this.atmosphere.update(dt, this.camera, near ?? this.car.position);
     this.backdrop.follow(this.camera);
     const water = waterTexture();
     water.offset.y -= dt * 0.25;
@@ -2483,10 +2520,10 @@ function mileMarker(mile: number): THREE.Group {
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.userData.chunkOwned = true;
-  const mat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide });
+  const mat = new THREE.MeshBasicMaterial({ map: tex });
   mat.userData.chunkOwned = true;
   const post = new THREE.Group();
-  const face = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 1.2), mat);
+  const face = blankBack(new THREE.Mesh(new THREE.PlaneGeometry(0.6, 1.2), mat));
   face.position.y = 1.6;
   const stick = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.2, 0.08), STICK_MAT);
   stick.position.y = 0.6;

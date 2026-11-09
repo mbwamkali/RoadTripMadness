@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { PlaceKind } from '../game/stops';
 import { lit } from '../scenes/materials';
-import { placeBuilding, placeDoor, fitted, HD_HOUSES, PLACE_BUILDINGS } from '../scenes/hdBuildings';
+import { doorSkin, placeBuilding, placeDoor, fitted, HD_HOUSES, PLACE_BUILDINGS } from '../scenes/hdBuildings';
 import { modelMesh, type ModelName } from '../scenes/models';
 import { textSprite } from '../scenes/common';
 import { makeRng } from '../game/rng';
@@ -289,6 +289,8 @@ export function buildTownWorld(layout: TownLayout, mats: TownMaterials, seed: nu
     }
     // The building's own front door (its model's door, turned to face the street), found while it stands at the origin.
     const dk = hd ? placeDoor(lot.place, hd) : { x: 0, z: size.z / 2, y: 0 };
+    // Its door's own picture, for the leaf that swings open (sampled here too, before the building moves).
+    const skin = hd ? doorSkin(hd, dk, DOOR_W, DOOR_H) : null;
     const back = LOT_NEAR + LOT_DEPTH - size.z / 2 - 1.5;
     shell.position.copy(at(back, 0));
     shell.rotation.y = yawToStreet;
@@ -304,7 +306,7 @@ export function buildTownWorld(layout: TownLayout, mats: TownMaterials, seed: nu
     const threshold = local(dk.x, dk.z + 0.35);
     const inside = local(dk.x, Math.min(dk.z, size.z / 2) - 1.6);
     // The door you go in by: a dark opening and a door that swings out (hidden until you use it).
-    const doorway = doorwayAt(mat);
+    const doorway = doorwayAt(mat, skin);
     doorway.position.copy(local(dk.x, dk.z + 0.04, dk.y));
     doorway.rotation.y = yawToStreet;
     g.add(doorway);
@@ -363,6 +365,7 @@ export function buildTownWorld(layout: TownLayout, mats: TownMaterials, seed: nu
       // Face the building: the last step points at the door.
       park.push(at(front - 5, -3.5));
     }
+    lotDressing(g, at, fwd, lot.place === 'pumps' ? null : front, mat);
     if (lot.place === 'motel') {
       // A pool out front: the kid's clue it's a motel, with the bed inside.
       const rim = box(7, 0.35, 4.6, mat({ color: 0xf4f1ea }));
@@ -474,26 +477,82 @@ export function buildTownWorld(layout: TownLayout, mats: TownMaterials, seed: nu
  * The door you walk through: a dark opening on the wall and a wooden door hinged at its left
  * edge ('doorPanel', rotation.y 0 = shut, about -1.7 = swung out). Hidden until it's used.
  */
-function doorwayAt(mat: Mat): THREE.Group {
+const DOOR_W = 1.3;
+const DOOR_H = 2.3;
+
+function doorwayAt(mat: Mat, skin: THREE.Mesh | null): THREE.Group {
   const g = new THREE.Group();
   g.name = 'doorway';
   g.visible = false;
-  const W = 1.3;
-  const H = 2.3;
+  const W = DOOR_W;
+  const H = DOOR_H;
   const hole = new THREE.Mesh(new THREE.PlaneGeometry(W, H), new THREE.MeshBasicMaterial({ color: 0x0b0806 }));
-  hole.position.y = H / 2 + 0.05;
+  hole.position.set(0, H / 2 + 0.05, -0.02);
   g.add(hole);
   const panel = new THREE.Group();
   panel.name = 'doorPanel';
   panel.position.set(-W / 2, 0, 0.03);
-  const leaf = box(W, H, 0.08, mat({ color: 0x6a4428, roughness: 0.7 }));
-  leaf.position.set(W / 2, H / 2 + 0.05, 0);
+  // The model's own door when there is one (so it's that door that opens), else plain wood.
+  const leaf = box(W, H, skin ? 0.04 : 0.08, mat({ color: skin ? 0x2a1f18 : 0x6a4428, roughness: 0.7 }));
+  leaf.position.set(W / 2, H / 2 + 0.05, skin ? -0.021 : 0);
   panel.add(leaf);
+  if (skin) {
+    skin.position.set(W / 2, H / 2 + 0.05, 0.002);
+    panel.add(skin);
+  }
   const knob = box(0.1, 0.1, 0.14, mat({ color: 0xd8b04a, metalness: 0.6, roughness: 0.3 }));
   knob.position.set(W - 0.18, 1.15, 0.06);
-  panel.add(knob);
+  if (!skin) panel.add(knob);
   g.add(panel);
   return g;
+}
+
+/**
+ * What makes a lot read as a parking lot: painted stalls where the car pulls up
+ * (not at the gas station, which has its pumps), low curbs down its sides, a
+ * lamp post at the street corner and a trash can by the building.
+ */
+function lotDressing(
+  g: THREE.Group,
+  at: (o: number, a: number, h?: number) => THREE.Vector3,
+  fwd: THREE.Vector3,
+  front: number | null,
+  mat: Mat,
+): void {
+  const yaw = Math.atan2(fwd.x, fwd.z);
+  const paint = mat({ color: 0xf2f0e8, roughness: 0.8 });
+  const concrete = mat({ color: 0xc9c4b8, roughness: 0.9 });
+  const put = (m: THREE.Mesh | THREE.Group, o: number, a: number, h: number) => {
+    m.position.copy(at(o, a, h));
+    m.rotation.y = yaw;
+    g.add(m);
+    return m;
+  };
+  if (front != null) {
+    // Stalls 3 m wide either side of where the car stops (a = -3.5), 5 m deep, nose to the building.
+    for (const a of [-11, -8, -5, -2, 1]) put(box(5, 0.02, 0.12, paint), front - 5, a, 0.175);
+    // Their back line, toward the street.
+    put(box(0.12, 0.02, 12, paint), front - 7.5, -5, 0.175);
+  }
+  // Curbs down both sides of the lot.
+  for (const a of [-LOT_ALONG / 2 + 0.2, LOT_ALONG / 2 - 0.2]) put(box(LOT_DEPTH - 1, 0.22, 0.35, concrete), LOT_NEAR + LOT_DEPTH / 2, a, 0.27);
+  // A lamp post at the street corner, away from the driveway, its light reaching over the lot.
+  const lamp = new THREE.Group();
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.12, 5.2, 8), mat({ color: 0x4a4f55, metalness: 0.5, roughness: 0.5 }));
+  pole.position.y = 2.6;
+  pole.castShadow = true;
+  const head = box(1.1, 0.18, 0.5, mat({ color: 0x3a3f45 }));
+  head.position.set(0.4, 5.2, 0);
+  const bulb = box(0.8, 0.05, 0.36, mat({ color: 0xfff1c8, emissive: 0xffe2a0, emissiveIntensity: 0.8 }));
+  bulb.position.set(0.4, 5.1, 0);
+  lamp.add(pole, head, bulb);
+  put(lamp as unknown as THREE.Mesh, LOT_NEAR + 1, LOT_ALONG / 2 - 1.2, 0.16);
+  // A green trash can near the building's corner.
+  if (front != null) {
+    const can = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.3, 0.95, 12), mat({ color: 0x2f6b3f, roughness: 0.6 }));
+    can.castShadow = true;
+    put(can, front - 1.2, LOT_ALONG / 2 - 3, 0.64);
+  }
 }
 
 /** Simple building for Low graphics or before the models load: walls, roof, door, the place's colour. */
@@ -756,10 +815,12 @@ function furnish(g: THREE.Group, place: PlaceKind, size: THREE.Vector3, mat: Mat
   const drum = (x: number, z: number, c: number) => add(new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 1.2, 12), mat({ color: c, metalness: 0.3 })), x, 0.76, z);
 
   if (place === 'motel') {
-    add(box(3.2, 0.7, 4.4, mat({ color: 0x6b4a2a })), -1, 0.5, -d / 2 + 2.6);
-    add(box(3.0, 0.4, 4.2, mat({ color: 0xffffff })), -1, 1.0, -d / 2 + 2.6);
-    add(box(3.05, 0.45, 2.8, mat({ color: 0x5b9fe8 })), -1, 1.05, -d / 2 + 3.4);
-    for (const x of [-1.7, -0.3]) add(box(1.1, 0.35, 0.8, mat({ color: 0xffffff })), x, 1.3, -d / 2 + 1.0);
+    // The bed (its parts are named 'bed': tap it to rest).
+    const bed = (m: THREE.Object3D, x: number, y: number, z: number) => ((add(m, x, y, z).name = 'bed'), m);
+    bed(box(3.2, 0.7, 4.4, mat({ color: 0x6b4a2a })), -1, 0.5, -d / 2 + 2.6);
+    bed(box(3.0, 0.4, 4.2, mat({ color: 0xffffff })), -1, 1.0, -d / 2 + 2.6);
+    bed(box(3.05, 0.45, 2.8, mat({ color: 0x5b9fe8 })), -1, 1.05, -d / 2 + 3.4);
+    for (const x of [-1.7, -0.3]) bed(box(1.1, 0.35, 0.8, mat({ color: 0xffffff })), x, 1.3, -d / 2 + 1.0);
     add(box(0.8, 0.8, 0.8, mat({ color: 0x6b4a2a })), 1.4, 0.56, -d / 2 + 0.9);
     add(box(0.6, 0.6, 0.6, mat({ color: 0xffe08a, emissive: 0xffd070, emissiveIntensity: 0.6 })), 1.4, 1.26, -d / 2 + 0.9);
     add(box(3.6, 0.03, 2.4, mat({ color: 0xd16a8a })), -1, 0.18, 0.8);

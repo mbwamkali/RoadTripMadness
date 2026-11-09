@@ -275,6 +275,26 @@ export class Atmosphere {
     this.envAge = 0;
   }
 
+  /**
+   * Close-up shadows (in town, on foot): the sun's shadow covers only `range` around the focus, so
+   * small things (box lids, awnings, the walker) get crisp shadows that touch the ground.
+   * null goes back to the road's wide shadows.
+   */
+  closeShadows(range: number | null): void {
+    const cam = this.sun.shadow.camera;
+    if (!this.sun.castShadow) return;
+    if (this.wideRange == null) this.wideRange = cam.right;
+    const r = range ?? this.wideRange;
+    if (cam.right === r) return;
+    cam.left = cam.bottom = -r;
+    cam.right = cam.top = r;
+    cam.updateProjectionMatrix();
+    // The push away from surfaces scales with the texel size: big on the road, small up close.
+    this.sun.shadow.normalBias = range == null ? 0.12 : 0.03;
+    this.sun.shadow.bias = range == null ? -0.0005 : -0.0002;
+  }
+  private wideRange: number | null = null;
+
   /** Puts the shadow-casting sun over a point (the car) so its shadows stay sharp nearby. */
   follow(at: THREE.Vector3): void {
     this.sun.target.position.copy(at);

@@ -5,6 +5,7 @@ import {
   damage,
   openCrate,
   repair,
+  restAtMotel,
   scavengeNoise,
   startScavenge,
   tankSize,
@@ -46,6 +47,8 @@ export interface TownHooks {
   say(text: string, speak?: boolean): void;
   /** A quick fade to dark and back, while you step through a door. */
   fade?(): void;
+  /** Lights out at the motel: the moon or sun and Zzz over the screen, then `done`. */
+  sleep?(wokeAtNight: boolean, done: () => void): void;
   sfx: { coin(): void; bad(): void; click(): void; shot?(): void };
   changed(): void;
   save(): void;
@@ -164,6 +167,8 @@ export class TownPlay {
       sp.facing = sp.facing.clone().transformDirection(world.group.matrixWorld);
     }
     this.walkerRig = person('player_walker');
+    // Off the motorcycle you keep its red helmet on, so it's clearly the same rider.
+    if (host.car.getObjectByName('rider')) this.walkerRig?.addHelmet();
     this.walker = this.walkerRig?.obj ?? codeWalker();
     this.walker.visible = false;
     host.scene.add(this.walker);
@@ -178,7 +183,7 @@ export class TownPlay {
     this.home = wait;
     this.driveCurve([car, ...this.laneIn.slice(Math.max(1, wait - 1), wait + 1)], false, () => {
       this.phase = 'street';
-      hooks.say(hooks.kid ? 'Tap a sign!' : `Welcome to ${world.layout.name}. Tap a sign to pull in.`);
+      hooks.say(hooks.kid ? 'Tap a sign!' : `Welcome to ${world.layout.name}.`); // the hint line says what to tap
       hooks.changed();
     });
     hooks.changed();
@@ -187,8 +192,60 @@ export class TownPlay {
   // ---------------------------------------------------------------- what the HUD asks
 
   /** The car or the walker is on the move (a tap on a sign waits till it stops). */
+  /** Where close-up shadows centre (you, on foot or inside); null while driving around town. */
+  get shadowFocus(): THREE.Vector3 | null {
+    return this.walker.visible ? this.walker.position : null;
+  }
+
   get busy(): boolean {
-    return !!this.move || !!this.walk || !!this.dig || !!this.doorAnim || !!this.entering;
+    return !!this.move || !!this.walk || !!this.dig || !!this.doorAnim || !!this.entering || this.resting;
+  }
+
+  /** Asleep at the motel (the Zzz picture is up). */
+  resting = false;
+
+  /** In the motel room and awake. */
+  canRest(): boolean {
+    return this.phase === 'inside' && this.at?.lot.place === 'motel' && !this.resting && !this.walk && !this.dig;
+  }
+
+  /** Rest at the motel: day turns to night (or night to day), the car gets a little fixing, and now and then zombies wait outside. */
+  rest(): void {
+    if (!this.canRest()) return;
+    const s = this.hooks.state;
+    const kid = this.hooks.kid;
+    const r = restAtMotel(s, hourOf(s), Math.random());
+    if (!r.ok) {
+      this.hooks.sfx.bad();
+      this.hooks.say(kid ? 'No money!' : r.message);
+      return;
+    }
+    this.resting = true;
+    this.hooks.changed();
+    const wake = () => {
+      this.resting = false;
+      const sp = this.at;
+      if (sp) this.roomLight(sp);
+      this.hooks.save();
+      if (r.ambush && sp) {
+        this.hooks.sfx.bad();
+        this.hooks.say(kid ? 'Zombies! Run to the car!' : r.message);
+        // Waiting by the door: fewer and slower for the kid.
+        const n = kid ? 1 : 2 + Math.min(2, Math.floor(s.threat ?? 0));
+        for (let k = 0; k < n; k++) this.spawn(sp.door.clone().addScaledVector(sp.facing, 3 + k * 1.2).add(new THREE.Vector3((k - n / 2) * 1.4, 0, 0)), true);
+      } else {
+        this.hooks.say(kid ? (r.wokeAtNight ? 'Night time!' : 'Good morning!') : r.message);
+      }
+      this.hooks.changed();
+    };
+    if (this.hooks.sleep) this.hooks.sleep(r.wokeAtNight, wake);
+    else wake();
+  }
+
+  /** The room's ceiling light matters at night; by day (roof off, in the sun) it would wash the room out. */
+  private roomLight(sp: TownSpot): void {
+    const lamp = sp.room.getObjectByName('roomLight') as THREE.PointLight | undefined;
+    if (lamp) lamp.intensity = lamp.userData.full * (1 - 0.8 * daylight(hourOf(this.hooks.state)));
   }
 
   /** Zombies awake within `r` of you (or the car, or the door you went in). */
@@ -231,11 +288,15 @@ export class TownPlay {
         return true;
       }
     }
-    if (this.phase === 'inside' && this.at && this.search) {
-      const hits = this.ray.intersectObjects(this.at.crates, true);
+    if (this.phase === 'inside' && this.at) {
+      const hits = this.search ? this.ray.intersectObjects(this.at.crates, true) : [];
       if (hits.length) {
         const i = this.at.crates.findIndex((c) => isChild(hits[0].object, c));
         if (i >= 0) this.tapCrate(i);
+        return true;
+      }
+      if (this.at.lot.place === 'motel' && this.ray.intersectObjects(beds(this.at.room), false).length) {
+        this.rest();
         return true;
       }
       return false;
@@ -400,9 +461,7 @@ export class TownPlay {
       this.host.car.visible = false;
       // The gas canopy would hide the dollhouse from above.
       showRoofs(sp, false);
-      // The room's ceiling light matters at night; by day (roof off, in the sun) it would wash the room out.
-      const lamp = sp.room.getObjectByName('roomLight') as THREE.PointLight | undefined;
-      if (lamp) lamp.intensity = lamp.userData.full * (1 - 0.8 * daylight(hourOf(this.hooks.state)));
+      this.roomLight(sp);
       this.search = startScavenge(this.hooks.state, this.storeKey(), sp.lot.place, sp.crates.length);
       for (const c of sp.crates) resetCrate(c);
       this.hooks.save();
@@ -585,7 +644,7 @@ export class TownPlay {
       this.driveHome(from, () => {
         this.phase = 'street';
         this.view = 0;
-        this.hooks.say(this.hooks.kid ? 'Tap a sign!' : 'Back on Main Street. Tap a sign to pull in.', false);
+        this.hooks.say(this.hooks.kid ? 'Tap a sign!' : 'Back on Main Street.', false);
         this.hooks.changed();
       });
     });
@@ -1333,9 +1392,12 @@ function resetCrate(c: THREE.Group): void {
 
 /** An emptied box goes dark and loses its glow; `false` puts it back as new. */
 function emptied(c: THREE.Group, on: boolean): void {
+  // An opened lid or door stands up thin: it casts no shadow (it only made a dark slab on the floor).
+  c.getObjectByName('lid')?.traverse((o) => ((o as THREE.Mesh).castShadow = !on));
   c.traverse((o) => {
     if (o.name === 'glow') {
       o.visible = !on;
+      (o as THREE.Mesh).castShadow = false;
       return;
     }
     const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
@@ -1417,3 +1479,12 @@ function codeWalker(): THREE.Group {
 }
 
 export { makeCar };
+
+/** The motel bed's parts (named 'bed' by the room's furniture). */
+function beds(room: THREE.Object3D): THREE.Object3D[] {
+  const out: THREE.Object3D[] = [];
+  room.traverse((o) => {
+    if (o.name === 'bed') out.push(o);
+  });
+  return out;
+}

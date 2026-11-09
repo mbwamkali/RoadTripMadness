@@ -333,6 +333,59 @@ export interface ActionResult {
   ambush?: boolean;
 }
 
+/** A night at the motel: price (x the trip's cash scale, about $10), car repair, and the chance zombies wait outside. */
+export const REST_PRICE = 5;
+export const REST_HEAL = 15;
+export const REST_AMBUSH = 1 / 6;
+/** Sleeping by day wakes you at 7 PM; by night, at 7 AM. */
+export const REST_WAKE_DAY = 19;
+export const REST_WAKE_NIGHT = 7;
+
+export function restCost(s: GameState): number {
+  return Math.ceil(REST_PRICE * cashScale(s));
+}
+
+export interface RestResult extends ActionResult {
+  /** Hours slept. */
+  hours: number;
+  /** Car condition put back. */
+  healed: number;
+  /** Woke after dark (the picture shows the moon). */
+  wokeAtNight: boolean;
+}
+
+/**
+ * Rests at the motel from `hour`: day turns to night or night to day. `roll`
+ * (0..1) decides whether zombies are waiting outside afterwards.
+ */
+export function restAtMotel(s: GameState, hour: number, roll: number): RestResult {
+  const price = restCost(s);
+  if (s.inv.cash < price) return { ok: false, message: `A room costs $${price}.`, hours: 0, healed: 0, wokeAtNight: false };
+  const night = hour >= REST_WAKE_DAY || hour < REST_WAKE_NIGHT;
+  let wake = night ? REST_WAKE_NIGHT : REST_WAKE_DAY;
+  let hours = (wake - hour + 24) % 24;
+  // Too close to the wake time for a real rest: sleep through to the next one.
+  if (hours < 2) {
+    hours += 12;
+    wake = wake === REST_WAKE_DAY ? REST_WAKE_NIGHT : REST_WAKE_DAY;
+  }
+  s.inv.cash -= price;
+  s.hoursSpent = (s.hoursSpent ?? 0) + hours;
+  const healed = Math.max(0, Math.min(REST_HEAL, Math.floor(maxHealth(s) - s.health)));
+  s.health += healed;
+  const ambush = roll < REST_AMBUSH;
+  const wokeAtNight = wake === REST_WAKE_DAY;
+  const when = wokeAtNight ? 'Night has fallen' : 'Good morning';
+  return {
+    ok: true,
+    hours,
+    healed,
+    wokeAtNight,
+    ambush,
+    message: ambush ? `${when}... and zombies are waiting outside!` : `${when}. You feel rested${healed ? ` and the car got a little fixing (+${healed})` : ''}.`,
+  };
+}
+
 export function buyFuel(s: GameState): ActionResult {
   const want = Math.floor(tankSize(s) - s.inv.fuel);
   if (want <= 0) return { ok: false, message: 'Your tank is already full.' };
@@ -550,7 +603,7 @@ export function buyUpgrade(s: GameState, kind: UpgradeKind): ActionResult {
   s.upgrades[kind] = level + 1;
   // New armor arrives in good shape.
   if (kind === 'armor') s.health += maxHealth(s) - before;
-  return { ok: true, message: `Installed ${UPGRADES[kind].name} level ${level + 1}. ${UPGRADES[kind].describe(level + 1)}.` };
+  return { ok: true, message: `Installed ${UPGRADES[kind].name} level ${level + 1}. Now: ${UPGRADES[kind].describe(level + 1)}.` };
 }
 
 // ---------------------------------------------------------------- saving

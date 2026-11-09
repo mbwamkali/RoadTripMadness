@@ -33,6 +33,7 @@ import {
   newGame,
   PLACE_TITLES,
   repairCost,
+  restCost,
   saveGame,
   tankSize,
   type ActionResult,
@@ -1777,13 +1778,15 @@ function showTown(stop: Stop): void {
     // The buttons change only when where you are or what's around does.
     const near = p.nearZombies() > 0;
     const at = p.at?.lot.place;
-    const key = [p.phase, p.view, at, near, p.filling > 0, p.canFill(), repairCost(s).hp > 0, p.cratesLeft(), s.inv.cash].join('|');
+    const key = [p.phase, p.view, at, near, p.filling > 0, p.canFill(), repairCost(s).hp > 0, p.cratesLeft(), s.inv.cash, p.canRest()].join('|');
     if (key === shown) return;
     shown = key;
     const b: HTMLElement[] = [];
     let tip = '';
     const driveOn = () => button('🚗', 'Drive on', () => p.leave());
     const runOrWalk = () => button(near ? '🏃' : '🚗', near ? 'Run to the car!' : 'Back to car', () => p.backToCar(near), near);
+    // Pulling out of town: the town's last words ('Inside the motel...') shouldn't ride along onto the highway.
+    log.hidden = p.phase === 'leaving' || p.phase === 'done';
     if (p.phase === 'street') {
       tip = kid ? '👆 🪧' : 'Tap a sign to pull in.';
       if (p.viewCount > 1) b.push(button('👀', p.view === 0 ? 'Closer look' : p.view < p.viewCount - 1 ? 'Further up' : 'Whole street', () => p.nextView()));
@@ -1796,7 +1799,9 @@ function showTown(stop: Stop): void {
       }
       if (at === 'garage') {
         const cost = repairCost(s);
-        b.push(button('🔧', cost.hp ? `Fix car (${cost.scrap} scrap or $${cost.cash})` : 'Car is fine', () => p.fix(), true, cost.hp === 0));
+        // Short labels so the buttons stay one line on a phone; scrap is used first when you have it.
+        const fixLabel = !cost.hp ? 'Car is fine' : s.inv.scrap >= cost.scrap ? `Fix: ${cost.scrap} scrap` : `Fix $${cost.cash}`;
+        b.push(button('🔧', fixLabel, () => p.fix(), true, cost.hp === 0));
         b.push(button('⬆️', 'Upgrades', () => showUpgrades(s, (r) => say(r.message))));
       }
       b.push(button('🚶', 'Get out', () => p.getOut(), at !== 'pumps' && at !== 'garage'));
@@ -1809,6 +1814,8 @@ function showTown(stop: Stop): void {
       b.push(runOrWalk());
       tip = kid ? (near ? '👆 🧟' : '') : near ? 'Tap zombies to shoot them, or run for the car!' : 'Tap a building to go in, or tap the ground to walk.';
     } else if (p.phase === 'inside') {
+      // The motel: sleep till night (or morning). Tapping the bed does the same.
+      if (at === 'motel') b.push(button('🛏️', `Rest $${restCost(s)}`, () => p.rest(), !near, !p.canRest() || s.inv.cash < restCost(s)));
       b.push(button('🚪', 'Go outside', () => p.leaveBuilding(false)));
       b.push(runOrWalk());
       const left = p.cratesLeft();
@@ -1862,6 +1869,15 @@ function showTown(stop: Stop): void {
         const ny = (py: number) => 1 - (py / H) * 2;
         return { left: -0.98, right: beside ? nx(r.left - 6) : 0.98, top: ny(top), bottom: beside ? -0.96 : ny(r.top - 4) };
       },
+      sleep: (wokeAtNight, done) => {
+        // Lights out: the moon (or sun) you'll wake to and a few Zzz, no reading needed.
+        const zzz = h('div', { class: 'zzz' }, h('span', {}, '💤'), h('span', {}, 'Z'), h('span', {}, 'z'));
+        const f = h('div', { class: `sleep-fade ${wokeAtNight ? 'to-night' : 'to-day'}` }, h('div', { class: 'sky-icon' }, wokeAtNight ? '🌙' : '☀️'), zzz);
+        ui().append(f);
+        narrator.say(wokeAtNight ? 'Sleep tight. Night time.' : 'Sleep tight. Good morning!');
+        setTimeout(done, 1700);
+        setTimeout(() => f.remove(), 3000);
+      },
       fade: () => {
         const f = h('div', { class: 'door-fade' });
         ui().append(f);
@@ -1908,7 +1924,8 @@ function showUpgrades(s: GameState, say: (r: ActionResult) => void): void {
             { class: 'info' },
             h('strong', {}, u.name),
             h('span', { class: 'pips' }, '●'.repeat(level) + '○'.repeat(MAX_LEVEL - level)),
-            h('small', {}, maxed ? u.describe(level) : `Next: ${u.describe(level + 1)}`),
+            // What you have now and what the next level gives, so the card and the 'Installed' line agree.
+            h('small', {}, level > 0 ? `Now: ${u.describe(level)}` : '', level > 0 && !maxed ? h('br') : '', maxed ? '' : `Next: ${u.describe(level + 1)}`),
           ),
           h(
             'button',

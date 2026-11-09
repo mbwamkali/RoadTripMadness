@@ -2479,3 +2479,63 @@ body.devp-on .screen.title > .title-bar {
   60% { opacity: 0.92; }
   100% { opacity: 0; }
 }
+
+/* Resting at the motel: dark, the moon or sun you'll wake to, and drifting Zzz. */
+.sleep-fade {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: all;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 12px;
+  background: #0b1030;
+  animation: sleep-fade 3s ease-in-out forwards;
+}
+.sleep-fade.to-day {
+  animation-name: sleep-fade-day;
+}
+.sleep-fade .sky-icon {
+  font-size: min(28vw, 160px);
+  line-height: 1;
+  animation: sky-rise 3s ease-in-out forwards;
+}
+.sleep-fade .zzz {
+  display: flex;
+  gap: 8px;
+  font: 800 min(10vw, 56px) / 1 system-ui, sans-serif;
+  color: #dfe6ff;
+}
+.sleep-fade .zzz span {
+  animation: zzz 1.2s ease-in-out infinite;
+}
+.sleep-fade .zzz span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.sleep-fade .zzz span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+@keyframes sleep-fade {
+  0% { opacity: 0; }
+  20%, 75% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes sleep-fade-day {
+  0% { opacity: 0; background: #0b1030; }
+  20% { opacity: 1; background: #0b1030; }
+  60% { background: #f2b46a; }
+  75% { opacity: 1; background: #8fc6ee; }
+  100% { opacity: 0; background: #8fc6ee; }
+}
+@keyframes sky-rise {
+  0% { transform: translateY(40px) scale(0.8); opacity: 0; }
+  35% { opacity: 1; }
+  70% { transform: translateY(0) scale(1); }
+  100% { transform: translateY(0) scale(1); opacity: 1; }
+}
+@keyframes zzz {
+  0%, 100% { transform: translateY(0); opacity: 0.5; }
+  50% { transform: translateY(-10px); opacity: 1; }
+}

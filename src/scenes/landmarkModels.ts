@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { lit } from './materials';
+import { blankBack, lit } from './materials';
 import type { Path } from '../geo/geo';
 import { LANDMARK_TITLES, type Landmark } from '../game/landmarks';
 import type { BiomeId } from '../game/biomes';
@@ -576,7 +576,7 @@ function buildBillboard(l: Landmark, rng: () => number): THREE.Object3D {
   const bg = bgs[Math.floor(rng() * bgs.length)];
   const fg = bg === '#ffd23f' || bg === '#f4f1e8' ? '#1a1a1a' : '#ffffff';
   const tex = signTexture(wrap(l.name, 16), bg, fg);
-  const board = mesh(new THREE.PlaneGeometry(16, 8), basic(0xffffff, { map: tex, side: THREE.DoubleSide }), 0, 9, 0);
+  const board = blankBack(mesh(new THREE.PlaneGeometry(16, 8), basic(0xffffff, { map: tex }), 0, 9, 0));
   g.add(board);
   return g;
 }
@@ -649,7 +649,7 @@ function buildCitySign(l: Landmark): THREE.Object3D {
   g.add(mesh(new THREE.BoxGeometry(0.25, 4, 0.25), post, 2.6, 2, 0));
   const lines = wrap(l.name, 18);
   const tex = signTexture(lines, '#1f6b3a', '#ffffff');
-  g.add(mesh(new THREE.PlaneGeometry(6.4, 3.2), basic(0xffffff, { map: tex, side: THREE.DoubleSide }), 0, 4.6, 0.15));
+  g.add(blankBack(mesh(new THREE.PlaneGeometry(6.4, 3.2), basic(0xffffff, { map: tex }), 0, 4.6, 0.15)));
   return g;
 }
 

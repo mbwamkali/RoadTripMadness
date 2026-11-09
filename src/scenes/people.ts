@@ -64,8 +64,21 @@ export class Person {
   private actions = new Map<string, THREE.AnimationAction>();
   private current: THREE.AnimationAction | null = null;
 
-  constructor(src: Loaded, height: number, clone: (o: THREE.Object3D) => THREE.Object3D) {
+  /** Fixed turns laid on top of the moves each frame (bone, turn). */
+  private fixes: [THREE.Object3D, THREE.Quaternion][] = [];
+  private inner: THREE.Object3D;
+
+  constructor(src: Loaded, height: number, clone: (o: THREE.Object3D) => THREE.Object3D, fix?: Record<string, [number, number, number]>) {
     const inner = clone(src.scene);
+    this.inner = inner;
+    if (fix) {
+      const d = Math.PI / 180;
+      for (const [bone, [x, y, z]] of Object.entries(fix)) {
+        const b = inner.getObjectByName(bone);
+        const everyClip = src.clips.every((c) => c.tracks.some((t) => t.name === `${bone}.quaternion`));
+        if (b && everyClip) this.fixes.push([b, new THREE.Quaternion().setFromEuler(new THREE.Euler(x * d, y * d, z * d))]);
+      }
+    }
     const k = height / src.size.y;
     inner.scale.setScalar(k);
     inner.position.y = -(src.scene.userData.minY as number) * k;
@@ -85,10 +98,52 @@ export class Person {
     this.current = a;
   }
 
+  /**
+   * Puts a shiny dome helmet on the head bone (player only; sized for the
+   * walker model, whose cap brim then reads as the visor).
+   */
+  addHelmet(color = 0xc8202a): THREE.Mesh | null {
+    const head = this.inner.getObjectByName('head');
+    if (!head) return null;
+    const m = new THREE.Mesh(
+      new THREE.SphereGeometry(1, 20, 12, 0, Math.PI * 2, 0, Math.PI * 0.55),
+      new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.1 }),
+    );
+    m.name = 'helmet';
+    m.castShadow = true;
+    // Work in the model's own units (it is about 1 tall before scaling).
+    this.inner.updateMatrixWorld(true);
+    const headInner = new THREE.Matrix4().multiplyMatrices(new THREE.Matrix4().copy(this.inner.matrixWorld).invert(), head.matrixWorld);
+    const at = new THREE.Vector3().setFromMatrixPosition(headInner).add(new THREE.Vector3(-0.022, 0.14, 0));
+    const inv = new THREE.Matrix4().copy(headInner).invert();
+    const pos = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
+    inv.decompose(pos, q, sc);
+    m.position.copy(at.applyMatrix4(inv));
+    m.quaternion.copy(q);
+    m.scale.copy(sc).multiplyScalar(0.092);
+    head.add(m);
+    return m;
+  }
+
   update(dt: number): void {
     this.mixer.update(dt);
+    for (const [b, q] of this.fixes) b.quaternion.premultiply(q);
   }
 }
+
+/**
+ * The walker's rig holds the forearms bent forward with palms up, which looks
+ * like a zombie. These turns (degrees) bring the arms down to the sides.
+ */
+const POSE_FIX: Partial<Record<PersonName, Record<string, [number, number, number]>>> = {
+  player_walker: { armL: [0, 0, -20], armR: [0, 0, 20], forearmL: [70, 0, 0], forearmR: [70, 0, 0] },
+};
+
+/** The walker sitting on the motorcycle, leaning in, hands forward to the bars (play 'idle'). */
+export const RIDE_POSE: Record<string, [number, number, number]> = {
+  thighL: [-70, 0, -8], thighR: [-70, 0, 8], shinL: [75, 0, 0], shinR: [75, 0, 0],
+  spine: [25, 0, 0], armL: [-55, 0, -12], armR: [-55, 0, 12], forearmL: [0, 0, 0], forearmR: [0, 0, 0],
+};
 
 let cloneFn: ((o: THREE.Object3D) => THREE.Object3D) | null = null;
 /** Loads three's skeleton-aware clone once (a plain clone would share one skeleton). */
@@ -99,8 +154,8 @@ export async function preparePeople(): Promise<void> {
 }
 
 /** A new copy of a rigged person, or null if it isn't loaded. */
-export function person(name: PersonName, height: number = PEOPLE[name].height): Person | null {
+export function person(name: PersonName, height: number = PEOPLE[name].height, fix?: Record<string, [number, number, number]>): Person | null {
   const src = loaded.get(name);
   if (!src || !cloneFn) return null;
-  return new Person(src, height, cloneFn);
+  return new Person(src, height, cloneFn, fix ?? POSE_FIX[name]);
 }
