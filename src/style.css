@@ -2278,6 +2278,11 @@ body.kid .howto-tip b {
 .title-bar .gap {
   flex: 1;
 }
+/* Testing only: the speed readout and the Test badge sit at the top middle; keep the icons clear of them. */
+body.perf-on .screen.title > .title-bar,
+body.devp-on .screen.title > .title-bar {
+  margin-top: 72px;
+}
 .btn.icon-btn {
   display: flex;
   flex-direction: column;

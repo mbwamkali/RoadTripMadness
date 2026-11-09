@@ -42,6 +42,10 @@ uniform float glow;
 uniform float clouds;
 uniform float time;
 uniform vec3 cloudColor;
+uniform float sunset;
+uniform vec3 sunsetDir;
+uniform vec3 sunsetLit;
+uniform vec3 sunsetDark;
 varying vec3 vDir;
 float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float vnoise(vec2 p) {
@@ -64,6 +68,14 @@ void main() {
     vec2 uv = d.xz / (d.y + 0.18) * 1.6 + vec2(time * 0.004, time * 0.0015);
     float cl = smoothstep(0.62 - clouds * 0.3, 0.88 - clouds * 0.2, fbm(uv + vec2(3.0, 1.0)));
     vec3 cc = cloudColor * (0.85 + 0.3 * pow(s, 4.0));
+    // Title screen only: clouds lit orange and red low in the sky, slate grey higher up.
+    if (sunset > 0.0) {
+      float low = smoothstep(0.45, 0.04, d.y);
+      float toward = 0.5 + 0.5 * dot(normalize(d.xz), normalize(sunsetDir.xz));
+      float edge = fbm(uv * 1.7 + vec2(11.0, 4.0));
+      vec3 sc = mix(sunsetDark, sunsetLit, clamp(low * (0.55 + 0.45 * toward) * (0.6 + 0.6 * edge), 0.0, 1.0));
+      cc = mix(cc, sc, sunset);
+    }
     col = mix(col, cc, cl * smoothstep(0.02, 0.2, d.y) * 0.85);
   }
   gl_FragColor = vec4(col, 1.0);
@@ -106,6 +118,8 @@ export class Atmosphere {
   private time = 0;
   /** Fog never closes in further than this (combat needs to see the enemies). */
   minFogFar = 0;
+  /** A last say over the sky and fog after the hour and weather are applied (the title screen's own look). */
+  afterApply: ((look: { fog: THREE.Fog; sky: THREE.Color; uniforms: Record<string, THREE.IUniform> }) => void) | null = null;
   /** Fog distances for clear daytime; weather and night pull them in. */
   constructor(
     private scene: THREE.Scene,
@@ -143,6 +157,10 @@ export class Atmosphere {
         clouds: { value: 0.5 },
         time: { value: 0 },
         cloudColor: { value: new THREE.Color(0xffffff) },
+        sunset: { value: 0 },
+        sunsetDir: { value: new THREE.Vector3(1, 0, 0) },
+        sunsetLit: { value: new THREE.Color(0xff7a3a) },
+        sunsetDark: { value: new THREE.Color(0x4a4a62) },
       },
       vertexShader: SKY_VERT,
       fragmentShader: SKY_FRAG,
@@ -225,6 +243,7 @@ export class Atmosphere {
     const cc = u.cloudColor.value as THREE.Color;
     cc.copy(WHITE).lerp(this.sun.color, 0.35).lerp(this.tmp.setHex(0x9aa0a8), (1 - clear) * 0.6);
     cc.multiplyScalar(0.12 + d * 0.88);
+    this.afterApply?.({ fog, sky, uniforms: u });
   }
 
   /** Rebakes the sky reflections when the sky has changed enough to notice. */

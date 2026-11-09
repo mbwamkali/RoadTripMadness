@@ -97,6 +97,8 @@ export class PerfMeter {
     });
     this.el.textContent = `build ${BUILD.number}`;
     document.body.append(this.el);
+    // The title screen moves its buttons down out of the way (style.css).
+    document.body.classList.add('perf-on');
   }
 
   /** Call once at the start of each frame. */

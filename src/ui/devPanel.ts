@@ -161,6 +161,7 @@ export function mountDevPanel(applyGfx: () => void = () => undefined): void {
 
   panel.append(tHead, tRow, sRow, wHead, wRow, gHead, gRow, xHead, xRow);
   document.body.append(btn, panel);
+  document.body.classList.add('devp-on');
   // A test trip's &time= and &weather= are already set; show them.
   setHour(devClock.hour);
   setWeather(devClock.weather);
