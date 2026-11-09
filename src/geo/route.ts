@@ -2,6 +2,8 @@ import { placeFeatures, placeFuel, type FuelStation, type Landmark, type MapFeat
 import { chaikin, dedupe, limitCurvature, makeProjection, Path, removeSpurs, resample, type LatLng, type Vec2 } from './geo';
 import { stateLines, stateMap, type StateLine } from './states';
 import { placeStructures, type Structure } from '../game/structures';
+import { crossingCandidates, type RoadCrossing } from '../game/crossings';
+import type { RawCrossing } from '../offline/roadNet';
 
 /** One maneuver on the real route, placed along the game path. */
 export interface RouteStep {
@@ -44,6 +46,8 @@ export interface RouteData {
   limits?: { at: number; mph: number }[];
   /** Bridges and tunnels to draw, in game distance (see game/structures.ts). */
   structures?: Structure[];
+  /** Real roads crossing the trip (own-routing trips), thinned (see game/crossings.ts). */
+  crossings?: RoadCrossing[];
 }
 
 /** Cruise speed of the car in game units per second. */
@@ -83,6 +87,8 @@ export interface RawRoute {
   limits?: { location: LatLng; kmh: number }[];
   /** Bridges and tunnels on the way (own-routing trips), with their real length. */
   structures?: { from: LatLng; to: LatLng; kind: 'bridge' | 'tunnel'; meters: number }[];
+  /** Roads crossing the trip (own-routing trips). */
+  crossings?: RawCrossing[];
 }
 
 /** Converts a real-world route into game geometry: project, scale, smooth and resample. */
@@ -142,6 +148,25 @@ export function buildRouteData(raw: RawRoute, driveSeconds = targetDriveSeconds(
   if (raw.structures?.length) {
     const placed = placeStructures(raw.structures.map((st) => ({ from: at(st.from), to: at(st.to), kind: st.kind, meters: st.meters })), path.length);
     if (placed.length) data.structures = placed;
+  }
+  if (raw.crossings?.length) {
+    const placed = crossingCandidates(
+      raw.crossings.map((c) => {
+        const d = at(c.location);
+        const a = proj.toLocal(c.location), b = proj.toLocal(c.toward);
+        const ux = b.x - a.x, uy = b.y - a.y;
+        const f = path.directionAt(d);
+        // Along the trip and to its right (game x right = (f.y, -f.x)).
+        const fwd = ux * f.x + uy * f.y, right = ux * f.y - uy * f.x;
+        const side: -1 | 0 | 1 = c.kind === 'flat' && !c.both ? (right >= 0 ? 1 : -1) : 0;
+        // The road's lean, measured on the side it runs off to the right.
+        const angle = right >= 0 ? Math.atan2(fwd, right) : Math.atan2(-fwd, -right);
+        const big = c.cls <= 1 || c.lanes >= 4;
+        return { at: d, kind: c.kind, name: c.name, angle, side, big, score: (big ? 4 : 0) + (c.name ? 2 : 0) + (2 - c.cls) };
+      }),
+      path.length,
+    );
+    if (placed.length) data.crossings = placed;
   }
   if (raw.features?.length) {
     const path = pathFromRoute(data);

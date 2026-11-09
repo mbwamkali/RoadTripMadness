@@ -7,6 +7,8 @@ import { advance, damage, fuelPerUnit, upcomingStop, type GameState } from '../g
 import { BOOST_MPH, brakeRange, CRUISE_MPH, crashScale, FREE_OVER, PROMPT_MIN, promptRange, SPEED_STEP, speedCap, speedFuelFactor, targetMph, topSpeed } from '../game/driving';
 import { structureAt, type Structure } from '../game/structures';
 import { buildStructurePart } from './structures';
+import { crossingAt, planCrossings, type RoadCrossing } from '../game/crossings';
+import { buildCrossing, crossingFootprint, crossingHalfSpan, type CrossingFit } from './crossings';
 import { coolRage, HOSTILE_RANGE, hostileShot, rageOf, rollHostile, shootVehicle } from '../game/rage';
 import { clampLane, defaultLane, laneCenter, oncoming, Traffic, type Vehicle, type VehicleKind } from '../game/traffic';
 import { Obstacles, ramObstacle, shootObstacle, SHOOT_RANGE, type Obstacle, type ObstacleKind } from '../game/obstacles';
@@ -306,6 +308,11 @@ export class DriveScene implements GameScene {
   private clock = 0;
   private rageRng: Rng;
   private structures: Structure[];
+  /** Roads crossing the trip (overpasses and flat crossings), see game/crossings.ts. */
+  private crossings: RoadCrossing[] = [];
+  /** Flat crossings' stretch of road (no sidewalk or curb across a side street). */
+  private flatSpans: { from: number; to: number }[] = [];
+  private crossAsphalt!: THREE.Material;
   private lastBlink = false;
   private atmosphere: Atmosphere;
   private backdrop: Backdrop;
@@ -361,6 +368,9 @@ export class DriveScene implements GameScene {
     this.townList = state.landmarks
       .filter((l) => l.kind === 'citysign' && !/^Leaving |^Welcome to /.test(l.name))
       .map((l) => ({ mid: l.at + (l.big ? 380 : 170), radius: l.big ? 620 : 240, big: !!l.big }));
+    this.crossAsphalt = lit({ map: this.asphaltTex, roughness: 0.85, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6 });
+    this.crossings = this.planCrossings();
+    this.flatSpans = this.crossings.filter((c) => c.kind === 'flat').map((c) => ({ from: c.at - crossingHalfSpan(c) - 1, to: c.at + crossingHalfSpan(c) + 1 }));
     this.laneClass = classAt(this.segments, state.distance);
     this.playerLane = defaultLane(this.laneClass);
     this.lane = this.laneAt(state.distance);
@@ -490,7 +500,31 @@ export class DriveScene implements GameScene {
   /** Sidewalks with curbs and street lights: town streets (not freeways), leaving a gap at side roads. */
   sidewalkAt(d: number): boolean {
     if (isDivided(classAt(this.segments, d)) || this.urbanAt(d) < 0.4) return false;
-    return !this.state.stops.some((s) => Math.abs(s.at - d) < 6);
+    return !this.state.stops.some((s) => Math.abs(s.at - d) < 6) && !this.flatSpans.some((f) => d > f.from && d < f.to);
+  }
+
+  private readonly crossFit: CrossingFit = {
+    outer: (d) => this.outer(d),
+    edge: (d) => this.edge(d),
+    median: (d) => this.section(d).median,
+    sideCentre: (d) => this.sideCentre(d),
+  };
+
+  /** Where roads cross the trip: real ones spaced out, made-up ones in long empty stretches (game/crossings.ts). */
+  private planCrossings(): RoadCrossing[] {
+    const st = this.state;
+    const marks = st.landmarks.filter((l) => l.kind !== 'mountains' && l.kind !== 'peak' && l.kind !== 'mesa');
+    return planCrossings(st.route.crossings ?? [], {
+      length: this.finish,
+      blocked: (d) =>
+        this.structures.some((x) => d > x.from - 150 && d < x.to + 150) ||
+        st.stops.some((s) => Math.abs(s.at - d) < 300 || (s.exit && Math.abs(s.at - 450 - d) < 40)) ||
+        marks.some((l) => Math.abs(l.at - d) < (l.kind === 'river' ? 200 : 80)),
+      urban: (d) => this.urbanAt(d),
+      divided: (d) => isDivided(classAt(this.segments, d)),
+      madeUpAll: st.route.source !== 'osm',
+      seed: st.seed,
+    });
   }
 
   /** The paved shoulder outside the last lane (none on local roads or where there is a sidewalk). */
@@ -904,6 +938,7 @@ export class DriveScene implements GameScene {
       if (this.stopping) break;
     }
     this.streamChunks();
+    for (const g of this.chunks.values()) g.userData.tick?.(this.clock);
     this.streamTowns();
     this.fightCam += ((this.fight ? 1 : 0) - this.fightCam) * Math.min(1, dt * 2);
     this.placeCar(false, dt);
@@ -1760,6 +1795,19 @@ export class DriveScene implements GameScene {
         }
       }
     }
+    // Nothing on a crossing road or its ramps: hide those instances (keeping their numbers) and drop their solids.
+    const crossHere = this.crossings.filter((c) => c.at > from - 520 && c.at < to + 520).map((c) => ({ covers: crossingFootprint(c, this.path, this.crossFit) }));
+    if (crossHere.length) {
+      const hide = new THREE.Matrix4().makeScale(0, 0, 0);
+      for (const list of Object.values(inst)) for (const m of list) if (crossHere.some((b) => b.covers(m.elements[12], m.elements[14]))) m.copy(hide);
+      for (let i = solids.length - 1; i >= 0; i--) {
+        const so = solids[i];
+        const p = this.path.pointAt(so.d);
+        const f = this.path.directionAt(so.d);
+        const x = p.x + f.y * so.x, y = p.y - f.x * so.x;
+        if (crossHere.some((b) => b.covers(x, -y))) solids.splice(i, 1);
+      }
+    }
     for (const [key, mats] of Object.entries(inst)) {
       if (!mats.length) continue;
       const mesh = new THREE.InstancedMesh(this.geos[key], this.mats[key], mats.length);
@@ -1782,6 +1830,20 @@ export class DriveScene implements GameScene {
     for (const st of this.structures) {
       if (st.to > from && st.from < to) g.add(buildStructurePart(st, this.path, from, to, (d) => this.outer(d)));
     }
+    // Roads crossing the trip: drawn whole by the chunk they meet the trip in.
+    const ticks: ((t: number) => void)[] = [];
+    const trees: THREE.Object3D[] = [];
+    for (const c of this.crossings) {
+      if (c.at < from || c.at >= from + CHUNK) continue;
+      const b = buildCrossing(c, this.path, this.crossFit, { asphalt: this.crossAsphalt, ground: groundColorAt(this.biomes, c.at), cars: quality.level !== 'low' });
+      g.add(b.group);
+      if (b.tick) ticks.push(b.tick);
+      trees.push(...b.trees);
+      const list = this.solids.get(k);
+      for (const so of b.solids) list?.push({ kind: 'pier', d: so.d, x: so.x, r: so.r });
+    }
+    if (ticks.length) g.userData.tick = (t: number) => ticks.forEach((fn) => fn(t));
+    if (trees.length) g.userData.trees = trees;
     if (k === Math.floor(this.finish / CHUNK)) g.add(this.buildFinish());
     if (this.shadows) castShadows(g, true);
     return g;
@@ -1962,7 +2024,7 @@ export class DriveScene implements GameScene {
       g.add(sign);
       this.solids.get(k)?.push({ kind: 'sign', d, x: out, r: out > this.outer(d) + 2 ? 1.8 : 0.6, obj: sign });
     };
-    const free = (d: number) => !structureAt(this.structures, d, 25) && !this.state.stops.some((s) => Math.abs(s.at - d) < 40);
+    const free = (d: number) => !structureAt(this.structures, d, 25) && !this.state.stops.some((s) => Math.abs(s.at - d) < 40) && !crossingAt(this.crossings, d, 40);
     const limits = limitChanges(from, to, (d) => this.speedLimit(d));
     // A reminder every few chunks, out of town.
     if (k % 5 === 2 && !limits.length && this.urbanAt(from + 60) < 0.4) limits.push({ at: from + 60, mph: this.speedLimit(from + 60) });
@@ -2237,6 +2299,8 @@ function placeAt(list: THREE.Matrix4[], p: Vec2, right: Vec2, offset: number, ro
 
 /** Frees per-chunk geometry. Shared geometries/materials live on the scene and are freed in dispose(). */
 function disposeChunk(g: THREE.Group): void {
+  // Cars on crossings own their materials.
+  for (const o of (g.userData.trees as THREE.Object3D[] | undefined) ?? []) disposeTree(o);
   g.traverse((o) => {
     if (o instanceof THREE.InstancedMesh) {
       o.dispose();

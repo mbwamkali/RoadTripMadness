@@ -892,7 +892,7 @@ function startTripNow(s: GameState): void {
       showToast('🚧', 'Off the road!', 'Bumpy and slow. Posts fall over, buildings do not. Steer back to the road');
     },
     onRoadside: (what, cost, big) => {
-      const icon = { delineator: '🚧', mile: '🪧', sign: '🪧', lamp: '💡', pole: '🪵', tree: '🌳', rock: '🪨', building: '🏢', barrier: '🧱', guardrail: '🚧', bridge: '🌉' }[what];
+      const icon = { delineator: '🚧', mile: '🪧', sign: '🪧', lamp: '💡', pole: '🪵', tree: '🌳', rock: '🪨', building: '🏢', barrier: '🧱', guardrail: '🚧', bridge: '🌉', pier: '🌉' }[what];
       showToast(big ? '💥' : icon, big ? `Crash! You hit ${SOLIDS[what].name}` : `Bonk! You knocked over ${SOLIDS[what].name}`, cost ? `−${cost} car health` : 'No harm done');
       if (cost) navigator.vibrate?.(big ? 140 : 40);
       if (state?.status === 'lost' && drive) {

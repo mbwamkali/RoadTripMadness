@@ -19,7 +19,7 @@ export interface OffRoad {
   step: 1 | 2;
 }
 
-export type SolidKind = 'delineator' | 'sign' | 'mile' | 'lamp' | 'pole' | 'tree' | 'rock' | 'building' | 'barrier' | 'guardrail' | 'bridge';
+export type SolidKind = 'delineator' | 'sign' | 'mile' | 'lamp' | 'pole' | 'tree' | 'rock' | 'building' | 'barrier' | 'guardrail' | 'bridge' | 'pier';
 
 /** What each roadside thing does when you hit it. Big ones stop you; small ones fall over. */
 export const SOLIDS: Record<SolidKind, { name: string; big: boolean; damage: number }> = {
@@ -34,6 +34,7 @@ export const SOLIDS: Record<SolidKind, { name: string; big: boolean; damage: num
   barrier: { name: 'the concrete barrier', big: true, damage: 6 },
   guardrail: { name: 'the guardrail', big: true, damage: 5 },
   bridge: { name: 'the bridge rail', big: true, damage: 6 },
+  pier: { name: 'an overpass', big: true, damage: 8 },
 };
 
 /** How fast the car goes off the road, as a share of its speed on it. */

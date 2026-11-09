@@ -170,6 +170,19 @@ export function speedLimitSign(mph: number): THREE.Group {
 
 /** A green highway sign with a few lines of white text; `right` adds an arrow column for exits. */
 export function greenSign(lines: { text: string; right?: string }[], width = 6): THREE.Group {
+  const { tex, h } = greenTexture(lines, width);
+  return signOnPosts(tex, width, h, 3.4, true);
+}
+
+/** Just the face of a green sign (for hanging on a bridge), facing +z. Freed with the chunk. */
+export function greenPanel(lines: { text: string; right?: string }[], width = 6): THREE.Mesh {
+  const { tex, h } = greenTexture(lines, width);
+  const mat = new THREE.MeshBasicMaterial({ map: tex });
+  mat.userData.chunkOwned = true;
+  return new THREE.Mesh(new THREE.PlaneGeometry(width, h), mat);
+}
+
+function greenTexture(lines: { text: string; right?: string }[], width: number): { tex: THREE.CanvasTexture; h: number } {
   const rows = lines.length;
   const h = 0.9 + rows * 0.75;
   const pxW = 512;
@@ -194,7 +207,7 @@ export function greenSign(lines: { text: string; right?: string }[], width = 6):
       }
     });
   });
-  return signOnPosts(tex, width, h, 3.4, true);
+  return { tex, h };
 }
 
 /** Frees the shared sign textures (when the drive view closes). */
