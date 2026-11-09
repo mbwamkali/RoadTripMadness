@@ -16,15 +16,15 @@ import { makeAnimal } from './animalModels';
 import { distanceSignLines, limitChanges, medianKind, milepost, shoulderAt, SIDEWALK, CURB_HEIGHT, turnAngle } from '../game/roadside';
 import { crashCost, OFFROAD_SPEED, offRoadWreckReason, offRoadX, SOLIDS, steerOffRoad, type OffRoad, type SolidKind } from '../game/offroad';
 import { kidMode } from '../game/kidMode';
-import { disposeRoadside, greenSign, lampGeometries, PROFILES as SHAPES, rumbleTexture, speedLimitSign, sweep } from './roadside';
+import { boardSign, disposeRoadside, faceDownRoad, greenSign, lampGeometries, PROFILES as SHAPES, rumbleTexture, speedLimitSign, sweep } from './roadside';
 import { rideOf } from '../game/rides';
 import { STOP_TITLES, type Stop } from '../game/stops';
 import { hashString, makeRng, pick, type Rng } from '../game/rng';
 import { ANNOUNCED, roadAt, type Landmark } from '../game/landmarks';
 import { interstateNumber, latLngAt, stateMap } from '../geo/states';
-import { castShadows, disposeTree, makeAsphaltTexture, makeObstacle, makeRide, makeStripeTexture, makeTrafficVehicle, makeRoadTexture, setBlinkers, textSprite, to3, type GameScene } from './common';
+import { castShadows, disposeTree, makeAsphaltTexture, makeObstacle, makeRide, makeStripeTexture, makeTrafficVehicle, makeRoadTexture, setBlinkers, to3, type GameScene } from './common';
 import { classAt, crossSectionAt, isDivided, PROFILES, roadSegments, SPEED, urbanZones, type CrossSection, type RoadClass, type RoadSegment } from '../game/roads';
-import { buildLandmark, waterTexture } from './landmarkModels';
+import { buildLandmark, landmarkSignAt, waterTexture } from './landmarkModels';
 import { sound } from '../audio/sound';
 import { Atmosphere } from './atmosphere';
 import { Backdrop } from './backdrop';
@@ -1653,12 +1653,21 @@ export class DriveScene implements GameScene {
     const clear = (d: number, side: number) =>
       !!structureAt(this.structures, d, 30) ||
       marksHere.some((l) => (l.kind === 'river' ? Math.abs(l.at - d) < 45 : Math.abs(l.at - d) < (WIDE_SIGHTS.has(l.kind) ? 75 : 30) && l.side === side));
+    // Readable signs nearby: no reflector post stands right on one.
+    const signs = this.plannedSigns(k);
+    const signSpots = [...signs, ...this.plannedSigns(k + 1)].map((s) => ({ d: s.d, side: 1 }));
+    for (const l of this.state.landmarks) {
+      const at = landmarkSignAt(l);
+      if (at !== null && at > from - POST_CLEAR && at < to + POST_CLEAR) signSpots.push({ d: at, side: l.kind === 'river' ? 1 : l.side });
+    }
+    const postClear = (d: number, side: number) => signSpots.some((s) => s.side === side && Math.abs(s.d - d) < POST_CLEAR);
     // Every town sign, real or made up, starts a town: a few blocks for a small
     // town, a bigger, taller spread for a city of 50,000+.
     const towns = this.state.landmarks
       .filter((l) => l.kind === 'citysign' && !/^Leaving |^Welcome to /.test(l.name) && l.at > from - 900 && l.at < to + 300)
       .map((l) => ({ mid: l.at + (l.big ? 380 : 170), radius: l.big ? 620 : 240, big: !!l.big }));
 
+    const wires: number[] = [];
     for (let d = from; d < to; d += 8) {
       const p = this.path.pointAt(d);
       const f = this.path.directionAt(d);
@@ -1670,9 +1679,12 @@ export class DriveScene implements GameScene {
       const sidewalk = this.sidewalkAt(d);
       const cls = classAt(this.segments, d);
       // Wooden poles out in the country; street lights on the sidewalks in town.
-      if (Math.round(d) % 48 < 8 && !clear(d, 1) && !sidewalk) {
+      if (d < from + CHUNK && this.poleAt(d)) {
         placeAt(inst.pole, p, right, 7.5 + wide, 0, 1);
         solid('pole', d, 7.5 + wide, 0.4, 'pole');
+        // Power lines run on to the next pole.
+        const next = this.nextPole(d);
+        if (next !== null) wires.push(...this.wireSpan(d, next));
       }
       const lampSpots = sidewalk ? { every: 40, off: this.edge(d) + SIDEWALK - 0.6 } : cls === 'metro' ? { every: 64, off: this.outer(d) + 0.5 } : null;
       if (lampSpots && Math.round(d) % lampSpots.every < 8) {
@@ -1690,6 +1702,7 @@ export class DriveScene implements GameScene {
       // Reflector posts along the shoulders of bigger roads (guardrail posts on sharp bends).
       if (Math.round(d) % 40 < 8 && cls !== 'local' && urban < 0.3) {
         for (const side of [-1, 1]) {
+          if (postClear(d, side)) continue;
           const off = side * (this.outer(d) + 0.8);
           placeAt(inst.delineator, p, right, off, 0, 1);
           placeAt(inst.reflector, p, right, off, 0, 1);
@@ -1768,14 +1781,16 @@ export class DriveScene implements GameScene {
       g.add(mesh);
       for (const sol of solids) for (const i of sol.inst ?? []) if (i.key === key) i.mesh = mesh;
     }
+    if (wires.length) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(wires, 3));
+      g.add(new THREE.LineSegments(geo, WIRE_MAT));
+    }
     for (const stop of this.state.stops) {
       if (stop.at >= from && stop.at < from + CHUNK) g.add(this.buildStop(stop));
     }
     // Past the finish (the stretch kept for a last boss fight) there are no more mile markers or road signs.
-    if (from < this.finish) {
-      this.addMileMarkers(g, from, Math.min(to, this.finish));
-      this.addSigns(g, k, from, Math.min(this.finish, from + CHUNK));
-    }
+    this.addSigns(g, k, signs);
     for (const l of this.state.landmarks) {
       if (l.at >= from && l.at < from + CHUNK) g.add(buildLandmark(l, this.path, (d) => this.outer(d), biomeAtDistance(this.biomes, l.at)));
     }
@@ -1919,56 +1934,114 @@ export class DriveScene implements GameScene {
     return out;
   }
 
-  /** Green mile markers on interstates, numbered like the exits (miles into the state). */
-  private addMileMarkers(g: THREE.Group, from: number, to: number): void {
-    const map = stateMap();
-    const route = this.state.route;
-    if (!map || route.source === 'demo') return;
-    // Whole real miles apart, but never closer than 150 units in the game.
-    const miles = Math.max(1, Math.ceil((150 * route.scale) / 1609));
-    const step = (miles * 1609) / route.scale;
-    for (let d = Math.ceil(from / step) * step; d < to; d += step) {
-      if (!isDivided(classAt(this.segments, d))) continue;
-      const n = interstateNumber(roadAt(route, d));
-      // Follow the real exit numbers where the route knows them; the border estimate fills the gaps.
-      const estimate = (x: number) => (n === null ? null : map.exitNumber(latLngAt(route, this.path, x), n));
-      const mile = milepost(d, route.exits, route.scale, estimate);
-      if (mile === null) continue;
-      const sign = mileMarker(mile);
-      const p = this.path.pointAt(d);
-      const f = this.path.directionAt(d);
-      // On the outside of the shoulder.
-      const off = this.outer(d) + 0.8;
-      sign.position.copy(to3({ x: p.x + f.y * off, y: p.y - f.x * off }, 0));
-      // Face the oncoming car.
-      sign.rotation.y = Math.atan2(-f.x, f.y);
-      g.add(sign);
-      this.solids.get(Math.floor(from / CHUNK))?.push({ kind: 'mile', d, x: off, r: 0.4, obj: sign });
+  private signPlans = new Map<number, SignSpot[]>();
+  /** signPlan, kept per chunk (poles look a chunk ahead for signs, and the plan never changes during a trip). */
+  private plannedSigns(k: number): SignSpot[] {
+    let plan = this.signPlans.get(k);
+    if (!plan) {
+      plan = this.signPlan(k);
+      this.signPlans.set(k, plan);
     }
+    return plan;
   }
 
   /**
-   * Roadside signs: SPEED LIMIT where the limit changes (and now and then as
-   * a reminder), green EXIT signs half a mile before each exit on freeways,
-   * and green distance signs to the next towns and the end of the trip.
+   * Whether a wooden power pole stands at d (on the 8-unit grid, one every 48
+   * units on the right, out in the country): 'pole', 'sign' when it is left out
+   * so it can't stand in front of a sign's words (the wires carry on over the
+   * gap), or 'none' (town sidewalks, bridges and tunnels, landmarks: the line ends).
    */
-  private addSigns(g: THREE.Group, k: number, from: number, to: number): void {
-    const route = this.state.route;
-    const put = (sign: THREE.Object3D, d: number, out: number) => {
+  private poleSpot(d: number): 'pole' | 'sign' | 'none' {
+    if (Math.round(d) % 48 >= 8 || d < 0 || d >= this.path.length) return 'none';
+    if (this.sidewalkAt(d) || structureAt(this.structures, d, 30)) return 'none';
+    for (const l of this.state.landmarks) {
+      if (l.kind === 'mountains' || l.kind === 'peak' || l.kind === 'mesa') continue;
+      if (l.kind === 'river' ? Math.abs(l.at - d) < 45 : l.side === 1 && Math.abs(l.at - d) < (WIDE_SIGHTS.has(l.kind) ? 75 : 30)) return 'none';
+    }
+    // A pole nearer the road lines up with a sign's words from well before it as the car comes.
+    const k = Math.floor(d / CHUNK);
+    const nearSign = (at: number) => d > at - SIGN_CLEAR_BEFORE && d < at + SIGN_CLEAR_AFTER;
+    if ([...this.plannedSigns(k), ...this.plannedSigns(k + 1)].some((sp) => nearSign(sp.d))) return 'sign';
+    for (const l of this.state.landmarks) {
+      const at = landmarkSignAt(l);
+      if (at !== null && (l.side === 1 || l.kind === 'river') && nearSign(at)) return 'sign';
+    }
+    return 'pole';
+  }
+
+  private poleAt(d: number): boolean {
+    return this.poleSpot(d) === 'pole';
+  }
+
+  /** The next pole after the one at d that its wires reach, or null where the line ends. */
+  private nextPole(d: number): number | null {
+    for (let n = d + 48; n <= d + WIRE_REACH; n += 48) {
+      const spot = this.poleSpot(n);
+      if (spot === 'pole') return n;
+      if (spot === 'none') return null;
+    }
+    return null;
+  }
+
+  /** Line-segment points (x, y, z, ...) for the sagging power lines between the poles at a and b. */
+  private wireSpan(a: number, b: number): number[] {
+    const top = (d: number) => {
       const p = this.path.pointAt(d);
       const f = this.path.directionAt(d);
-      sign.position.copy(to3({ x: p.x + f.y * out, y: p.y - f.x * out }, 0));
-      sign.rotation.y = Math.atan2(-f.x, f.y);
-      g.add(sign);
-      this.solids.get(k)?.push({ kind: 'sign', d, x: out, r: out > this.outer(d) + 2 ? 1.8 : 0.6, obj: sign });
+      const off = 7.5 + this.widen(d);
+      return { x: p.x + f.y * off, z: -(p.y - f.x * off) };
     };
+    const pa = top(a);
+    const pb = top(b);
+    const out: number[] = [];
+    const sag = 0.35 * Math.min(1, (b - a) / 48);
+    for (const h of WIRE_HEIGHTS) {
+      for (let i = 0; i < WIRE_STEPS; i++) {
+        for (const t of [i / WIRE_STEPS, (i + 1) / WIRE_STEPS]) {
+          out.push(pa.x + (pb.x - pa.x) * t, h - sag * 4 * t * (1 - t), pa.z + (pb.z - pa.z) * t);
+        }
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Where chunk k's roadside signs go, all on the right: green mile markers on
+   * interstates (numbered like the exits), SPEED LIMIT where the limit changes
+   * (and now and then as a reminder), green EXIT signs half a mile before each
+   * exit on freeways, and green distance signs to the next towns and the end
+   * of the trip. Planned before anything is built, so poles and posts can keep
+   * clear of them. None past the finish (the stretch kept for a last boss fight).
+   */
+  private signPlan(k: number): SignSpot[] {
+    const from = k * CHUNK;
+    const to = Math.min(this.finish, from + CHUNK);
+    const out: SignSpot[] = [];
+    if (from >= to) return out;
+    const route = this.state.route;
+    const map = stateMap();
+    if (map && route.source !== 'demo') {
+      // Whole real miles apart, but never closer than 150 units in the game.
+      const miles = Math.max(1, Math.ceil((150 * route.scale) / 1609));
+      const step = (miles * 1609) / route.scale;
+      for (let d = Math.ceil(from / step) * step; d < to; d += step) {
+        if (!isDivided(classAt(this.segments, d))) continue;
+        const n = interstateNumber(roadAt(route, d));
+        // Follow the real exit numbers where the route knows them; the border estimate fills the gaps.
+        const estimate = (x: number) => (n === null ? null : map.exitNumber(latLngAt(route, this.path, x), n));
+        const mile = milepost(d, route.exits, route.scale, estimate);
+        if (mile === null) continue;
+        // On the outside of the shoulder.
+        out.push({ d, out: this.outer(d) + 0.8, mile: true, make: () => mileMarker(mile) });
+      }
+    }
     const free = (d: number) => !structureAt(this.structures, d, 25) && !this.state.stops.some((s) => Math.abs(s.at - d) < 40);
     const limits = limitChanges(from, to, (d) => this.speedLimit(d));
     // A reminder every few chunks, out of town.
     if (k % 5 === 2 && !limits.length && this.urbanAt(from + 60) < 0.4) limits.push({ at: from + 60, mph: this.speedLimit(from + 60) });
     for (const l of limits) {
       const d = l.at + 15;
-      if (d < to && free(d)) put(speedLimitSign(l.mph), d, this.outer(d) + 1.2);
+      if (d < to && free(d)) out.push({ d, out: this.outer(d) + 1.2, make: () => speedLimitSign(l.mph) });
     }
     const miles = (a: number, b: number) => realKmAt(route, Math.abs(b - a)) / 1.609;
     // Exit ahead.
@@ -1977,7 +2050,8 @@ export class DriveScene implements GameScene {
       if (!stop.exit || d < from || d >= to || !isDivided(classAt(this.segments, d)) || !free(d)) continue;
       const m = miles(d, stop.at);
       const dist = m < 0.35 ? '1/4 MILE' : m < 0.65 ? '1/2 MILE' : m < 0.9 ? '3/4 MILE' : `${Math.round(m)} MILE${Math.round(m) > 1 ? 'S' : ''}`;
-      put(greenSign([{ text: `EXIT ${stop.exit}` }, { text: stop.name }, { text: dist }], 5.5), d, this.outer(d) + 2.2);
+      const exit = stop.exit;
+      out.push({ d, out: this.outer(d) + 2.2, make: () => greenSign([{ text: `EXIT ${exit}` }, { text: stop.name }, { text: dist }], 5.5) });
     }
     // Distances to the next towns, now and then out of town.
     const d = from + 220;
@@ -1985,7 +2059,22 @@ export class DriveScene implements GameScene {
       const towns = this.state.landmarks.filter((l) => l.kind === 'citysign' && !/^Leaving |^Welcome to /.test(l.name)).map((l) => ({ at: l.at, name: l.name }));
       const end = { at: this.finish, name: route.endLabel.split(',')[0] };
       const lines = distanceSignLines(d, towns, end, miles);
-      put(greenSign(lines.map((l) => ({ text: l.name, right: String(l.miles) }))), d, this.outer(d) + 2.6);
+      out.push({ d, out: this.outer(d) + 2.6, make: () => greenSign(lines.map((l) => ({ text: l.name, right: String(l.miles) }))) });
+    }
+    return out;
+  }
+
+  /** Puts up the planned signs, facing the oncoming car. */
+  private addSigns(g: THREE.Group, k: number, plan: SignSpot[]): void {
+    for (const spot of plan) {
+      const sign = spot.make();
+      const p = this.path.pointAt(spot.d);
+      const f = this.path.directionAt(spot.d);
+      sign.position.copy(to3({ x: p.x + f.y * spot.out, y: p.y - f.x * spot.out }, 0));
+      sign.rotation.y = Math.atan2(-f.x, f.y);
+      g.add(sign);
+      const r = spot.mile ? 0.4 : spot.out > this.outer(spot.d) + 2 ? 1.8 : 0.6;
+      this.solids.get(k)?.push({ kind: spot.mile ? 'mile' : 'sign', d: spot.d, x: spot.out, r, obj: sign });
     }
   }
 
@@ -2015,17 +2104,18 @@ export class DriveScene implements GameScene {
     const sf = this.path.directionAt(stop.at - 90);
     const sub = [stop.exit ? `EXIT ${stop.exit}` : STOP_TITLES[stop.kind], stop.street].filter(Boolean).join(' · ');
     const sign = dirt
-      ? textSprite(`SHORTCUT ${stop.side === 'right' ? '▶' : '◀'}`, stop.name, '#7a5230')
-      : textSprite(`${stop.side === 'left' ? '◀' : ''} ${stop.name} ${stop.side === 'right' ? '▶' : ''}`.trim(), sub);
+      ? boardSign(`SHORTCUT ${stop.side === 'right' ? '▶' : '◀'}`, stop.name, '#7a5230', 8, 3, 3.5)
+      : boardSign(`${stop.side === 'left' ? '◀' : ''} ${stop.name} ${stop.side === 'right' ? '▶' : ''}`.trim(), sub, '#1f6b3a', 8, 3, 3.5);
     const so = this.outer(stop.at - 90) + 1.5;
-    sign.position.copy(to3({ x: signAt.x + sf.y * sideSign * so, y: signAt.y - sf.x * sideSign * so }, 5));
+    sign.position.copy(to3({ x: signAt.x + sf.y * sideSign * so, y: signAt.y - sf.x * sideSign * so }, 0));
+    faceDownRoad(sign, sf);
     g.add(sign);
     // Street name blade at the corner.
     if (stop.street) {
-      const blade = textSprite(stop.street, '', '#1f6b3a');
-      blade.scale.set(5, 1.9, 1);
+      const blade = boardSign(stop.street, '', '#1f6b3a', 5, 1.9, 3.05);
       const back = -8;
-      blade.position.copy(to3({ x: a.x + side.x * 3 + f.x * back, y: a.y + side.y * 3 + f.y * back }, 4));
+      blade.position.copy(to3({ x: a.x + side.x * 3 + f.x * back, y: a.y + side.y * 3 + f.y * back }, 0));
+      faceDownRoad(blade, f);
       g.add(blade);
     }
     return g;
@@ -2151,9 +2241,10 @@ export class DriveScene implements GameScene {
     const d = this.finish - 30;
     const p = this.path.pointAt(d);
     const f = this.path.directionAt(d);
-    const sign = textSprite(this.state.route.endLabel.split(',')[0], 'Destination', '#2b4f8a');
-    sign.position.copy(to3(p, 9));
-    sign.scale.set(12, 4.5, 1);
+    // A banner across the road, held up by the two posts below.
+    const sign = boardSign(this.state.route.endLabel.split(',')[0], 'Destination', '#2b4f8a', 12, 4.5, 6.75, false);
+    sign.position.copy(to3(p, 0));
+    faceDownRoad(sign, f);
     g.add(sign);
     for (const o of [-6, 6]) {
       const post = new THREE.Mesh(new THREE.BoxGeometry(0.5, 8, 0.5), this.mats.white);
@@ -2201,6 +2292,29 @@ const tmpQ = new THREE.Quaternion();
 const tmpE = new THREE.Euler();
 
 /** Sights that spread along the road and need the buildings and trees kept clear. */
+/** A planned roadside sign: distance along the road, how far out to the right, and the sign itself. */
+interface SignSpot {
+  d: number;
+  out: number;
+  mile?: boolean;
+  make: () => THREE.Object3D;
+}
+
+/**
+ * Poles skip this stretch around a sign: from well before it (where a pole
+ * nearer the road lines up with the words as the car comes) to just past it.
+ */
+const SIGN_CLEAR_BEFORE = 60;
+const SIGN_CLEAR_AFTER = 10;
+/** Reflector posts keep this far from a sign or mile marker standing beside them. */
+const POST_CLEAR = 6;
+/** Power lines: how far one span may reach over poles left out by signs, the wire heights, and pieces per span. */
+const WIRE_REACH = 150;
+const WIRE_HEIGHTS = [7.85, 7.45];
+const WIRE_STEPS = 6;
+const WIRE_MAT = new THREE.LineBasicMaterial({ color: 0x2a2622 });
+WIRE_MAT.userData.shared = true;
+
 const WIDE_SIGHTS = new Set<Landmark['kind']>(['grain', 'farmstead', 'ghosttown']);
 
 function pickPlant(weights: Partial<Record<PlantKind, number>>, r: number): PlantKind {
@@ -2245,6 +2359,10 @@ function disposeChunk(g: THREE.Group): void {
     if (o instanceof THREE.Sprite) {
       o.material.map?.dispose();
       o.material.dispose();
+      return;
+    }
+    if (o instanceof THREE.LineSegments) {
+      o.geometry.dispose();
       return;
     }
     if (o instanceof THREE.Mesh) {
