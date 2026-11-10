@@ -3,7 +3,8 @@ import type { PlaceKind } from '../game/stops';
 import { lit } from '../scenes/materials';
 import { doorSkin, placeBuilding, placeDoor, fitted, HD_HOUSES, PLACE_BUILDINGS } from '../scenes/hdBuildings';
 import { modelMesh, type ModelName } from '../scenes/models';
-import { textSprite } from '../scenes/common';
+import { makeTrafficVehicle, textSprite } from '../scenes/common';
+import { modelsWanted } from '../scenes/models';
 import { makeRng } from '../game/rng';
 import { pointAlong, type TownLayout, type TownLot } from './layout';
 
@@ -365,7 +366,11 @@ export function buildTownWorld(layout: TownLayout, mats: TownMaterials, seed: nu
       // Face the building: the last step points at the door.
       park.push(at(front - 5, -3.5));
     }
-    lotDressing(g, at, fwd, lot.place === 'pumps' ? null : front, mat);
+    // A farm has a dirt yard and a junkyard a gravel one: no painted stalls there.
+    if (lot.place === 'barn' || lot.place === 'junkyard') pave.material = mat({ color: lot.place === 'barn' ? 0x9a7a52 : 0x8a8478, roughness: 1 });
+    const stalls = lot.place !== 'pumps' && lot.place !== 'barn' && lot.place !== 'junkyard';
+    lotDressing(g, at, fwd, out, stalls ? front : null, mat, rng);
+    placeProps(g, lot.place, at, fwd, out, front, mat, rng);
     if (lot.place === 'motel') {
       // A pool out front: the kid's clue it's a motel, with the bed inside.
       const rim = box(7, 0.35, 4.6, mat({ color: 0xf4f1ea }));
@@ -432,6 +437,15 @@ export function buildTownWorld(layout: TownLayout, mats: TownMaterials, seed: nu
       if (m.isMesh) m.castShadow = m.receiveShadow = true;
     });
     group.add(h);
+    // Half the houses have a car out front, side-on between the sidewalk and the house.
+    if (rng() < 0.5) {
+      const car = parkedCar(rng);
+      if (car) {
+        car.position.copy(v3(p.x, p.y, 0.05)).addScaledVector(out, LOT_NEAR + 1.4);
+        car.rotation.y = Math.atan2(out.x, out.z) + Math.PI / 2 * (rng() < 0.5 ? 1 : -1);
+        group.add(car);
+      }
+    }
   }
   // A "back to the highway" sign where Main Street ends, with a turning circle.
   const end = pointAlong(line, layout.length);
@@ -516,8 +530,10 @@ function lotDressing(
   g: THREE.Group,
   at: (o: number, a: number, h?: number) => THREE.Vector3,
   fwd: THREE.Vector3,
+  out: THREE.Vector3,
   front: number | null,
   mat: Mat,
+  rng: () => number,
 ): void {
   const yaw = Math.atan2(fwd.x, fwd.z);
   const paint = mat({ color: 0xf2f0e8, roughness: 0.8 });
@@ -530,9 +546,18 @@ function lotDressing(
   };
   if (front != null) {
     // Stalls 3 m wide either side of where the car stops (a = -3.5), 5 m deep, nose to the building.
-    for (const a of [-11, -8, -5, -2, 1]) put(box(5, 0.02, 0.12, paint), front - 5, a, 0.175);
+    for (const a of [-14, -11, -8, -5, -2, 1]) put(box(5, 0.02, 0.12, paint), front - 5, a, 0.175);
     // Their back line, toward the street.
-    put(box(0.12, 0.02, 12, paint), front - 7.5, -5, 0.175);
+    put(box(0.12, 0.02, 15, paint), front - 7.5, -6.5, 0.175);
+    // Somebody else's car in a stall or two, on the far side from where yours parks (-3.5) and backs out.
+    for (const a of [-12.5, -9.5]) {
+      if (rng() < 0.45) continue;
+      const car = parkedCar(rng);
+      if (!car) continue;
+      car.position.copy(at(front - 5.2, a, 0.16));
+      car.rotation.y = Math.atan2(out.x, out.z) + (rng() - 0.5) * 0.08;
+      g.add(car);
+    }
   }
   // Curbs down both sides of the lot.
   for (const a of [-LOT_ALONG / 2 + 0.2, LOT_ALONG / 2 - 0.2]) put(box(LOT_DEPTH - 1, 0.22, 0.35, concrete), LOT_NEAR + LOT_DEPTH / 2, a, 0.27);
@@ -553,6 +578,108 @@ function lotDressing(
     can.castShadow = true;
     put(can, front - 1.2, LOT_ALONG / 2 - 3, 0.64);
   }
+}
+
+/**
+ * Each lot gets things that say what it is, out of the car's way (the car comes in
+ * from a = -14 and parks at a = -3.5; these stay on the a > 1 side or at the back).
+ */
+function placeProps(
+  g: THREE.Group,
+  place: PlaceKind,
+  at: (o: number, a: number, h?: number) => THREE.Vector3,
+  fwd: THREE.Vector3,
+  out: THREE.Vector3,
+  front: number,
+  mat: Mat,
+  rng: () => number,
+): void {
+  const yaw = Math.atan2(fwd.x, fwd.z);
+  const put = (m: THREE.Object3D, o: number, a: number, h: number, turn = 0) => {
+    m.position.copy(at(o, a, h));
+    m.rotation.y = yaw + turn;
+    m.traverse((x) => ((x as THREE.Mesh).castShadow = (x as THREE.Mesh).receiveShadow = true));
+    g.add(m);
+    return m;
+  };
+  const tire = () => {
+    const t = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.18, 8, 16), mat({ color: 0x222222, roughness: 0.9 }));
+    t.rotation.x = Math.PI / 2;
+    const w = new THREE.Group();
+    w.add(t);
+    return w;
+  };
+  if (place === 'garage') {
+    // Stacks of old tyres and a couple of oil drums by the building.
+    for (const [o, a, n] of [[front - 1.5, 7, 4], [front - 1.5, 8.3, 3], [front - 3, 7.6, 2]] as [number, number, number][])
+      for (let k = 0; k < n; k++) put(tire(), o, a, 0.36 + k * 0.36);
+    for (const a of [10, 11.1]) put(new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 1.2, 12), mat({ color: 0x2f5f9f, metalness: 0.3 })), front - 1.4, a, 0.76);
+  } else if (place === 'grocery') {
+    // A row of shopping carts by the front.
+    const metal = mat({ color: 0xc0c4c8, metalness: 0.7, roughness: 0.35 });
+    const red = mat({ color: 0xd13b2c });
+    for (let k = 0; k < 4; k++) {
+      const cart = new THREE.Group();
+      cart.add(box(0.9, 0.6, 0.6, metal).translateY(0.75));
+      cart.add(box(0.9, 0.06, 0.06, red).translateY(1.1).translateX(-0.5));
+      for (const [x, z] of [[-0.35, -0.25], [0.35, -0.25], [-0.35, 0.25], [0.35, 0.25]]) cart.add(box(0.08, 0.4, 0.08, metal).translateX(x).translateZ(z).translateY(0.24));
+      put(cart, front - 2, 6 + k * 0.55, 0.16, Math.PI / 2);
+    }
+  } else if (place === 'police') {
+    // A police car parked nose-in by the station.
+    const cop = modelMesh('car-cop');
+    if (cop) {
+      const c = new THREE.Group();
+      c.add(cop);
+      c.position.copy(at(front - 5.2, 5.5, 0.16));
+      c.rotation.y = Math.atan2(out.x, out.z);
+      c.traverse((x) => ((x as THREE.Mesh).castShadow = true));
+      g.add(c);
+    }
+  } else if (place === 'barn') {
+    // Hay bales and a wooden fence along the yard.
+    const hay = mat({ color: 0xe8c860, roughness: 1 });
+    for (const [o, a, h] of [[front - 2, 6, 0.55], [front - 2, 7.3, 0.55], [front - 2, 6.65, 1.35], [front - 6, 10, 0.55]] as [number, number, number][]) put(box(0.8, 0.8, 1.2, hay), o, a, h);
+    const wood = mat({ color: 0x7a5a3a });
+    for (let i = 0; i <= 8; i++) put(box(0.15, 1.2, 0.15, wood), LOT_NEAR + 2 + i * 3, LOT_ALONG / 2 - 0.8, 0.76);
+    for (const h of [0.6, 1.1]) put(box(24, 0.12, 0.08, wood), LOT_NEAR + 14, LOT_ALONG / 2 - 0.8, h + 0.16);
+  } else if (place === 'junkyard') {
+    // A chain-link fence round the back and sides, and a pile of old tyres.
+    const wire = mat({ color: 0x9aa0a6, metalness: 0.6, roughness: 0.4, transparent: true, opacity: 0.55 });
+    const post = mat({ color: 0x6a7076, metalness: 0.6 });
+    const deep = LOT_NEAR + LOT_DEPTH - 0.5;
+    for (const a of [-LOT_ALONG / 2 + 0.5, LOT_ALONG / 2 - 0.5]) {
+      put(box(LOT_DEPTH - 10, 1.9, 0.04, wire), deep - (LOT_DEPTH - 10) / 2, a, 1.1);
+      for (let i = 0; i <= 5; i++) put(box(0.1, 2.0, 0.1, post), deep - i * 4, a, 1.16);
+    }
+    put(box(0.04, 1.9, LOT_ALONG - 1, wire).rotateY(0), deep, 0, 1.1);
+    for (let k = 0; k < 6; k++) put(tire(), front - 2 + (k % 2) * 0.5, 9 + Math.floor(k / 2) * 0.9, 0.36 + (k % 3) * 0.2);
+  } else if (place === 'pharmacy' || place === 'hardware' || place === 'gunshop') {
+    // A bench by the door.
+    const wood = mat({ color: 0x8a6a4a });
+    const bench = new THREE.Group();
+    bench.add(box(0.5, 0.08, 1.8, wood).translateY(0.5));
+    bench.add(box(0.08, 0.5, 1.8, wood).translateY(0.8).translateX(0.22));
+    for (const z of [-0.8, 0.8]) bench.add(box(0.45, 0.5, 0.08, mat({ color: 0x333333 })).translateY(0.25).translateZ(z));
+    put(bench, front - 1.2, 7.5, 0.16);
+    if (place === 'hardware') for (let k = 0; k < 3; k++) put(box(0.6, 0.5, 0.4, mat({ color: [0xd1772c, 0x4fa04f, 0x5b9fe8][k] })), front - 1.5, 10 + k * 0.7, 0.41);
+  }
+  void rng;
+}
+
+/** Colours for parked cars: everyday paint, never the player's red. */
+const PARKED_COLOURS = [0x3a6ea5, 0xd9d4c8, 0x2e2e33, 0x6b8f5a, 0xb8a27a, 0x8a2c3a, 0x5b6f80, 0xe8e4da];
+
+/** A parked car (the shared car models, Medium and High only); null on Low. */
+function parkedCar(rng: () => number): THREE.Group | null {
+  if (!modelsWanted()) return null;
+  const car = makeTrafficVehicle('car', PARKED_COLOURS[Math.floor(rng() * PARKED_COLOURS.length)] + Math.floor(rng() * 5));
+  car.name = 'parkedCar';
+  car.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (m.isMesh) m.castShadow = m.receiveShadow = true;
+  });
+  return car;
 }
 
 /** Simple building for Low graphics or before the models load: walls, roof, door, the place's colour. */
@@ -890,5 +1017,72 @@ function furnish(g: THREE.Group, place: PlaceKind, size: THREE.Vector3, mat: Mat
     for (const [x, y, z] of [[-1.8, 0.56, -0.8], [-0.6, 0.56, -0.8], [-1.2, 1.36, -0.8], [1.6, 0.56, 1.2]] as [number, number, number][]) add(box(1.1, 0.8, 0.7, hay), x, y, z);
     for (const x of [0.6, 1.2]) add(box(0.5, 0.7, 0.4, mat({ color: 0xd8ccb0 })), x, 0.51, -d / 2 + 0.6);
     add(box(0.12, 1.8, 0.12, mat({ color: 0x6b4a2a })), 2.2, 1.06, -d / 2 + 0.5).rotation.z = 0.3;
+  }
+
+  // Things every room has, so none feels empty: a window on each side wall with daylight in it,
+  // a clock on the back wall, and a potted plant in the front corner away from the door.
+  const glass = mat({ color: 0xcfe8ff, emissive: 0x9fd0ff, emissiveIntensity: 0.55, roughness: 0.2 });
+  const sill = mat({ color: 0xf4f1ea });
+  for (const sx of [-1, 1]) {
+    const x = sx * (w / 2 - 0.16);
+    add(box(0.04, 1.0, 1.6, glass), x, 1.55, 0.3);
+    add(box(0.1, 0.08, 1.8, sill), x, 1.02, 0.3);
+    add(box(0.1, 1.08, 0.08, sill), x, 1.55, 0.3);
+  }
+  if (place !== 'barn' && place !== 'junkyard') {
+    const face = new THREE.Mesh(new THREE.CircleGeometry(0.32, 20), mat({ color: 0xffffff }));
+    add(face, 1.5, 2.55, -d / 2 + 0.17);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.33, 0.04, 6, 20), mat({ color: 0x333333 }));
+    add(ring, 1.5, 2.55, -d / 2 + 0.17);
+    add(box(0.04, 0.22, 0.02, mat({ color: 0x222222 })), 1.5, 2.63, -d / 2 + 0.19);
+    add(box(0.16, 0.04, 0.02, mat({ color: 0x222222 })), 1.57, 2.55, -d / 2 + 0.19);
+  }
+  const plant = new THREE.Group();
+  plant.add(new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.22, 0.45, 12), mat({ color: 0xb4583a })).translateY(0.22));
+  for (let k = 0; k < 5; k++) {
+    const leaf = new THREE.Mesh(new THREE.SphereGeometry(0.26, 8, 6), mat({ color: [0x3f8f4a, 0x4fa85a, 0x2f7a3c][k % 3] }));
+    leaf.position.set(Math.cos(k * 1.3) * 0.15, 0.6 + (k % 3) * 0.18, Math.sin(k * 1.3) * 0.15);
+    plant.add(leaf);
+  }
+  add(plant, dx > 0 ? -w / 2 + 0.8 : w / 2 - 0.8, FLOOR_Y, d / 2 - 0.9);
+
+  // A few more things a kid can name, by place.
+  if (place === 'police') {
+    // A flag on a pole, and a chair at the desk.
+    add(box(0.06, 2.4, 0.06, mat({ color: 0xc0c4c8, metalness: 0.6 })), -3.2, 1.36, -0.2);
+    const flag = canvasTexture(96, 64, (c) => {
+      for (let i = 0; i < 7; i++) {
+        c.fillStyle = i % 2 ? '#ffffff' : '#c8202a';
+        c.fillRect(0, i * (64 / 7), 96, 64 / 7 + 1);
+      }
+      c.fillStyle = '#1f3f8f';
+      c.fillRect(0, 0, 42, 34);
+    });
+    add(new THREE.Mesh(new THREE.PlaneGeometry(1.0, 0.66), new THREE.MeshStandardMaterial({ map: flag, side: THREE.DoubleSide })), -2.68, 2.2, -0.2);
+    add(box(0.6, 0.08, 0.6, mat({ color: 0x222222 })), -1.5, 0.72, 0.4);
+    add(box(0.6, 0.7, 0.08, mat({ color: 0x222222 })), -1.5, 1.05, 0.68);
+  } else if (place === 'grocery') {
+    // A stack of red baskets and fruit crates by the till.
+    for (let k = 0; k < 4; k++) add(box(0.6, 0.18, 0.4, mat({ color: 0xd13b2c })), -1.6, 0.35 + k * 0.17, d / 2 - 2.2);
+    for (const [x, c] of [[1.8, 0xff8a2a], [2.6, 0xe0302a]] as [number, number][]) {
+      add(box(0.7, 0.35, 0.5, mat({ color: 0xa0784a })), x, 0.44, d / 2 - 1.4);
+      for (let i = 0; i < 3; i++) add(new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 6), mat({ color: c })), x - 0.2 + i * 0.2, 0.68, d / 2 - 1.4);
+    }
+  } else if (place === 'pharmacy') {
+    // Waiting chairs.
+    for (const x of [-2.4, -1.6]) {
+      add(box(0.6, 0.08, 0.6, mat({ color: 0x5b9fe8 })), x, 0.7, d / 2 - 2.0);
+      add(box(0.6, 0.6, 0.08, mat({ color: 0x5b9fe8 })), x, 1.0, d / 2 - 1.72);
+    }
+  } else if (place === 'garage') {
+    // A workbench with a vice, and an oil stain.
+    add(box(2.2, 0.9, 0.8, mat({ color: 0x6b4a2a })), -2.6, 0.61, -d / 2 + 1.0);
+    add(box(0.3, 0.25, 0.25, mat({ color: 0x3a6ea5, metalness: 0.5 })), -2.0, 1.2, -d / 2 + 1.0);
+    add(new THREE.Mesh(new THREE.CircleGeometry(0.9, 16), mat({ color: 0x1a1a1a, roughness: 0.2 })).rotateX(-Math.PI / 2), 0.3, FLOOR_Y + 0.01, 0.8);
+  } else if (place === 'motel') {
+    // A picture over the bed and a suitcase stand.
+    add(box(1.4, 0.9, 0.05, mat({ color: 0x8a6a4a })), -1, 2.0, -d / 2 + 0.17);
+    add(box(1.2, 0.7, 0.04, mat({ color: 0x7fc8e8 })), -1, 2.0, -d / 2 + 0.2);
+    add(box(0.6, 0.12, 0.6, mat({ color: 0xffd23f })), -1.15, 1.9, -d / 2 + 0.23);
   }
 }

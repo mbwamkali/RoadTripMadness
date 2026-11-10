@@ -308,8 +308,29 @@ export function makeRide(ride: 'car' | 'motorcycle' | 'truck', up?: Upgrades): T
   // The detailed muscle car and pickup keep the code model's turn signals, gun and bolt-on upgrades.
   if (ride === 'car') return withHd('car', makeCar(undefined, up), 'length', keepOnRide);
   if (ride === 'truck') return withHd('pickup', codeRide(ride, up), 'length', keepOnRide);
-  return codeRide(ride, up);
+  // The detailed motorcycle keeps the code rider (swapped for the walker in DriveScene), sat lower and further back on its seat.
+  const bike = withHd('motorcycle', codeRide(ride, up), 'length', (o) => keepOnRide(o) || o.name === 'rider');
+  if (bike.getObjectByName('hd')) {
+    bike.getObjectByName('rider')?.position.set(0, HD_BIKE_SEAT.y, HD_BIKE_SEAT.z);
+    // Turn signals small, on the model's own indicators; the gun tucked along the tank.
+    bike.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!/^blink[LR]$/.test(o.name) || !m.isMesh) return;
+      const front = o.position.z > 0;
+      o.scale.setScalar(0.45);
+      o.position.set(Math.sign(o.position.x) * (front ? 0.28 : 0.23), front ? 0.9 : 0.73, front ? 0.6 : -0.97);
+    });
+    const gun = bike.getObjectByName('gun');
+    if (gun) {
+      gun.position.set(0.3, 0.86, 0.3);
+      gun.scale.set(0.8, 0.8, 0.75);
+    }
+  }
+  return bike;
 }
+
+/** How far the rider moves to sit on the detailed motorcycle's seat (it's lower and longer than the code bike's). */
+export const HD_BIKE_SEAT = { y: -0.26, z: -0.3 };
 
 /** Parts of a code-built ride that stay on its detailed model. */
 const keepOnRide = (o: THREE.Object3D) => /^(blink|glow)/.test(o.name) || o.name === 'gun' || !!o.userData.upgrade;

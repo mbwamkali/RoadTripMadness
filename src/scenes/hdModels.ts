@@ -30,6 +30,7 @@ export const HD_SPECS = {
   sedan: { turn: -90 },
   van: { turn: -90 },
   semi: { turn: -90 },
+  motorcycle: { turn: 0 },
 } as const;
 export type HdName = keyof typeof HD_SPECS;
 

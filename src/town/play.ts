@@ -19,6 +19,8 @@ import { lit } from '../scenes/materials';
 import { person, type Person } from '../scenes/people';
 import { CRATE_GLOW, type TownSpot, type TownWorld } from './world';
 import { daylight, hourOf } from '../game/time';
+import { hashString } from '../game/rng';
+import { testing } from '../game/testFlag';
 
 /**
  * Playing a town: you turn off the highway onto Main Street in the road
@@ -66,6 +68,8 @@ const INSIDE_SCALE = 1.3;
 /** Town driving speed (units a second, about 22 mph). */
 export const TOWN_SPEED = 10;
 export const WALK_SPEED = 4.2;
+/** The town cyclist's speed (m/s, about 9 mph). */
+const CYCLE_SPEED = 4;
 export const RUN_SPEED = 7.5;
 /** Back to Main Street: the U-turn's radius (m), how far below the stop its middle sits (m), its speed (x TOWN_SPEED). */
 const U_TURN_RADIUS = 3.4;
@@ -172,6 +176,7 @@ export class TownPlay {
     this.walker = this.walkerRig?.obj ?? codeWalker();
     this.walker.visible = false;
     host.scene.add(this.walker);
+    this.addLocals();
     this.camPos.copy(host.camera.position);
     const look = new THREE.Vector3();
     host.camera.getWorldDirection(look);
@@ -187,6 +192,87 @@ export class TownPlay {
       hooks.changed();
     });
     hooks.changed();
+  }
+
+  /** Town folk (Medium and High): the hitchhiker thumbing a ride by the way in, and a cyclist going up and down Main Street. */
+  private locals: { rig: Person; path: THREE.Vector3[] | null; d: number; speed: number }[] = [];
+
+  private addLocals(): void {
+    const h = hashString(this.hooks.stopId);
+    // About half the towns have each; a practice town has both so they're easy to check.
+    const hitch = testing.on || h % 2 === 0;
+    const cyclist = testing.on || Math.floor(h / 2) % 2 === 0;
+    // The kerb side of each lane: the lane pushed 1.5 m away from the other lane.
+    const kerb = (lane: THREE.Vector3[], other: THREE.Vector3[]) =>
+      lane.map((p) => {
+        let best = other[0];
+        for (const q of other) if (q.distanceToSquared(p) < best.distanceToSquared(p)) best = q;
+        const away = p.clone().sub(best).setY(0);
+        return away.lengthSq() > 0.01 ? p.clone().addScaledVector(away.normalize(), 1.5) : p.clone();
+      });
+    if (hitch) {
+      const rig = person('hitchhiker');
+      const lane = kerb(this.laneIn, this.laneOut);
+      const i = Math.min(lane.length - 1, 2);
+      if (rig && lane.length > 1) {
+        // On the sidewalk by the way in, facing the cars coming up the street.
+        const at = lane[i].clone();
+        const next = lane[Math.min(lane.length - 1, i + 1)];
+        const side = at.clone().sub(this.laneIn[i]).setY(0).normalize();
+        rig.obj.position.copy(at).addScaledVector(side, 2.2).setY(0);
+        const look = this.laneIn[0].clone().sub(next).setY(0);
+        rig.obj.rotation.y = Math.atan2(look.x, look.z) + 0.5 * Math.sign(side.x * look.z - side.z * look.x || 1);
+        rig.play('thumb');
+        this.host.scene.add(rig.obj);
+        this.locals.push({ rig, path: null, d: 0, speed: 0 });
+      }
+    }
+    if (cyclist) {
+      const rig = person('cyclist');
+      const up = kerb(this.laneIn, this.laneOut);
+      const down = kerb(this.laneOut, this.laneIn);
+      // Up the street by the kerb, and back down the other side.
+      const loop = [...up, ...down.slice().reverse().filter((p) => p.distanceTo(up[up.length - 1]) > 1)];
+      if (rig && loop.length > 3) {
+        rig.play('pedal', 0.8);
+        this.host.scene.add(rig.obj);
+        this.locals.push({ rig, path: loop, d: (h % 97) / 97, speed: CYCLE_SPEED });
+      }
+    }
+  }
+
+  private updateLocals(dt: number): void {
+    for (const l of this.locals) {
+      l.rig.update(dt);
+      if (!l.path) continue;
+      const pts = l.path;
+      // Total length once (kept on the array).
+      let len = (pts as unknown as { len?: number }).len;
+      if (!len) {
+        len = 0;
+        for (let i = 1; i < pts.length; i++) len += pts[i].distanceTo(pts[i - 1]);
+        len += pts[0].distanceTo(pts[pts.length - 1]);
+        (pts as unknown as { len?: number }).len = len;
+      }
+      l.d = (l.d + (l.speed * dt) / len) % 1;
+      let left = l.d * len;
+      for (let i = 0; i < pts.length; i++) {
+        const a = pts[i];
+        const b = pts[(i + 1) % pts.length];
+        const seg = a.distanceTo(b);
+        if (left <= seg || i === pts.length - 1) {
+          const t = seg > 0 ? Math.min(1, left / seg) : 0;
+          l.rig.obj.position.lerpVectors(a, b, t).setY(0);
+          const yaw = Math.atan2(b.x - a.x, b.z - a.z);
+          // Ease the turn at the ends.
+          let dy = yaw - l.rig.obj.rotation.y;
+          dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+          l.rig.obj.rotation.y += dy * Math.min(1, dt * 4);
+          break;
+        }
+        left -= seg;
+      }
+    }
   }
 
   // ---------------------------------------------------------------- what the HUD asks
@@ -881,6 +967,7 @@ export class TownPlay {
     this.updateCrates(dt);
     this.updateFly(dt);
     this.updateZombies(dt);
+    this.updateLocals(dt);
     this.fx = this.fx.filter((f) => {
       f.life -= dt;
       f.obj.position.y += f.vy * dt;
@@ -1237,6 +1324,7 @@ export class TownPlay {
   }
 
   dispose(): void {
+    for (const l of this.locals) this.host.scene.remove(l.rig.obj);
     for (const z of this.zombies) this.host.scene.remove(z.obj);
     for (const f of this.fx) this.host.scene.remove(f.obj);
     for (const f of this.fly) {
