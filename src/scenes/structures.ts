@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { lit } from './materials';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { Structure } from '../game/structures';
 import type { Path } from '../geo/geo';
@@ -22,8 +23,8 @@ function stations(from: number, to: number): number[] {
 }
 
 /** Per-chunk material, freed with the chunk. */
-function mat(color: number, extra: THREE.MeshLambertMaterialParameters = {}): THREE.MeshLambertMaterial {
-  const m = new THREE.MeshLambertMaterial({ color, ...extra });
+function mat(color: number, extra: THREE.MeshStandardMaterialParameters = {}): THREE.MeshStandardMaterial {
+  const m = lit({ color, ...extra });
   m.userData.chunkOwned = true;
   return m;
 }

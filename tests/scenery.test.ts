@@ -40,3 +40,20 @@ describe('procedural scenery offline', () => {
     expect(stops.some((s) => /\d/.test(s.street!) || / (St|Ave|Rd|Ln|Blvd|Dr|Loop)$/.test(s.street!))).toBe(true);
   });
 });
+
+describe('mountains only where the land has them', () => {
+  it('turns a mound in flat country into a hill, and keeps mountains in mountain country', async () => {
+    const { isMountain } = await import('../src/game/landmarks');
+    expect(isMountain({ name: 'Huntington Mound' }, 'subtropical')).toBe(false);
+    expect(isMountain({ name: 'Big Bald' }, 'subtropical')).toBe(false);
+    expect(isMountain({ name: 'Signal Hill' }, 'mountains')).toBe(false);
+    expect(isMountain({ name: 'Pikes Peak', ele: 4302 }, 'mountains')).toBe(true);
+    expect(isMountain({ name: 'Low Peak', ele: 300 }, 'mountains')).toBe(false);
+  });
+
+  it('puts no made-up mountain ranges on the Gulf coast', () => {
+    const { route, path, stops } = trip('Houston', 'Beaumont');
+    const marks = fillLandmarks(route, path.length, stops, route.landmarks ?? [], 5);
+    expect(marks.filter((l) => l.kind === 'mountains' || l.kind === 'peak')).toHaveLength(0);
+  });
+});

@@ -15,6 +15,29 @@ This product bundles third-party data and assets under their own terms:
 - Ground, asphalt and gravel textures from Poly Haven (CC0, public domain).
 - Low-poly 3D models (cars, zombie, trees, plants, rocks, buildings)
   by Quaternius, https://quaternius.com (CC0, public domain).
+- Detailed 3D models in public/models/hd/ generated for this game from its own
+  concept pictures (made with FLUX.1 schnell, Apache 2.0): vehicles, bosses,
+  enemies and animals with Tripo image-to-3D (https://www.tripo3d.ai); buildings,
+  houses and landmarks with Microsoft TRELLIS.2 (MIT) in ComfyUI. Shrunk with
+  glTF Transform (MIT). The people in public/models/hd/people/ were rigged and
+  animated for this game with Blender (https://www.blender.org) by
+  scripts/rig-people.py.
+- Town streets and shop names from OpenStreetMap (ODbL), looked up per town
+  through the Overpass API.
+- Bump maps ground_n.jpg and asphalt_n.jpg made from the Poly Haven textures.
+- Car radio instruments in public/audio/inst/ from the FluidR3 GM soundfont
+  by Frank Wen, as prepared by Benjamin Gleitzman
+  (https://github.com/gleitz/midi-js-soundfonts), licensed CC BY 3.0
+  (https://creativecommons.org/licenses/by/3.0/). Only the notes the songs use
+  are included. The songs themselves are written for this game.
+- Drum kit in public/audio/drums/ from the Versilian Community Sample Library
+  (https://github.com/sgossner/VCSL, CC0, public domain).
+- Cat sounds in public/audio/cats/ from OpenGameArt.org: meows and purrs by
+  kerzoven, ignasd and antumdeluge (CC0, public domain); upset-cat sounds
+  ("Cat SFX") by macro, licensed CC BY 3.0
+  (https://opengameart.org/content/cat-sfx). Trimmed, levelled and retuned.
 - Live weather from Open-Meteo.com (CC BY 4.0), fetched at play time.
+- Weekly U.S. average gasoline price from the U.S. Energy Information
+  Administration (public domain), saved to public/data/gas-price.json.
 
 See docs/CREDITS.md for details.

@@ -14,10 +14,14 @@ export interface FeatureFile {
   version: 1;
   q: number;
   kinds: string[];
-  /** [kind, name, lng, lat, flags, wiki]; flags bit 0 truck stop, bit 1 city, bit 2 village. */
-  points: [number, string, number, number, number, string][];
+  /** [kind, name, lng, lat, flags, wiki, ele?]; flags bit 0 truck stop, bit 1 city, bit 2 village; ele = a peak's height in metres. */
+  points: [number, string, number, number, number, string, number?][];
   /** [kind, name, wiki, [lng, lat, dlng, dlat, ...]] (river pieces around highway crossings). */
   lines: [number, string, string, number[]][];
+  /** Main streets crossing the highways: [lng, lat, mainDeg, crossDeg, kind, both, lanes, name] (see scripts/osm_features.py). */
+  crossings?: [number, number, number, number, number, number, number, string][];
+  /** Highways on bridges over other highways: [lng, lat, deg of the upper road]. */
+  bridges?: [number, number, number][];
 }
 
 /** How near the route each kind must be, in metres. */
@@ -58,7 +62,7 @@ export function featuresNear(files: FeatureFile[], coords: LatLng[]): MapFeature
   const lines: { f: MapFeature; mid: LatLng }[] = [];
   for (const file of files) {
     const q = file.q;
-    for (const [k, name, x, y, flags, w] of file.points) {
+    for (const [k, name, x, y, flags, w, ele] of file.points) {
       const kind = file.kinds[k] as MapFeature['kind'];
       const wiki = wikiFrom(w);
       const f: MapFeature = {
@@ -68,6 +72,7 @@ export function featuresNear(files: FeatureFile[], coords: LatLng[]): MapFeature
         ...(kind === 'fuel' && flags & 1 ? { truck: true } : {}),
         ...(kind === 'citysign' && flags & 2 ? { big: true } : {}),
         ...(wiki ? { wiki } : {}),
+        ...(typeof ele === 'number' ? { ele } : {}),
       };
       const reach = REACH[kind === 'citysign' && flags & 4 ? 'village' : kind] ?? SIGHT_REACH;
       points.push({ lat: y / q, lng: x / q, f, reach });
@@ -107,11 +112,17 @@ const fileLoads = new Map<string, Promise<FeatureFile>>();
  * has none (built before they were added) or they can't be loaded.
  */
 export async function loadRouteFeatures(coords: LatLng[]): Promise<MapFeature[] | null> {
+  const files = await loadFeatureFiles(coords);
+  return files ? featuresNear(files, coords) : null;
+}
+
+/** The baked feature files a route passes through (cached), or null when this road build has none. */
+export async function loadFeatureFiles(coords: LatLng[]): Promise<FeatureFile[] | null> {
   try {
     const index = await loadRoadIndex();
     if (!index.features) return null;
     const v = encodeURIComponent(index.built);
-    const files = await Promise.all(
+    return await Promise.all(
       featureTilesAlong(index, coords).map(([x, y]) => {
         const name = `features/${x}_${y}.json?v=${v}`;
         let load = fileLoads.get(name);
@@ -123,7 +134,6 @@ export async function loadRouteFeatures(coords: LatLng[]): Promise<MapFeature[] 
         return load;
       }),
     );
-    return featuresNear(files, coords);
   } catch {
     return null;
   }

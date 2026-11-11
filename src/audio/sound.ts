@@ -1,10 +1,16 @@
 /**
- * All game audio is synthesized with the Web Audio API, so there are no
- * sound files to download. Browsers only allow audio after a user gesture,
- * so `unlock()` is called from the first tap.
+ * Game sound effects are synthesized with the Web Audio API. The car radio
+ * (radio.ts) plays written-out songs on recorded instruments. Browsers only
+ * allow audio after a user gesture, so `unlock()` is called from the first tap.
  */
+import { Radio } from './radio';
+import { STATIONS, type SongId, type StationId } from './songs';
+import type { BossKind } from '../game/combat';
 
-type Station = 'off' | 'twang' | 'synth';
+export type Station = 'off' | StationId;
+const STATION_ORDER: Station[] = ['off', ...STATIONS.map((s) => s.id as StationId)];
+/** Music level into the master bus: under the game sounds and the narrator. */
+const MUSIC_VOLUME = 0.45;
 
 interface Settings {
   sfx: boolean;
@@ -15,9 +21,12 @@ const KEY = 'rtm-audio';
 
 function loadSettings(): Settings {
   try {
-    return { sfx: true, station: 'twang', ...(JSON.parse(localStorage.getItem(KEY) || '{}') as Partial<Settings>) };
+    const saved = { sfx: true, station: 'road', ...(JSON.parse(localStorage.getItem(KEY) || '{}') as Partial<Settings>) } as Settings;
+    // The old stations (KTWG Country, Neon FM) are gone: anyone who had one on gets Home Stretch.
+    if (!STATION_ORDER.includes(saved.station)) saved.station = 'road';
+    return saved;
   } catch {
-    return { sfx: true, station: 'twang' };
+    return { sfx: true, station: 'road' };
   }
 }
 
@@ -25,18 +34,19 @@ class Sound {
   private ctx: AudioContext | null = null;
   private master!: GainNode;
   private sfxBus!: GainNode;
-  private musicBus!: GainNode;
   private noiseBuf!: AudioBuffer;
   private engineOsc: OscillatorNode | null = null;
   private engineSub: OscillatorNode | null = null;
   private engineGain: GainNode | null = null;
   private engineFilter: BiquadFilterNode | null = null;
   private engineKey = '';
-  private musicTimer = 0;
-  private musicStep = 0;
-  private nextNoteTime = 0;
-  private musicPlaying = false;
+  private radio: Radio | null = null;
+  private backgroundLoading = false;
+  /** What the music should be doing: off, the station while driving, or a fight. */
+  private musicMode: { kind: 'off' } | { kind: 'drive' } | { kind: 'fight'; boss?: BossKind } = { kind: 'off' };
   settings = loadSettings();
+  /** Called when the radio can't load a song (offline before it ever played). */
+  onRadioFail: ((id: SongId) => void) | null = null;
 
   /** Creates or resumes the audio context. Safe to call on every tap. */
   unlock(): void {
@@ -50,17 +60,14 @@ class Sound {
       this.sfxBus = this.ctx.createGain();
       this.sfxBus.gain.value = this.settings.sfx ? 1 : 0;
       this.sfxBus.connect(this.master);
-      this.musicBus = this.ctx.createGain();
-      this.musicBus.gain.value = 0.22;
-      this.musicBus.connect(this.master);
+      this.radio = new Radio(this.ctx, this.master);
+      this.radio.onFail = (id) => this.onRadioFail?.(id);
       const len = this.ctx.sampleRate;
       this.noiseBuf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
       const d = this.noiseBuf.getChannelData(0);
       for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
     }
-    const kick = () => {
-      if (this.musicPlaying && !this.musicTimer) this.startMusic();
-    };
+    const kick = () => this.applyMusic();
     if (this.ctx.state === 'suspended') void this.ctx.resume().then(kick);
     else kick();
   }
@@ -79,14 +86,18 @@ class Sound {
     if (this.ctx) this.sfxBus.gain.value = on ? 1 : 0;
   }
 
-  /** Cycles the car radio: off → twang → synth → off. Returns the new station. */
+  /** Tunes the radio to a station for this page load only (test trips: &radio=...). */
+  tuneTo(st: Station): void {
+    if (!STATION_ORDER.includes(st)) return;
+    this.settings.station = st;
+    this.applyMusic();
+  }
+
+  /** Cycles the car radio: off, then each station in turn. Returns the new station. */
   nextStation(): Station {
-    const order: Station[] = ['off', 'twang', 'synth'];
-    this.settings.station = order[(order.indexOf(this.settings.station) + 1) % order.length];
+    this.settings.station = STATION_ORDER[(STATION_ORDER.indexOf(this.settings.station) + 1) % STATION_ORDER.length];
     this.save();
-    this.musicStep = 0;
-    if (this.settings.station === 'off') this.haltScheduler();
-    else if (this.musicPlaying) this.startMusic();
+    this.applyMusic();
     return this.settings.station;
   }
 
@@ -334,57 +345,57 @@ class Sound {
 
   // ------------------------------------------------------------ car radio
 
-  /** Plays the current station (if not off) while driving. */
+  /** Plays the chosen station (if not off) while driving. */
   startMusic(): void {
-    this.musicPlaying = true;
-    if (!this.ready || this.settings.station === 'off') return;
-    this.haltScheduler();
-    this.nextNoteTime = this.t + 0.1;
-    this.musicTimer = window.setInterval(() => this.scheduleMusic(), 50);
+    this.musicMode = { kind: 'drive' };
+    this.applyMusic();
+    // In the background, one after another: the chosen station, the Cat Queen's song for the end of
+    // the trip, then the other stations, so switching later is instant.
+    const r = this.radio;
+    if (r && this.settings.station !== 'off' && !this.backgroundLoading) {
+      this.backgroundLoading = true;
+      const order: SongId[] = [this.settings.station, 'catqueen', ...STATIONS.map((s) => s.id)];
+      void (async () => {
+        for (const id of order) if (!(await r.preload(id))) break;
+        this.backgroundLoading = false;
+      })();
+    }
+  }
+
+  /**
+   * Music for a fight on the road: the Cat Queen gets her own song, and Home Stretch
+   * switches to its faster fight version. Other stations just keep playing.
+   */
+  fightMusic(boss?: BossKind): void {
+    this.musicMode = { kind: 'fight', boss };
+    this.applyMusic();
   }
 
   stopMusic(): void {
-    this.musicPlaying = false;
-    this.haltScheduler();
+    this.musicMode = { kind: 'off' };
+    this.applyMusic();
   }
 
-  private haltScheduler(): void {
-    window.clearInterval(this.musicTimer);
-    this.musicTimer = 0;
+  /** True when the chosen station still has to download before it can play. */
+  get tuning(): boolean {
+    const st = this.settings.station;
+    return st !== 'off' && !!this.radio && !this.radio.isLoaded(st);
   }
 
   get station(): Station {
     return this.settings.station;
   }
 
-  /** A tiny step sequencer: a I-IV-V-I bass line with chord stabs or plucks on top. */
-  private scheduleMusic(): void {
-    if (!this.ready) return;
-    const twang = this.settings.station === 'twang';
-    const bpm = twang ? 118 : 104;
-    const step = 60 / bpm / 2;
-    const roots = twang ? [110, 146.83, 164.81, 110] : [130.81, 103.83, 116.54, 98];
-    while (this.nextNoteTime < this.t + 0.25) {
-      const s = this.musicStep;
-      const bar = Math.floor(s / 8) % 4;
-      const beat = s % 8;
-      const root = roots[bar];
-      const at = this.nextNoteTime;
-      if (twang) {
-        // Boom-chicka: alternating bass, offbeat chord plucks.
-        if (beat % 2 === 0) this.tone('triangle', beat % 4 === 0 ? root : root * 1.5, step * 1.6, 0.35, { at, dest: this.musicBus });
-        else for (const m of [2, 2.52, 3]) this.tone('square', root * m, step * 0.5, 0.04, { at, dest: this.musicBus });
-        if (beat === 6 && bar % 2 === 1) this.tone('sawtooth', root * 4, step * 2, 0.05, { at, to: root * 4.5, dest: this.musicBus });
-      } else {
-        if (beat % 4 === 0) this.tone('sawtooth', root / 2, step * 3, 0.25, { at, dest: this.musicBus });
-        const arp = [1, 1.19, 1.5, 2, 1.5, 1.19, 1, 0.75][beat];
-        this.tone('square', root * 2 * arp, step * 0.8, 0.05, { at, dest: this.musicBus, detune: 6 });
-        if (beat % 2 === 1) this.noise(0.03, 'highpass', 7000, 0.06, 1, at, this.musicBus);
-        if (beat % 4 === 0) this.tone('sine', 110, 0.15, 0.3, { at, to: 45, dest: this.musicBus });
-      }
-      this.nextNoteTime += step;
-      this.musicStep++;
-    }
+  private applyMusic(): void {
+    const r = this.radio;
+    if (!r || !this.ready) return;
+    const station = this.settings.station;
+    const mode = this.musicMode;
+    if (mode.kind === 'off' || station === 'off') return r.stop();
+    if (mode.kind === 'fight' && mode.boss === 'mothership') return void r.play('catqueen', MUSIC_VOLUME);
+    const fight = mode.kind === 'fight';
+    if (r.playing === station) r.setFight(fight);
+    else void r.play(station, MUSIC_VOLUME, fight);
   }
 }
 

@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { lit } from './materials';
+import { withHd } from './hdModels';
 import type { AnimalKind } from '../game/animals';
 import { modelsWanted } from './models';
 
@@ -8,7 +10,7 @@ import { modelsWanted } from './models';
  * couple of boxes. Legs are named 'leg' so the drive view can walk them, and
  * a ring of 'stars' spins over a bumped (dazed) animal.
  */
-const lam = (color: number) => new THREE.MeshLambertMaterial({ color });
+const lam = (color: number) => lit({ color });
 
 function part(g: THREE.Object3D, geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number, name?: string): THREE.Mesh {
   const m = new THREE.Mesh(geo, mat);
@@ -87,7 +89,7 @@ function armadillo(detailed: boolean): THREE.Group {
     const ring = part(g, new THREE.CylinderGeometry(r, r, 2.4 / bands + 0.02, 12, 1, true, -Math.PI / 2, Math.PI), i % 2 ? band : shell, 0, 0.55, -1.2 + (i + 0.5) * (2.4 / bands));
     ring.rotation.x = -Math.PI / 2; // the half that stays is the top
     ring.scale.set(1, 1, 1.05);
-    (ring.material as THREE.MeshLambertMaterial).side = THREE.DoubleSide;
+    (ring.material as THREE.MeshStandardMaterial).side = THREE.DoubleSide;
   }
   part(g, new THREE.SphereGeometry(0.42, 10, 8), shell, 0, 0.75, 1.3).scale.set(1, 0.8, 1.1); // head plate
   const snout = part(g, new THREE.ConeGeometry(0.22, 0.8, 8).rotateX(Math.PI / 2), skin, 0, 0.6, 1.85);
@@ -124,7 +126,8 @@ function stars(y: number): THREE.Group {
 }
 
 export function makeAnimal(kind: AnimalKind, detailed = modelsWanted()): THREE.Group {
-  const g = kind === 'cow' ? cow(detailed) : armadillo(detailed);
+  const code = kind === 'cow' ? cow(detailed) : armadillo(detailed);
+  const g = detailed ? withHd(kind, code, 'length') : code;
   g.add(stars(kind === 'cow' ? 2.5 : 1.8));
   if (kind === 'armadillo') g.scale.setScalar(1.25);
   return g;

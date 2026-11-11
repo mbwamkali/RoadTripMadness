@@ -492,6 +492,10 @@ export class RoadNet {
     else push(this.node(p.firstNode));
     for (const leg of p.legs) pieces.push({ edge: leg.edge, from: leg.from, shape: this.edgeCoords(leg.edge, leg.from), meters: this.edgeMeters(leg.edge) });
     if (p.endPart) pieces.push({ edge: p.endPart.edge, from: -1, shape: p.endPart.shape, meters: lineMeters(p.endPart.shape) });
+    // For finding cross roads: which piece each stretch of the line came from, and the junctions passed.
+    const segPiece: number[] = [];
+    const junctions: Junction[] = [];
+    let pieceIx = 0;
     for (const leg of pieces) {
       // Exits passed on a motorway: the node where this leg starts.
       const exit = leg.from >= 0 && this.edgeClass(leg.edge) === 0 ? this.exitAt.get(leg.from) : undefined;
@@ -526,14 +530,20 @@ export class RoadNet {
           structures.push({ from: pointAlong(shape, s0 / leg.meters), to: pointAlong(shape, s1 / leg.meters), kind: kind === 2 ? 'tunnel' : 'bridge', meters: b - a });
         }
       }
+      const n0 = coords.length;
+      if (leg.from >= 0 && n0 >= 2 && pieceIx > 0) junctions.push({ node: leg.from, coord: n0 - 1, before: pieceIx - 1, after: pieceIx });
       for (let i = 1; i < shape.length; i++) push(shape[i]);
+      while (segPiece.length < coords.length - 1) segPiece.push(pieceIx);
+      pieceIx++;
       const m = leg.meters;
       meters += m;
       sinceStep += m;
     }
     push(end);
     if (coords.length < 2) throw new Error('Start and end are the same place');
+    while (segPiece.length < coords.length - 1) segPiece.push(Math.max(0, pieceIx - 1));
     steps.push(...this.townsAlong(coords, start, end));
+    const crossings = this.crossingsAlong(coords, segPiece, pieces, junctions);
     return {
       source: 'osm',
       startLabel,
@@ -545,8 +555,149 @@ export class RoadNet {
       ...(exits.length ? { exits } : {}),
       ...(limits.length ? { limits } : {}),
       ...(structures.length ? { structures } : {}),
+      ...(crossings.length ? { crossings } : {}),
       attribution: `Route ${this.attribution}, planned on this device`,
     };
+  }
+
+  /**
+   * Roads that cross the trip, from the road files already loaded (step 1 of
+   * "Overpasses and cross streets" in decisions.md). A road that shares a
+   * junction with the trip meets it at a light (a flat crossing); one that
+   * crosses the line with no shared junction goes over or under it (drawn as
+   * an overpass). Only the highways in the road files (motorway, trunk,
+   * primary) are found; local street files are left out. Results are in
+   * order along the trip, near-duplicates (both halves of a divided road,
+   * ramps beside it) merged.
+   */
+  crossingsAlong(coords: LatLng[], segPiece: number[], pieces: { edge: number; from: number }[], junctions: Junction[]): RawCrossing[] {
+    if (coords.length < 2) return [];
+    const onRoute = new Set(pieces.map((p) => p.edge));
+    const pieceName = pieces.map((p) => this.edgeName(p.edge).toLowerCase());
+    const routeNodes = new Map<number, Junction>();
+    for (const j of junctions) routeNodes.set(j.node, j);
+    const kx = (lat: number) => Math.cos((lat * Math.PI) / 180);
+    // Metres along the line at each point.
+    const along = [0];
+    for (let i = 1; i < coords.length; i++) along.push(along[i - 1] + haversineMeters(coords[i - 1], coords[i]));
+    // Fine grid of the line's stretches, and a coarse one (with its neighbours) to rule out far roads quickly.
+    const FINE = 0.01;
+    const COARSE = 0.1;
+    const key = (cx: number, cy: number) => (cx + 50_000) * 100_000 + (cy + 50_000);
+    const fine = new Map<number, number[]>();
+    const coarse = new Set<number>();
+    for (let i = 0; i < coords.length - 1; i++) {
+      const a = coords[i], b = coords[i + 1];
+      const x0 = Math.floor(Math.min(a.lng, b.lng) / FINE), x1 = Math.floor(Math.max(a.lng, b.lng) / FINE);
+      const y0 = Math.floor(Math.min(a.lat, b.lat) / FINE), y1 = Math.floor(Math.max(a.lat, b.lat) / FINE);
+      for (let cx = x0; cx <= x1; cx++) {
+        for (let cy = y0; cy <= y1; cy++) {
+          const k = key(cx, cy);
+          let list = fine.get(k);
+          if (!list) fine.set(k, (list = []));
+          list.push(i);
+          const ccx = Math.floor((cx * FINE) / COARSE), ccy = Math.floor((cy * FINE) / COARSE);
+          for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) coarse.add(key(ccx + dx, ccy + dy));
+        }
+      }
+    }
+    const found: (RawCrossing & { m: number; score: number })[] = [];
+    const flat = new Map<number, { arms: LatLng[]; names: string[]; cls: number; lanes: number }>();
+    const score = (ei: number, named: boolean) => (2 - this.edgeClass(ei)) * 2 + (named ? 3 : 0) + Math.min(4, this.edgeLanes(ei)) * 0.5;
+    for (let ei = 0; ei < this.ea.length; ei++) {
+      if (onRoute.has(ei) || this.files[this.eFile[ei]].kind === 'local' || this.edgeClass(ei) > 2) continue;
+      const a = this.ea[ei], b = this.eb[ei];
+      // Meets the trip at a junction: a flat crossing (worked out per junction below).
+      const ja = routeNodes.get(a), jb = routeNodes.get(b);
+      if (ja || jb) {
+        const at = ja ? a : b;
+        const shape = this.edgeCoords(ei, at);
+        const name = this.edgeName(ei);
+        if (!name || shape.length < 2) continue;
+        let f = flat.get(at);
+        if (!f) flat.set(at, (f = { arms: [], names: [], cls: 9, lanes: 0 }));
+        f.arms.push(shape[Math.min(shape.length - 1, 1)]);
+        f.names.push(name);
+        f.cls = Math.min(f.cls, this.edgeClass(ei));
+        f.lanes = Math.max(f.lanes, this.edgeLanes(ei));
+        continue;
+      }
+      if (this.edgeMeters(ei) < 9_000) {
+        const ax = this.nx[a] / this.q, ay = this.ny[a] / this.q;
+        if (!coarse.has(key(Math.floor(ax / COARSE), Math.floor(ay / COARSE)))) continue;
+      }
+      const shape = this.edgeCoords(ei, a);
+      const name = this.edgeName(ei);
+      for (let s = 0; s < shape.length - 1; s++) {
+        const c = shape[s], d = shape[s + 1];
+        const x0 = Math.floor(Math.min(c.lng, d.lng) / FINE), x1 = Math.floor(Math.max(c.lng, d.lng) / FINE);
+        const y0 = Math.floor(Math.min(c.lat, d.lat) / FINE), y1 = Math.floor(Math.max(c.lat, d.lat) / FINE);
+        if ((x1 - x0 + 1) * (y1 - y0 + 1) > 2500) continue;
+        const tried = new Set<number>();
+        for (let cx = x0; cx <= x1; cx++) {
+          for (let cy = y0; cy <= y1; cy++) {
+            for (const i of fine.get(key(cx, cy)) ?? []) {
+              if (tried.has(i)) continue;
+              tried.add(i);
+              const p = coords[i], q = coords[i + 1];
+              const k = kx(p.lat);
+              const hit = segmentHit((p.lng) * k, p.lat, q.lng * k, q.lat, c.lng * k, c.lat, d.lng * k, d.lat);
+              if (!hit) continue;
+              // The other half of our own road, or a road running alongside: not a crossing.
+              if (name && name.toLowerCase() === pieceName[segPiece[i]]) continue;
+              if (hit.sin < 0.34) continue;
+              const loc = { lat: p.lat + (q.lat - p.lat) * hit.t, lng: p.lng + (q.lng - p.lng) * hit.t };
+              found.push({ location: loc, toward: d, name, kind: 'over', cls: this.edgeClass(ei), lanes: this.edgeLanes(ei), both: true, m: along[i] + (along[i + 1] - along[i]) * hit.t, score: score(ei, !!name) });
+            }
+          }
+        }
+      }
+    }
+    for (const [node, f] of flat) {
+      const j = routeNodes.get(node)!;
+      // On a freeway a junction is an exit ramp, and where the trip turns onto another road it isn't a crossing.
+      if (this.edgeClass(pieces[j.after].edge) === 0 || this.edgeClass(pieces[j.before].edge) === 0) continue;
+      const here = pieceName[j.before], next = pieceName[j.after];
+      if (here !== next) continue;
+      const keep = f.arms.map((arm, i) => ({ arm, name: f.names[i] })).filter((x) => x.name.toLowerCase() !== here);
+      if (!keep.length) continue;
+      const c = coords[j.coord];
+      const prev = coords[Math.max(0, j.coord - 1)], nxt = coords[Math.min(coords.length - 1, j.coord + 1)];
+      const k = kx(c.lat);
+      const fx = (nxt.lng - prev.lng) * k, fy = nxt.lat - prev.lat;
+      const sideOf = (arm: LatLng) => Math.sign(fx * (arm.lat - c.lat) - fy * (arm.lng - c.lng) * k);
+      const sides = new Set(keep.map((x) => sideOf(x.arm)));
+      // Leave out roads that only run off at a shallow angle (a fork, not a crossing).
+      const steep = keep.filter((x) => {
+        const ax = (x.arm.lng - c.lng) * k, ay = x.arm.lat - c.lat;
+        const len = Math.hypot(ax, ay) * Math.hypot(fx, fy) || 1;
+        return Math.abs(fx * ay - fy * ax) / len > 0.34;
+      });
+      if (!steep.length) continue;
+      found.push({
+        location: c,
+        toward: steep[0].arm,
+        name: steep[0].name,
+        kind: 'flat',
+        cls: f.cls,
+        lanes: f.lanes,
+        both: sides.size > 1,
+        m: along[j.coord],
+        score: 1 + (2 - f.cls) * 2 + 3 + Math.min(4, f.lanes) * 0.5,
+      });
+    }
+    found.sort((x, y) => x.m - y.m);
+    // Merge near-duplicates: the two halves of a divided road, its ramps, a junction and the road beside it.
+    const out: (RawCrossing & { m: number; score: number })[] = [];
+    for (const c of found) {
+      const last = out[out.length - 1];
+      if (last && c.m - last.m < (c.name && c.name === last.name ? 400 : 150)) {
+        if (c.score > last.score) out[out.length - 1] = c;
+        continue;
+      }
+      out.push(c);
+    }
+    return out.map(({ m: _m, score: _s, ...c }) => c);
   }
 
   /** Cities and towns beside the route become named turn-offs, on the side of the road they are on. */
@@ -574,6 +725,40 @@ export interface EdgeSnap {
   toB: LatLng[];
   /** How far along the edge the point is, 0 to 1. */
   share: number;
+}
+
+/** A junction the trip passes through: the node, its point in the trip's line, and the pieces either side. */
+interface Junction {
+  node: number;
+  coord: number;
+  before: number;
+  after: number;
+}
+
+/** A road crossing the trip, before it's placed in the game (see game/crossings.ts). */
+export interface RawCrossing {
+  location: LatLng;
+  /** A point along the crossing road, for its direction. */
+  toward: LatLng;
+  name: string;
+  /** 'over' = the crossing road goes over the trip; 'under' = the trip goes over it; 'flat' = they meet at a light. */
+  kind: 'over' | 'under' | 'flat';
+  /** Road class of the crossing road: 0 motorway, 1 trunk, 2 primary, 3 a main street (secondary, baked). */
+  cls: number;
+  lanes: number;
+  /** A flat crossing that carries on across the trip (false: it only runs off one side, toward `toward`). */
+  both: boolean;
+}
+
+/** Where segment p→q crosses segment c→d (planar), with the sine of the angle between them. */
+export function segmentHit(px: number, py: number, qx: number, qy: number, cx: number, cy: number, dx: number, dy: number): { t: number; sin: number } | null {
+  const rx = qx - px, ry = qy - py, sx = dx - cx, sy = dy - cy;
+  const den = rx * sy - ry * sx;
+  if (Math.abs(den) < 1e-18) return null;
+  const t = ((cx - px) * sy - (cy - py) * sx) / den;
+  const u = ((cx - px) * ry - (cy - py) * rx) / den;
+  if (t < 0 || t >= 1 || u < 0 || u >= 1) return null;
+  return { t, sin: Math.abs(den) / (Math.hypot(rx, ry) * Math.hypot(sx, sy) || 1) };
 }
 
 function lineMeters(line: LatLng[]): number {

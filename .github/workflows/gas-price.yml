@@ -1,0 +1,36 @@
+name: Update gas price
+# Saves the latest U.S. average gas price from the U.S. Energy Information
+# Administration (public domain) to public/data/gas-price.json, so the game's
+# prices follow real gas prices (src/game/gasPrice.ts). EIA publishes on Mondays.
+on:
+  schedule:
+    - cron: '41 14 * * 2' # 14:41 UTC every Tuesday
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: write
+concurrency:
+  group: gas-price
+  cancel-in-progress: false
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install xlrd
+      - run: python3 scripts/update-gas-price.py
+      - name: Save and redeploy if it changed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if git diff --quiet public/data/gas-price.json; then echo "No change"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Gas price for the week of $(python3 -c "import json;print(json.load(open('public/data/gas-price.json'))['week'])")" public/data/gas-price.json
+          git push
+          # A push made with this token doesn't start other workflows, so ask for the deploy.
+          gh workflow run pages.yml --ref main

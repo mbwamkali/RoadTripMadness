@@ -1,0 +1,48 @@
+name: Deploy the overhaul preview
+# Builds this side branch into preview/ on the gh-pages site, next to the live
+# game, so it can be played on a phone without replacing the live build:
+# https://mbwamkali.github.io/RoadTripMadness/preview/
+on:
+  push:
+    branches: [claude/project-thread-l68q5j]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - name: Add road files
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # A road build made from this branch's scripts (osm-roads-preview, see osm-roads.yml) wins
+          # over the live one, so the preview can try road-build changes without touching the live game.
+          if gh release download osm-roads-preview -p osm-roads.tar.gz -D "$RUNNER_TEMP" || gh release download osm-roads -p osm-roads.tar.gz -D "$RUNNER_TEMP"; then
+            mkdir -p dist/data/osm
+            tar -xzf "$RUNNER_TEMP/osm-roads.tar.gz" -C dist/data/osm
+          fi
+      - name: Put the build in preview/ on gh-pages
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898699+github-actions[bot]@users.noreply.github.com"
+          git clone -q --depth 1 -b gh-pages "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git" "$RUNNER_TEMP/site"
+          cd "$RUNNER_TEMP/site"
+          rm -rf preview
+          cp -r "$GITHUB_WORKSPACE/dist" preview
+          git add -A
+          git commit -q -m "Preview ${GITHUB_SHA}" || exit 0
+          git push -q origin gh-pages

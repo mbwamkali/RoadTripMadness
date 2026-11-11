@@ -79,7 +79,7 @@ function measure() {
     if (inside) continue;
     const sc = scroller(el);
     // A long list may scroll; a screen's main buttons and anything on a pop-up card may not.
-    const key = !!el.closest('.actions, .card-actions, .hud') || (!!el.closest('.modal, .scavenge') && !el.closest('.upgrade, .sights'));
+    const key = !!el.closest('.actions, .card-actions, .hud') || (!!el.closest('.modal') && !el.closest('.upgrade, .sights'));
     if (sc && !key) continue;
     const kind = !sc ? 'CUT OFF' : r.top < sc.getBoundingClientRect().top - 1 && sc.scrollTop === 0 ? 'CUT OFF (above, cannot scroll up)' : 'needs scroll';
     out.push({ kind, el: label(el), rect: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)] });
@@ -90,7 +90,7 @@ function measure() {
   for (const el of document.querySelectorAll('#ui *')) {
     if (!visible(el)) continue;
     const r = el.getBoundingClientRect();
-    if (r.right > vw + 2 && getComputedStyle(el).position !== 'fixed' && !el.closest('.scavenge canvas, .town3d')) {
+    if (r.right > vw + 2 && getComputedStyle(el).position !== 'fixed' && true) {
       out.push({ kind: 'spills off right edge', el: `${el.tagName.toLowerCase()}.${[...el.classList].join('.')} "${label(el)}"`, rect: [Math.round(r.left), Math.round(r.right)] });
       break;
     }
@@ -123,13 +123,14 @@ function measure() {
 
 const STEPS = [
   ['title', async (p) => p.goto(`http://localhost:${PORT}/`)],
+  ['settings', async (p) => p.getByRole('button', { name: 'Settings' }).click()],
   ['voice', async (p) => p.getByText('Narrator voice', { exact: false }).first().click()],
-  ['howto', async (p) => (await p.goto(`http://localhost:${PORT}/`), p.getByText('How to play').click())],
-  ['scores', async (p) => (await p.goto(`http://localhost:${PORT}/`), p.getByText('High scores').click())],
-  ['about', async (p) => (await p.goto(`http://localhost:${PORT}/`), p.getByText('About and credits').click())],
-  ['classics', async (p) => (await p.goto(`http://localhost:${PORT}/`), p.getByText('Classic road trips').click())],
-  ['setup', async (p) => (await p.goto(`http://localhost:${PORT}/`), p.getByText('Plan a new trip').click())],
-  ['preview', async (p) => (await p.goto(`http://localhost:${PORT}/`), p.getByText('Quick demo trip').click())],
+  ['howto', async (p) => (await p.goto(`http://localhost:${PORT}/`), p.getByRole('button', { name: 'How to play' }).click())],
+  ['scores', async (p) => (await p.goto(`http://localhost:${PORT}/`), p.getByRole('button', { name: 'High scores' }).click())],
+  ['about', async (p) => (await p.goto(`http://localhost:${PORT}/`), p.getByRole('button', { name: 'About and credits' }).click())],
+  ['classics', async (p) => (await p.goto(`http://localhost:${PORT}/`), p.getByRole('button', { name: 'Classic road trips' }).click())],
+  ['setup', async (p) => (await p.goto(`http://localhost:${PORT}/`), p.getByRole('button', { name: 'Plan a new trip' }).click())],
+  ['preview', async (p) => (await p.goto(`http://localhost:${PORT}/`), p.getByRole('button', { name: 'Quick demo trip' }).click())],
   [
     'drive',
     async (p) => {
@@ -145,17 +146,25 @@ const STEPS = [
   ['pause', async (p) => p.evaluate(() => window.rtm.pause())],
   ['event', async (p) => (await p.evaluate(() => document.querySelector('.modal')?.remove()), p.evaluate(() => window.rtm.roadEvent()))],
   ['bike', async (p) => (await p.evaluate(() => document.querySelector('.modal')?.remove()), p.evaluate(() => window.rtm.bikeRescue()))],
-  ['town', async (p) => (await p.evaluate(() => document.querySelector('.modal')?.remove()), p.evaluate(() => void (window.auditStop = window.rtm.stop())))],
-  ['town-garage', async (p) => (await p.evaluate(() => window.rtm.visit(window.auditStop.places.includes('garage') ? 'garage' : window.auditStop.places[0])), p.waitForSelector('.sheet .place', { timeout: 8000 }))],
+  ['town', async (p) => {
+    await p.evaluate(() => document.querySelector('.modal')?.remove());
+    await p.evaluate(() => void (window.auditStop = window.rtm.stop()));
+    await p.waitForFunction(() => window.rtm.town?.phase === 'street', null, { timeout: 60000 });
+  }],
+  ['town-garage', async (p) => {
+    await p.evaluate(() => window.rtm.visit(window.auditStop.places.includes('garage') ? 'garage' : window.auditStop.places[0]));
+    await p.waitForFunction(() => window.rtm.town?.phase === 'parked', null, { timeout: 90000 });
+  }],
   ['upgrades', async (p) => p.evaluate(() => window.rtm.upgrades())],
   [
     'crates',
     async (p) => {
       await p.evaluate(() => document.querySelector('.modal')?.remove());
-      await p.locator('.sheet button', { hasText: /Search|Again/ }).first().click({ timeout: 8000 });
+      await p.evaluate(() => { const t = window.rtm.town; t.getOut(); t.goIn(t.at); });
+      await p.waitForFunction(() => window.rtm.town?.phase === 'inside', null, { timeout: 60000 });
     },
   ],
-  ['boss', async (p) => (await p.evaluate(() => { document.querySelector('.scavenge')?.remove(); document.querySelector('.modal')?.remove(); }), p.evaluate(() => window.rtm.boss('karen')))],
+  ['boss', async (p) => (await p.evaluate(() => { document.querySelector('.modal')?.remove(); window.rtm.town?.leave(); }), p.evaluate(() => window.rtm.boss('karen')))],
   ['fight', async (p) => (await p.evaluate(() => document.querySelector('.modal')?.remove()), p.evaluate(() => window.rtm.fight('zombie', false)))],
   ['end', async (p) => p.evaluate(() => window.rtm.end(true))],
 ];

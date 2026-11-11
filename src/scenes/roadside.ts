@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { lit } from './materials';
+import { signTexture } from './common';
 import type { Path } from '../geo/geo';
 
 /**
@@ -84,7 +86,7 @@ export function lampGeometries(): { post: THREE.BufferGeometry; head: THREE.Buff
     post: merged,
     head: new THREE.BoxGeometry(0.9, 0.18, 0.45).translate(2.2, 7.32, 0),
     // A pool of light on the road under the lamp.
-    glow: new THREE.CircleGeometry(3.4, 16).rotateX(-Math.PI / 2).translate(2.2, 0.14, 0),
+    glow: new THREE.PlaneGeometry(9, 9).rotateX(-Math.PI / 2).translate(2.2, 0.16, 0),
   };
 }
 
@@ -115,21 +117,22 @@ function canvasTexture(w: number, h: number, draw: (g: CanvasRenderingContext2D)
   return tex;
 }
 
-const POST_MAT = new THREE.MeshLambertMaterial({ color: 0x8a8f96 });
+const POST_MAT = lit({ color: 0x8a8f96 });
 POST_MAT.userData.shared = true;
 
 /** A sign face on one or two posts, facing back down the road toward the car (+z toward the car once placed). */
-function signOnPosts(tex: THREE.Texture, w: number, h: number, height: number, owned: boolean): THREE.Group {
+function signOnPosts(tex: THREE.Texture, w: number, h: number, height: number, owned: boolean, posts = true, cutout = false): THREE.Group {
   const g = new THREE.Group();
-  const mat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide });
+  // A cut-out face drops the transparent rounded corners of a signTexture picture.
+  const mat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide, ...(cutout ? { alphaTest: 0.5 } : {}) });
   // The material goes with the chunk; a shared texture (speed limits) stays (see disposeRoadside).
   mat.userData.chunkOwned = true;
   if (!owned) tex.userData.chunkOwned = false;
   const face = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
   face.position.y = height + h / 2;
   g.add(face);
-  const posts = w > 3 ? [-w / 3, w / 3] : [0];
-  for (const x of posts) {
+  if (!posts) return g;
+  for (const x of w > 3 ? [-w / 3, w / 3] : [0]) {
     const post = new THREE.Mesh(new THREE.BoxGeometry(0.14, height + h * 0.8, 0.14), POST_MAT);
     post.position.set(x, (height + h * 0.8) / 2, -0.06);
     g.add(post);
@@ -169,6 +172,19 @@ export function speedLimitSign(mph: number): THREE.Group {
 
 /** A green highway sign with a few lines of white text; `right` adds an arrow column for exits. */
 export function greenSign(lines: { text: string; right?: string }[], width = 6): THREE.Group {
+  const { tex, h } = greenTexture(lines, width);
+  return signOnPosts(tex, width, h, 3.4, true);
+}
+
+/** Just the face of a green sign (for hanging on a bridge), facing +z. Freed with the chunk. */
+export function greenPanel(lines: { text: string; right?: string }[], width = 6): THREE.Mesh {
+  const { tex, h } = greenTexture(lines, width);
+  const mat = new THREE.MeshBasicMaterial({ map: tex });
+  mat.userData.chunkOwned = true;
+  return new THREE.Mesh(new THREE.PlaneGeometry(width, h), mat);
+}
+
+function greenTexture(lines: { text: string; right?: string }[], width: number): { tex: THREE.CanvasTexture; h: number } {
   const rows = lines.length;
   const h = 0.9 + rows * 0.75;
   const pxW = 512;
@@ -193,7 +209,24 @@ export function greenSign(lines: { text: string; right?: string }[], width = 6):
       }
     });
   });
-  return signOnPosts(tex, width, h, 3.4, true);
+  return { tex, h };
+}
+
+/**
+ * A rounded name sign (brown sight, blue river, green turn-off and street
+ * names) as a real board on posts, w wide and h tall with its bottom edge
+ * `height` off the ground, facing back down the road like the other signs.
+ * Set posts false when something else holds it up.
+ */
+export function boardSign(text: string, sub: string, bg: string, w: number, h: number, height: number, posts = true): THREE.Group {
+  const tex = signTexture(text, sub, bg);
+  tex.userData.chunkOwned = true;
+  return signOnPosts(tex, w, h, height, true, posts, true);
+}
+
+/** Turns a sign to face back down the road at a point where the road heads along f (a 2D map direction). */
+export function faceDownRoad(sign: THREE.Object3D, f: { x: number; y: number }): void {
+  sign.rotation.y = Math.atan2(-f.x, f.y);
 }
 
 /** Frees the shared sign textures (when the drive view closes). */

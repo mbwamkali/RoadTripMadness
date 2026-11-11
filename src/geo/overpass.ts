@@ -1,8 +1,8 @@
 import type { LatLng } from './geo';
 import type { MapFeature } from '../game/landmarks';
+import { servers } from './servers';
 
-/** Public Overpass API (OpenStreetMap query service). Light use only; one query per trip. */
-export const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
+/** Public Overpass API (OpenStreetMap query service), light use only. Servers are listed in servers.ts. */
 
 /** Picks at most `max` evenly spread points from a polyline. */
 export function decimate(coords: LatLng[], max: number): LatLng[] {
@@ -148,6 +148,14 @@ function kindFor(tags: Record<string, string>): MapFeature['kind'] | null {
 }
 
 /** A Wikipedia (or Wikidata) page for a map feature, from its tags. */
+/** A peak's height in metres from its ele tag ("1234", "1234 m", "4000 ft"), or undefined. */
+export function eleOf(ele?: string): number | undefined {
+  const m = ele?.replace(',', '.').match(/^\s*(-?\d+(?:\.\d+)?)\s*(m|ft|feet)?/);
+  if (!m) return undefined;
+  const v = Number(m[1]) * (m[2] === 'ft' || m[2] === 'feet' ? 0.3048 : 1);
+  return v > -100 && v < 9000 ? Math.round(v) : undefined;
+}
+
 export function wikiUrl(tags: Record<string, string>): string | undefined {
   const m = tags.wikipedia?.match(/^([a-z-]{2,12}):(.+)$/);
   if (m) return `https://${m[1]}.wikipedia.org/wiki/${encodeURIComponent(m[2].trim().replace(/ /g, '_'))}`;
@@ -188,7 +196,8 @@ export function parseOverpass(json: { elements?: OsmElement[] }): MapFeature[] {
       out.push({ kind, name, point, ...(truck ? { truck: true } : {}) });
     } else {
       const wiki = wikiUrl(tags);
-      out.push({ kind, name, point, ...(kind === 'citysign' && isBigPlace(tags) ? { big: true } : {}), ...(wiki ? { wiki } : {}) });
+      const ele = kind === 'peak' ? eleOf(tags.ele) : undefined;
+      out.push({ kind, name, point, ...(kind === 'citysign' && isBigPlace(tags) ? { big: true } : {}), ...(wiki ? { wiki } : {}), ...(ele != null ? { ele } : {}) });
     }
   }
   return out;
@@ -209,27 +218,117 @@ async function runQuery(query: string, timeoutMs: number): Promise<MapFeature[]>
   return json ? parseOverpass(json) : [];
 }
 
-/** Runs an Overpass query and returns the raw answer, or null on any failure. */
-export async function overpassJson(query: string, timeoutMs: number, retry = true): Promise<{ elements?: OsmElement[] } | null> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const res = await fetch(OVERPASS_URL, {
-      method: 'POST',
-      body: new URLSearchParams({ data: query }),
-      signal: ctrl.signal,
-    });
-    // Busy (429) or overloaded (504): wait a moment and try once more.
-    if ((res.status === 429 || res.status === 504) && retry) {
-      clearTimeout(timer);
-      await new Promise((r) => setTimeout(r, 4000));
-      return overpassJson(query, timeoutMs, false);
-    }
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
+/**
+ * All Overpass requests go through one line. The public servers run two
+ * queries at a time per user and answer "busy" (429) to the rest, so at most
+ * MAX_RUNNING run at once, and the street lookups for the trip being planned
+ * go first. A busy, failing or unreachable server hands the query to the next
+ * server in the list (src/geo/servers.ts).
+ */
+export const MAX_RUNNING = 2;
+export type OverpassPriority = 'streets' | 'normal';
+
+interface Queued {
+  priority: number;
+  order: number;
+  start: () => void;
+}
+const waiting: Queued[] = [];
+let running = 0;
+let order = 0;
+
+function pump(): void {
+  while (running < MAX_RUNNING && waiting.length) {
+    waiting.sort((a, b) => a.priority - b.priority || a.order - b.order);
+    running++;
+    waiting.shift()!.start();
   }
+}
+
+/** Waits for a free slot in the line, runs `job`, then frees the slot. */
+function inLine<T>(priority: OverpassPriority, job: () => Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    waiting.push({
+      priority: priority === 'streets' ? 0 : 1,
+      order: order++,
+      start: () => {
+        job()
+          .then(resolve, reject)
+          .finally(() => {
+            running--;
+            pump();
+          });
+      },
+    });
+    pump();
+  });
+}
+
+/** How many queries are waiting for a slot (for tests). */
+export const overpassWaiting = () => waiting.length;
+
+export interface OverpassOptions {
+  /** Budget for the whole query once it is out of the line, across servers (ms). */
+  timeoutMs: number;
+  priority?: OverpassPriority;
+  /** Called as the answer arrives, with the bytes received so far. */
+  onBytes?: (bytes: number) => void;
+  /** Called when a server starts answering. */
+  onAnswer?: () => void;
+  signal?: AbortSignal;
+}
+
+async function readBody(res: Response, onBytes?: (bytes: number) => void): Promise<unknown> {
+  if (!onBytes || !res.body) return res.json();
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let got = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    got += value.length;
+    onBytes(got);
+  }
+  const all = new Uint8Array(got);
+  let at = 0;
+  for (const c of chunks) {
+    all.set(c, at);
+    at += c.length;
+  }
+  return JSON.parse(new TextDecoder().decode(all));
+}
+
+/** Runs an Overpass query through the line, trying each server in turn. Null on any failure. */
+export function overpassQuery(query: string, opts: OverpassOptions): Promise<{ elements?: OsmElement[] } | null> {
+  return inLine(opts.priority ?? 'normal', async () => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs);
+    const stop = () => ctrl.abort();
+    opts.signal?.addEventListener('abort', stop);
+    try {
+      for (const url of servers().overpass) {
+        if (ctrl.signal.aborted) return null;
+        try {
+          const res = await fetch(url, { method: 'POST', body: new URLSearchParams({ data: query }), signal: ctrl.signal });
+          // Busy, overloaded or broken: try the next server.
+          if (!res.ok) continue;
+          opts.onAnswer?.();
+          return (await readBody(res, opts.onBytes)) as { elements?: OsmElement[] };
+        } catch {
+          if (ctrl.signal.aborted) return null;
+          /* unreachable: try the next server */
+        }
+      }
+      return null;
+    } finally {
+      clearTimeout(timer);
+      opts.signal?.removeEventListener('abort', stop);
+    }
+  });
+}
+
+/** Runs an Overpass query and returns the raw answer, or null on any failure. */
+export function overpassJson(query: string, timeoutMs: number): Promise<{ elements?: OsmElement[] } | null> {
+  return overpassQuery(query, { timeoutMs });
 }

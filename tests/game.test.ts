@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildRouteData, pathFromRoute } from '../src/geo/route';
 import { demoRawRoute } from '../src/geo/demoRoute';
-import { advance, buyFuel, fuelPerUnit, newGame, repair, search, upcomingStop, TANK } from '../src/game/state';
+import { advance, buyFuel, cashScale, foundCash, fuelAffordable, fuelCost, fuelPrice, fuelPerUnit, gasGapFor, newGame, RANGE_MILES, repair, search, upcomingStop, TANK } from '../src/game/state';
 import { hasFuel } from '../src/game/stops';
 import { boost, combatOutcome, createCombat, fireAt, horn, stepCombat } from '../src/game/combat';
 
@@ -13,13 +13,18 @@ describe('trip', () => {
     const s = newGame(route, 42);
     expect(s.stops.length).toBeGreaterThanOrEqual(6);
     for (let i = 1; i < s.stops.length; i++) expect(s.stops[i].at - s.stops[i - 1].at).toBeGreaterThanOrEqual(500);
-    // A tank lasts about a third of the trip; there must be pumps well inside that range.
-    const range = TANK / fuelPerUnit(path.length);
+    // Pumps are never further apart than 60% of a tank's range.
+    const gap = gasGapFor('car', route.scale);
     let last = 0;
     for (const st of s.stops.filter(hasFuel)) {
-      expect(st.at - last).toBeLessThan(range);
+      expect(st.at - last).toBeLessThanOrEqual(gap + 1);
       last = st.at;
     }
+  });
+
+  it('a full tank goes a set number of real miles, whatever the trip length', () => {
+    const units = TANK / fuelPerUnit(route.scale);
+    expect((units * route.scale) / 1609.344).toBeCloseTo(RANGE_MILES, 5);
   });
 
   it('burns fuel while driving and fires encounters', () => {
@@ -66,10 +71,13 @@ describe('scavenging and shops', () => {
   it('buys only the fuel you can afford', () => {
     const s = newGame(route, 1);
     s.inv.fuel = 50;
-    s.inv.cash = 21;
+    s.inv.cash = 7;
+    const n = fuelAffordable(s);
+    expect(n).toBeGreaterThan(0);
+    expect(fuelCost(s, n + 1)).toBeGreaterThan(7);
     expect(buyFuel(s).ok).toBe(true);
-    expect(s.inv.fuel).toBe(60);
-    expect(s.inv.cash).toBe(1);
+    expect(s.inv.fuel).toBe(50 + n);
+    expect(s.inv.cash).toBe(7 - fuelCost(s, n));
   });
 
   it('repairs using scrap before cash', () => {
@@ -80,7 +88,7 @@ describe('scavenging and shops', () => {
     repair(s);
     expect(s.health).toBe(100);
     expect(s.inv.scrap).toBe(0);
-    expect(s.inv.cash).toBe(94);
+    expect(s.inv.cash).toBe(100 - Math.ceil(6 * cashScale(s)));
   });
 
   it('gets riskier the more you search one place', () => {
@@ -135,5 +143,14 @@ describe('combat', () => {
     expect(boost(c, bag)).toBe(true);
     expect(bag.fuel).toBe(46);
     expect(boost(c, bag)).toBe(false);
+  });
+
+  it('money found grows on long trips: x2 up to 800 miles, up to x6.67', () => {
+    const at = (mi: number) => ({ route: { realMeters: mi * 1609.344 } });
+    expect(fuelPrice()).toBe(2);
+    expect(cashScale(at(300))).toBe(2);
+    expect(cashScale(at(1600))).toBe(4);
+    expect(cashScale(at(4000))).toBe(6.67);
+    expect(foundCash(at(300), 25)).toBe(50);
   });
 });

@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { lit } from './materials';
+import { hdModel, hdZombie } from './hdModels';
 import {
   combatOutcome,
   isBoss,
@@ -25,6 +27,7 @@ import { castShadows, disposeTree, makeLaneTexture, makeRide, makeRoadTexture, t
 import { modelGeometry, modelMaterial, modelMesh, modelsWanted, treeModelsWanted, type ModelName } from './models';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { sampleBrute, sampleCatship, sampleMothership, sampleOutlaw, sampleWarRig } from './samples';
+import { person, type Person } from './people';
 import { angryCat, paperPlaneGeometry, pizzaGeometryParts, sampleCommandDrone, sampleHermit, sampleKaren, simpleCommandDrone, samplePizzaCar, sampleSweeper, simpleCat, simpleHermit, simpleKaren, simplePizzaCar, simpleSweeper } from './bossModels';
 
 export interface CombatCallbacks {
@@ -69,8 +72,8 @@ export class CombatScene implements GameScene {
   /** Horde zombies: one shared zombie drawn many times. */
   private horde: THREE.InstancedMesh | null = null;
   private missiles = new Map<number, THREE.Object3D>();
-  private trash = Object.assign(new THREE.MeshLambertMaterial({ color: 0x24302a, flatShading: true }), { userData: { shared: true } });
-  private junk = Object.assign(new THREE.MeshLambertMaterial({ color: 0x7a6a55 }), { userData: { shared: true } });
+  private trash = Object.assign(lit({ color: 0x24302a, flatShading: true }), { userData: { shared: true } });
+  private junk = Object.assign(lit({ color: 0x7a6a55 }), { userData: { shared: true } });
   /** A red glow over the car when it gets hit. */
   private hitGlow = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.8, 4.8), new THREE.MeshBasicMaterial({ color: 0xff2020, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
   private hitFlash = 0;
@@ -118,7 +121,7 @@ export class CombatScene implements GameScene {
     this.atmosphere.attachHeadlights(this.car);
 
     this.groundMap = detailTexture('ground', 400 / 30, 400 / 30);
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshLambertMaterial({ color: groundColorAt(biomeSpans(state.route), state.distance), map: this.groundMap }));
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), lit({ color: groundColorAt(biomeSpans(state.route), state.distance), map: this.groundMap }));
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
     this.root.add(ground);
@@ -416,7 +419,7 @@ export class CombatScene implements GameScene {
     if (!this.horde) {
       if (!list.length) return;
       const geo = modelGeometry('zombie') ?? simpleZombieGeometry();
-      const mat = modelGeometry('zombie') ? modelMaterial : new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+      const mat = modelGeometry('zombie') ? modelMaterial : lit({ vertexColors: true, flatShading: true });
       this.horde = new THREE.InstancedMesh(geo, mat, 48);
       this.horde.frustumCulled = false;
       this.horde.castShadow = this.shadows;
@@ -445,7 +448,7 @@ export class CombatScene implements GameScene {
     const list = this.combat.enemies.filter((e) => e.type === 'drone');
     if (!this.swarm) {
       if (!list.length) return;
-      this.swarm = new THREE.InstancedMesh(paperPlaneGeometry(), new THREE.MeshLambertMaterial({ color: 0xffffff, side: THREE.DoubleSide }), 32);
+      this.swarm = new THREE.InstancedMesh(paperPlaneGeometry(), lit({ color: 0xffffff, side: THREE.DoubleSide }), 32);
       this.swarm.frustumCulled = false;
       this.swarm.castShadow = this.shadows;
       this.root.add(this.swarm);
@@ -581,11 +584,11 @@ export class CombatScene implements GameScene {
       const tex = st.kind === 'local' ? this.roadTex : makeLaneTexture(st.kind);
       // The lane textures are drawn four lanes wide (two for 'carriageway2' across half the canvas).
       tex.repeat.set(1, STRIP_LEN / 16);
-      const m = lay(new THREE.Mesh(new THREE.PlaneGeometry(st.width, STRIP_LEN), new THREE.MeshLambertMaterial({ map: tex })), st.x, 0.02);
+      const m = lay(new THREE.Mesh(new THREE.PlaneGeometry(st.width, STRIP_LEN), lit({ map: tex })), st.x, 0.02);
       if (st.flipped) m.rotation.z = Math.PI;
       this.scrolling.push({ tex, dir: st.flipped ? -1 : 1 });
     }
-    const shoulderMat = new THREE.MeshLambertMaterial({ color: 0x5a5a5e });
+    const shoulderMat = lit({ color: 0x5a5a5e });
     for (const sh of layout.shoulders) lay(new THREE.Mesh(new THREE.PlaneGeometry(sh.width, STRIP_LEN), shoulderMat), sh.x, 0.015);
     this.root.add(g);
   }
@@ -602,9 +605,9 @@ export class CombatScene implements GameScene {
       return kinds[0][0];
     };
     const postGeo = new THREE.BoxGeometry(0.3, 2.5, 0.3).translate(0, 1.25, 0);
-    const postMat = new THREE.MeshLambertMaterial({ color: 0xf0f0f0 });
+    const postMat = lit({ color: 0xf0f0f0 });
     const rockGeo = new THREE.DodecahedronGeometry(1, 0);
-    const rockMat = new THREE.MeshLambertMaterial({ color: 0x8c7660 });
+    const rockMat = lit({ color: 0x8c7660 });
     for (let i = 0; i < 40; i++) {
       const z = -150 + i * 4.5;
       // Reflector posts at both edges (and along the median of a divided road).
@@ -686,7 +689,7 @@ const FIGHT_TREES = new Set<PlantKind>(['oak', 'pine', 'palm']);
 /** A plain stand-in plant for Low (or before the models load). */
 function simplePlant(kind: PlantKind): THREE.Object3D {
   const g = new THREE.Group();
-  const lam = (c: number) => new THREE.MeshLambertMaterial({ color: c, flatShading: true });
+  const lam = (c: number) => lit({ color: c, flatShading: true });
   if (kind === 'oak' || kind === 'pine' || kind === 'palm') {
     g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.35, 2.5, 6).translate(0, 1.25, 0), lam(0x6b4a2a)));
     const crown = kind === 'pine' ? new THREE.ConeGeometry(1.8, 5, 7).translate(0, 4.5, 0) : new THREE.IcosahedronGeometry(2, 0).translate(0, 3.8, 0);
@@ -729,7 +732,7 @@ export function buildEnemy(type: EnemyType): THREE.Group {
   body.name = 'body';
   g.add(body);
   const box = (w: number, h: number, d: number, color: number, x = 0, y = 0, z = 0, name = '') => {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshLambertMaterial({ color }));
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), lit({ color }));
     m.position.set(x, y, z);
     m.name = name;
     body.add(m);
@@ -752,7 +755,7 @@ export function buildEnemy(type: EnemyType): THREE.Group {
     for (let i = -3; i <= 3; i++) box(0.25, 0.25, 0.9, 0xcccccc, i * 0.5, 0.7, 3.8); // spikes
     for (const x of [-1.3, 1.3]) box(0.3, 1.8, 0.3, 0x333333, x, 3.2, 0.6); // smokestacks
     for (const [x, z] of [[-1.6, 2], [1.6, 2], [-1.6, -1], [1.6, -1], [-1.6, -3.5], [1.6, -3.5]]) {
-      const w = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 0.5, 12), new THREE.MeshLambertMaterial({ color: 0x151515 }));
+      const w = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 0.5, 12), lit({ color: 0x151515 }));
       w.rotation.z = Math.PI / 2;
       w.position.set(x, 0.7, z);
       body.add(w);
@@ -765,22 +768,22 @@ export function buildEnemy(type: EnemyType): THREE.Group {
     hitRadius = 3.6;
     barY = 5;
   } else if (type === 'mothership') {
-    const hull = new THREE.Mesh(new THREE.CylinderGeometry(7, 9, 1.6, 24), new THREE.MeshLambertMaterial({ color: 0x8a8fb0 }));
+    const hull = new THREE.Mesh(new THREE.CylinderGeometry(7, 9, 1.6, 24), lit({ color: 0x8a8fb0 }));
     body.add(hull);
-    const rim = new THREE.Mesh(new THREE.TorusGeometry(8.6, 0.35, 6, 32), new THREE.MeshLambertMaterial({ color: 0x5a3f8a }));
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(8.6, 0.35, 6, 32), lit({ color: 0x5a3f8a }));
     rim.rotation.x = Math.PI / 2;
     body.add(rim);
     const dome = new THREE.Mesh(
       new THREE.SphereGeometry(3.4, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2),
-      new THREE.MeshLambertMaterial({ color: 0x9ff0ff, transparent: true, opacity: 0.6 }),
+      lit({ color: 0x9ff0ff, transparent: true, opacity: 0.6 }),
     );
     dome.position.y = 0.8;
     body.add(dome);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(1.7, 14, 10), new THREE.MeshLambertMaterial({ color: 0xf2f2f2 }));
+    const head = new THREE.Mesh(new THREE.SphereGeometry(1.7, 14, 10), lit({ color: 0xf2f2f2 }));
     head.position.y = 2;
     body.add(head);
     for (const x of [-1, 1]) {
-      const ear = new THREE.Mesh(new THREE.ConeGeometry(0.55, 1.2, 4), new THREE.MeshLambertMaterial({ color: 0xf2f2f2 }));
+      const ear = new THREE.Mesh(new THREE.ConeGeometry(0.55, 1.2, 4), lit({ color: 0xf2f2f2 }));
       ear.position.set(x, 3.5, 0);
       body.add(ear);
       const eye = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 6), new THREE.MeshBasicMaterial({ color: 0x40a0ff }));
@@ -789,7 +792,7 @@ export function buildEnemy(type: EnemyType): THREE.Group {
     }
     // Her crown.
     for (let i = 0; i < 5; i++) {
-      const spike = new THREE.Mesh(new THREE.ConeGeometry(0.25, 0.8, 4), new THREE.MeshLambertMaterial({ color: 0xffd23f }));
+      const spike = new THREE.Mesh(new THREE.ConeGeometry(0.25, 0.8, 4), lit({ color: 0xffd23f }));
       const a = (i / 5) * Math.PI * 2;
       spike.position.set(Math.cos(a) * 0.8, 3.9, Math.sin(a) * 0.8);
       body.add(spike);
@@ -811,9 +814,9 @@ export function buildEnemy(type: EnemyType): THREE.Group {
     body.add(beam);
     hitRadius = 8;
     barY = 5.5;
-  } else if (type === 'zombie' && modelMesh('zombie')) {
-    // CC0 zombie model (Medium and High).
-    body.add(modelMesh('zombie')!);
+  } else if (type === 'zombie' && (hdModel('zombie') || modelMesh('zombie'))) {
+    // Detailed zombie once loaded, else the CC0 one (Medium and High), at the same 2.3 height.
+    body.add(hdZombie() ?? modelMesh('zombie')!);
   } else if (type === 'zombie' || type === 'brute') {
     box(0.8, 1.1, 0.5, 0x4a5d7a, 0, 1.3); // torn shirt
     box(0.6, 0.6, 0.6, 0x8fbf5a, 0, 2.15); // head
@@ -842,20 +845,20 @@ export function buildEnemy(type: EnemyType): THREE.Group {
     hitRadius = 1.7;
     barY = 3.2;
   } else {
-    const hull = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.6, 0.6, 16), new THREE.MeshLambertMaterial({ color: 0xa0a8c0 }));
+    const hull = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.6, 0.6, 16), lit({ color: 0xa0a8c0 }));
     body.add(hull);
     const dome = new THREE.Mesh(
       new THREE.SphereGeometry(1.1, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2),
-      new THREE.MeshLambertMaterial({ color: 0x9ff0ff, transparent: true, opacity: 0.7 }),
+      lit({ color: 0x9ff0ff, transparent: true, opacity: 0.7 }),
     );
     dome.position.y = 0.3;
     body.add(dome);
     // The cat pilot.
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.55, 10, 8), new THREE.MeshLambertMaterial({ color: 0xff9a3c }));
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.55, 10, 8), lit({ color: 0xff9a3c }));
     head.position.y = 0.75;
     body.add(head);
     for (const x of [-0.3, 0.3]) {
-      const ear = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.4, 4), new THREE.MeshLambertMaterial({ color: 0xff9a3c }));
+      const ear = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.4, 4), lit({ color: 0xff9a3c }));
       ear.position.set(x, 1.25, 0);
       body.add(ear);
       const eye = new THREE.Mesh(new THREE.SphereGeometry(0.1, 6, 4), new THREE.MeshBasicMaterial({ color: 0x40ff60 }));
@@ -880,6 +883,7 @@ export function buildEnemy(type: EnemyType): THREE.Group {
     hitRadius = 2.6;
     barY = 1.9;
   }
+  if (type === 'mothership' && body.getObjectByName('hd')) addQueen(body);
   const hitbox = new THREE.Mesh(new THREE.SphereGeometry(hitRadius, 8, 6), new THREE.MeshBasicMaterial({ visible: false }));
   hitbox.position.y = type === 'catship' || type === 'mothership' || type === 'drones' ? 0.2 : type === 'warrig' ? 1.8 : type === 'pizza' ? 1.4 : type === 'sweeper' ? 2.0 : 1.3;
   hitbox.name = 'hitbox';
@@ -908,8 +912,44 @@ export function buildEnemy(type: EnemyType): THREE.Group {
   return g;
 }
 
+/**
+ * The rigged Cat Queen stands on top of the generated mothership, between its
+ * ears, facing the car (Medium and High, once both have loaded).
+ */
+function addQueen(body: THREE.Object3D): void {
+  const q = person('cat_queen', 5.4);
+  if (!q) return;
+  body.updateMatrixWorld(true);
+  const hd = body.getObjectByName('hd')!;
+  const box = new THREE.Box3().setFromObject(hd);
+  // The ship's top is its ears; she stands a little lower, on the dome in front of them.
+  q.obj.position.set(0, box.min.y + (box.max.y - box.min.y) * 0.78, box.max.z * 0.25);
+  q.obj.name = 'queen';
+  q.play('idle');
+  body.add(q.obj);
+  body.userData.queen = q;
+  // With her on top it stands taller than the old ship: smaller and lower, so she stays below the top of a phone screen.
+  body.scale.setScalar(0.8);
+  body.position.y = -4;
+}
+
 function animateEnemy(g: THREE.Group, e: Enemy, t: number): void {
   const body = g.getObjectByName('body')!;
+  const queen = body.userData.queen as Person | undefined;
+  if (queen) {
+    // The new ship has a face, so it sways toward you instead of spinning; she swipes when the beam charges.
+    const dt = Math.min(0.1, Math.max(0, t - ((body.userData.lastT as number) ?? t)));
+    body.userData.lastT = t;
+    queen.play(e.charging ? 'swipe' : 'idle', 1, 0.2);
+    queen.update(dt);
+    body.rotation.y = Math.sin(t * 0.5) * 0.25;
+    const charge = body.getObjectByName('charge');
+    if (charge) charge.visible = e.charging;
+    body.traverse((o) => {
+      if (o.name === 'light') ((o as THREE.Mesh).material as THREE.MeshBasicMaterial).color.setHex(e.charging ? 0xff40ff : 0xffe040);
+    });
+    return;
+  }
   if (e.type === 'zombie' || e.type === 'brute') {
     const swing = Math.sin(t * (e.type === 'brute' ? 2.5 : 6) + e.id) * 0.5 * (e.stunned > 0 ? 0.1 : 1);
     const legL = body.getObjectByName('legL');

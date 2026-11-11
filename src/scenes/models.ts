@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { lit } from './materials';
 import { quality } from './quality';
 
 /**
@@ -57,7 +58,7 @@ const geos = new Map<ModelName, THREE.BufferGeometry>();
 let loading: Promise<boolean> | null = null;
 
 /** Shared material for every model: the colours are in the vertices. */
-export const modelMaterial = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+export const modelMaterial = lit({ vertexColors: true, flatShading: true });
 modelMaterial.userData.shared = true;
 
 /** Whether this graphics level uses the models at all. */
@@ -112,7 +113,12 @@ export function loadModels(base = `${import.meta.env.BASE_URL}models/`): Promise
 }
 
 export function normalise(geo: THREE.BufferGeometry, spec: { length?: number; height?: number; turn?: number }): THREE.BufferGeometry {
-  const g = geo.clone();
+  let g = geo.clone();
+  // The models are flat-shaded and ship without normals; the contact-shadow pass (High) needs them.
+  if (!g.attributes.normal) {
+    if (g.index) g = g.toNonIndexed();
+    g.computeVertexNormals();
+  }
   if (spec.turn) g.rotateY(spec.turn);
   g.computeBoundingBox();
   const b = g.boundingBox!;

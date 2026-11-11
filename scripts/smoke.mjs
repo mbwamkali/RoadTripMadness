@@ -57,7 +57,7 @@ try {
   await page.goto(`http://localhost:${PORT}/`);
   await page.evaluate(() => localStorage.clear());
   await page.goto(`http://localhost:${PORT}/`);
-  await page.getByText('Quick demo trip').click();
+  await page.getByRole('button', { name: 'Quick demo trip' }).click();
   await page.getByText('Hit the road').click();
   await page.waitForTimeout(500);
   const start = await page.evaluate(() => {

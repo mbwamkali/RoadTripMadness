@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildRouteData, pathFromRoute } from '../src/geo/route';
 import { demoRawRoute } from '../src/geo/demoRoute';
-import { advance, buyFuel, buyUpgrade, maxHealth, newGame, tankSize } from '../src/game/state';
+import { advance, buyFuel, buyUpgrade, cashScale, maxHealth, newGame, tankSize } from '../src/game/state';
 import { createCombat, stepCombat } from '../src/game/combat';
 
 const route = buildRouteData(demoRawRoute());
@@ -16,7 +16,7 @@ describe('car upgrades', () => {
     expect(maxHealth(s)).toBe(125);
     expect(s.health).toBe(125);
     expect(s.inv.scrap).toBe(88);
-    expect(s.inv.cash).toBe(80);
+    expect(s.inv.cash).toBe(100 - Math.round(20 * cashScale(s)));
   });
 
   it('refuses when you cannot pay or it is maxed', () => {
@@ -55,5 +55,21 @@ describe('car upgrades', () => {
     };
     expect(run(6)).toBeGreaterThan(0);
     expect(run(0)).toBeLessThan(run(6));
+  });
+});
+
+describe('prices follow found money and the real price of gas', () => {
+  it('locks the real gas price level in when the trip starts, and moves every price with it', async () => {
+    const { levelFor } = await import('../src/game/gasPrice');
+    expect(levelFor(4.153)).toBe(1);
+    expect(levelFor(6.229)).toBe(1.5);
+    expect(levelFor(50)).toBe(2);
+    expect(levelFor(0.5)).toBe(0.5);
+    const { fuelPrice, foundCash, priceOf } = await import('../src/game/state');
+    const s = newGame(route, 1);
+    s.priceLevel = 1.5;
+    expect(fuelPrice(s)).toBe(3);
+    expect(foundCash(s, 10)).toBe(30);
+    expect(priceOf(s, 30)).toBe(90);
   });
 });

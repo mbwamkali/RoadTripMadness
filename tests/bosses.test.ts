@@ -27,6 +27,41 @@ describe('boss fights', () => {
     expect(s.status).toBe('won');
   });
 
+  it('waits while you signal for a turn, then meets you when you drive on', () => {
+    const s = newGame(route, 4);
+    s.inv.fuel = 1e9;
+    s.nextEncounterAt = s.nextEventAt = 1e12;
+    const [half] = bossPoints(path.length, s.stops);
+    s.distance = half - 100;
+    // Signalling: drive well past the boss point and nothing happens.
+    expect(advance(s, path, 300, 0, true).boss).toBeUndefined();
+    expect(s.distance).toBeGreaterThan(half);
+    expect(s.bossStage).toBe(0);
+    // Back on the road: the held boss shows up straight away.
+    expect(advance(s, path, 10, 0).boss).toBeDefined();
+    expect(s.bossStage).toBe(1);
+  });
+
+  it('keeps driving past the finish while the last boss fights, then arrives', () => {
+    const s = newGame(route, 4);
+    s.inv.fuel = 5;
+    s.nextEncounterAt = s.nextEventAt = 1e12;
+    s.bossStage = 2;
+    s.distance = path.length - 50;
+    // Fight on: the road carries on, no arrival, no gas used past the line, no fights or events.
+    s.nextEncounterAt = s.nextEventAt = 0;
+    let r = advance(s, path, 400, 0.001, false, true);
+    expect(r.arrived).toBe(false);
+    expect(r.encounter || r.event || r.outOfFuel).toBeFalsy();
+    expect(s.distance).toBeCloseTo(path.length + 350);
+    expect(s.inv.fuel).toBeGreaterThan(4.9);
+    expect(s.status).toBe('driving');
+    // Boss down: you arrive straight away.
+    r = advance(s, path, 10, 0.001);
+    expect(r.arrived).toBe(true);
+    expect(s.status).toBe('won');
+  });
+
   it('a boss fight has no escape and ends when the boss falls', () => {
     const c = createCombat({ seed: 1, progress: 0.5, boss: 'brute' });
     const inv = { fuel: 50, cash: 0, scrap: 0, bullets: 10000, shells: 0, catnip: 0 };

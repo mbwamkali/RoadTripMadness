@@ -14,8 +14,8 @@ export interface RideInfo {
   tank: number;
   /** Fuel burned per unit. */
   fuel: number;
-  /** Cruise speed. */
-  speed: number;
+  /** Top speed in mph (engine upgrades add to it). */
+  topMph: number;
   /** How fast it changes lanes (on the road and in fights). */
   steer: number;
   /** Chance an enemy hit misses entirely in a fight. */
@@ -34,11 +34,12 @@ export const RIDES: Record<Ride, RideInfo> = {
   motorcycle: {
     name: 'Motorcycle',
     icon: '🏍️',
-    blurb: 'Fast, nimble and easy on gas. Dodges more, but fragile and carries little.',
+    blurb: 'Fast and nimble, with a small tank. Dodges more, but fragile and carries little.',
     health: 0.6,
     tank: 0.6,
-    fuel: 0.55,
-    speed: 1.15,
+    // Range 0.6 / 0.9 of the car's: about 300 miles to its 450.
+    fuel: 0.9,
+    topMph: 140,
     steer: 1.8,
     dodge: 0.3,
     carry: 0.6,
@@ -53,7 +54,7 @@ export const RIDES: Record<Ride, RideInfo> = {
     health: 1,
     tank: 1,
     fuel: 1,
-    speed: 1,
+    topMph: 120,
     steer: 1,
     dodge: 0,
     carry: 1,
@@ -67,8 +68,9 @@ export const RIDES: Record<Ride, RideInfo> = {
     blurb: 'Slower and thirsty, but tough, with a big tank, more ammo and a heavy gun.',
     health: 1.5,
     tank: 1.4,
-    fuel: 1.35,
-    speed: 0.88,
+    // Range 1.4 / 1.15 of the car's: about 550 miles.
+    fuel: 1.15,
+    topMph: 95,
     steer: 0.7,
     dodge: 0,
     carry: 1.5,

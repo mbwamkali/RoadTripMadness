@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { withHd } from './hdModels';
 import { add, ball, box, capsule, catHead, cone, cyl, glow, lam, profile, sampleTraffic, wheel } from './samples';
 
 /**
@@ -8,7 +9,7 @@ import { add, ball, box, capsule, catHead, cone, cyl, glow, lam, profile, sample
  */
 
 /** The crazy hermit: skinny, ragged coat, a huge grey beard, wild hair, a sack of junk. */
-export function sampleHermit(): THREE.Group {
+function codeHermit(): THREE.Group {
   const g = new THREE.Group();
   const skin = lam(0xd8a77a);
   const coat = lam(0x6b5236);
@@ -83,7 +84,7 @@ export function pizzaGeometryParts(parent: THREE.Object3D, r = 0.45): void {
 }
 
 /** The angry pizza driver's car: a little red delivery car with a pizza sign on the roof. Faces +z. */
-export function samplePizzaCar(): THREE.Group {
+function codePizzaCar(): THREE.Group {
   const g = sampleTraffic('van', 0xd8261a);
   g.scale.set(0.95, 0.8, 0.8);
   const roof = new THREE.Group();
@@ -138,7 +139,7 @@ export function angryCat(fur: number, stripes = 0): THREE.Group {
 }
 
 /** The street sweeper gone bad: a boxy sweeper truck with spinning brushes, a trash hopper and cats at the controls. Faces +z. */
-export function sampleSweeper(): THREE.Group {
+function codeSweeper(): THREE.Group {
   const g = new THREE.Group();
   const paint = lam(0xf2f2ea);
   const stripe = lam(0xf08a24);
@@ -210,7 +211,7 @@ export function simpleSweeper(): THREE.Group {
 }
 
 /** Crazy Cat Lady Karen on her pink mobility scooter, piled with cats. Faces +z (toward the car). */
-export function sampleKaren(): THREE.Group {
+function codeKaren(): THREE.Group {
   const g = new THREE.Group();
   const pink = lam(0xf27ab0);
   const skin = lam(0xf0c8a8);
@@ -331,7 +332,7 @@ export function paperPlaneGeometry(): THREE.BufferGeometry {
 }
 
 /** The command drone: a giant paper plane with four rotors, a camera eye and warning lights. Faces +z. */
-export function sampleCommandDrone(): THREE.Group {
+function codeCommandDrone(): THREE.Group {
   const g = new THREE.Group();
   const plane = new THREE.Mesh(paperPlaneGeometry().scale(5, 4, 5), lam(0xe8e4d8));
   g.add(plane);
@@ -357,4 +358,29 @@ export function simpleCommandDrone(): THREE.Group {
   add(g, box(1.6, 0.8, 2.4), lam(0x3a3a44), [0, -0.9, 0]);
   add(g, box(0.6, 0.6, 0.3), glow(0xff3030), [0, -1.1, 1.2], [0, 0, 0], 'light');
   return g;
+}
+
+/** Hermit (detailed generated model on Medium/High once loaded; built in code otherwise). */
+export function sampleHermit(): THREE.Group {
+  return withHd('hermit', codeHermit(), 'height');
+}
+
+/** PizzaCar (detailed generated model on Medium/High once loaded; built in code otherwise). */
+export function samplePizzaCar(): THREE.Group {
+  return withHd('pizza', codePizzaCar(), 'length');
+}
+
+/** Sweeper (detailed generated model on Medium/High once loaded; built in code otherwise). */
+export function sampleSweeper(): THREE.Group {
+  return withHd('sweeper', codeSweeper(), 'length');
+}
+
+/** Karen (detailed generated model on Medium/High once loaded; built in code otherwise). */
+export function sampleKaren(): THREE.Group {
+  return withHd('karen', codeKaren(), 'height');
+}
+
+/** CommandDrone (detailed generated model on Medium/High once loaded; built in code otherwise). */
+export function sampleCommandDrone(): THREE.Group {
+  return withHd('drone', codeCommandDrone(), 'length');
 }

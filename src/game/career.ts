@@ -7,6 +7,7 @@
 
 import { BOSSES, type BossKind } from './combat';
 import { MAX_LEVEL, noUpgrades, UPGRADES, type UpgradeKind, type Upgrades } from './upgrades';
+import { testing } from './testFlag';
 
 const KEY = 'rtm-career';
 /** Kid mode stops the threat from climbing past this. */
@@ -45,6 +46,7 @@ export function loadCareer(): Career {
 }
 
 export function saveCareer(c: Career): void {
+  if (testing.on) return;
   try {
     localStorage.setItem(KEY, JSON.stringify(c));
   } catch {

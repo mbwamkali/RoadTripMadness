@@ -7,7 +7,11 @@ export const DAY_LENGTH = 9000;
 const START_HOUR = 8;
 
 /** Hour of day, 0-24. Driving and time spent at stops both move the clock. */
+/** Test overrides from the dev panel (?dev=1): a fixed clock hour and weather, or null for the trip's own. */
+export const devClock: { hour: number | null; weather: Weather | null } = { hour: null, weather: null };
+
 export function hourOf(s: GameState): number {
+  if (devClock.hour != null) return devClock.hour;
   return ((s.live?.startHour ?? START_HOUR) + (s.distance / DAY_LENGTH) * 24 + (s.hoursSpent ?? 0)) % 24;
 }
 
@@ -44,6 +48,7 @@ const WEATHER_SPAN = 3500;
  * North and mountains get snow).
  */
 export function weatherAt(s: GameState, distance = s.distance): Weather {
+  if (devClock.weather) return devClock.weather;
   const live = s.live?.weather;
   if (live?.length) {
     let best = live[0];

@@ -1,5 +1,5 @@
 import { haversineMeters, type LatLng } from './geo';
-import { OVERPASS_URL, type OsmElement } from './overpass';
+import { overpassQuery, type OsmElement } from './overpass';
 import { nodeKey, type RoadFile } from '../offline/roadNet';
 
 /**
@@ -305,30 +305,15 @@ async function saveStreets(p: LatLng, file: RoadFile): Promise<void> {
   }
 }
 
-/** Runs the Overpass query, reporting bytes as they arrive. Null on any failure. */
-async function fetchStreets(p: LatLng, status: StreetStatus, signal: AbortSignal): Promise<{ elements?: OsmElement[] } | null> {
-  try {
-    const res = await fetch(OVERPASS_URL, { method: 'POST', body: new URLSearchParams({ data: buildLocalStreetsQuery(p) }), signal });
-    if (!res.ok || !res.body) return null;
-    status.state = 'receiving';
-    const reader = res.body.getReader();
-    const chunks: Uint8Array[] = [];
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      status.bytes += value.length;
-    }
-    const all = new Uint8Array(status.bytes);
-    let at = 0;
-    for (const c of chunks) {
-      all.set(c, at);
-      at += c.length;
-    }
-    return JSON.parse(new TextDecoder().decode(all)) as { elements?: OsmElement[] };
-  } catch {
-    return null;
-  }
+/** Runs the Overpass query ahead of other lookups, reporting bytes as they arrive. Null on any failure. */
+function fetchStreets(p: LatLng, status: StreetStatus, signal: AbortSignal): Promise<{ elements?: OsmElement[] } | null> {
+  return overpassQuery(buildLocalStreetsQuery(p), {
+    timeoutMs: 60_000,
+    priority: 'streets',
+    signal,
+    onAnswer: () => (status.state = 'receiving'),
+    onBytes: (bytes) => (status.bytes = bytes),
+  });
 }
 
 const lookups = new Map<string, StreetLookup>();
@@ -351,6 +336,12 @@ export function lookupStreets(p: LatLng, q: number, attribution: string): Street
     if (saved) {
       status.state = 'cached';
       return saved;
+    }
+    // Offline, only streets remembered on the device can help.
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      clearTimeout(giveUp);
+      status.state = 'failed';
+      return null;
     }
     const json = await fetchStreets(p, status, ctrl.signal);
     clearTimeout(giveUp);

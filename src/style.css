@@ -595,51 +595,10 @@ body.hurt::after {
 
 /* ------------------------------------------------------------------ explore */
 
-.explore {
-  background: linear-gradient(180deg, rgba(27, 20, 16, 0.75), rgba(27, 20, 16, 0.95) 30%);
-  max-width: none;
-}
-
-.explore > * {
-  width: 100%;
-  max-width: 640px;
-  align-self: center;
-}
-
-.explore h2 small {
-  color: var(--muted);
-  font-weight: 500;
-  font-size: 15px;
-}
-
-.explore .stats {
-  flex: none;
-}
-
 .places {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 10px;
-}
-
-.place {
-  background: var(--panel);
-  border-radius: 14px;
-  padding: 12px;
-  border-left: 5px solid var(--accent);
-}
-
-.place.pumps {
-  border-left-color: var(--accent-2);
-}
-
-.place.garage {
-  border-left-color: var(--good);
-}
-
-.place h3 {
-  margin: 0 0 8px;
-  font-size: 17px;
 }
 
 .log {
@@ -1024,57 +983,6 @@ body.hurt::after {
 
 /* ------------------------------------------------------------------ town map */
 
-.town-map {
-  width: 100%;
-  height: auto;
-  border-radius: 16px;
-  display: block;
-  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
-  touch-action: manipulation;
-}
-
-.town-map.night {
-  filter: brightness(0.6) saturate(0.8) hue-rotate(-10deg);
-}
-
-.town-map .building {
-  cursor: pointer;
-  transition: opacity 0.2s;
-}
-
-.town-map .building:focus {
-  outline: none;
-}
-
-.town-map .building.selected .roof {
-  stroke: #ffd23f;
-  stroke-width: 3;
-}
-
-.town-map .building.risky .roof {
-  stroke: #ff6a4a;
-  stroke-width: 2;
-  stroke-dasharray: 5 4;
-}
-
-.town-map .building.selected.risky .roof {
-  stroke: #ffd23f;
-  stroke-dasharray: none;
-}
-
-.sheet {
-  min-height: 60px;
-}
-
-.sheet .hint {
-  text-align: center;
-  margin: 8px 0;
-}
-
-.sheet .place p {
-  margin: 0 0 8px;
-}
-
 /* ------------------------------------------------------------------ bosses */
 .bosshp .fill {
   background: linear-gradient(90deg, #b01fd0, #ff3d6e);
@@ -1227,7 +1135,7 @@ ol.scores li.new {
 
 .shoot-row .btn.shoot {
   position: relative;
-  bottom: 60px;
+  bottom: calc(60px + var(--prompt-lift, 0px));
   width: auto;
   height: 48px;
   padding: 0 16px;
@@ -1441,7 +1349,7 @@ ol.scores li.new {
 
 .shoot-row .btn.honk {
   position: relative;
-  bottom: 60px;
+  bottom: calc(60px + var(--prompt-lift, 0px));
   width: auto;
   height: 48px;
   padding: 0 16px;
@@ -1467,7 +1375,7 @@ body.kid .shoot-row .btn.honk {
   height: 76px;
   min-width: 140px;
   font-size: 24px;
-  bottom: 80px;
+  bottom: calc(80px + var(--prompt-lift, 0px));
   border-radius: 38px;
 }
 
@@ -1475,7 +1383,7 @@ body.kid .shoot-row .btn.shoot {
   height: 76px;
   min-width: 140px;
   font-size: 24px;
-  bottom: 80px;
+  bottom: calc(80px + var(--prompt-lift, 0px));
   border-radius: 38px;
 }
 
@@ -1488,9 +1396,10 @@ body.kid .shoot-row .btn.shoot {
   text-align: left;
 }
 
-/* `.hud button` turns taps back on for every HUD button; a hidden shoot button must not take them,
-   or it swallows taps on "Take the exit" underneath it (kid mode). */
-.hud .shoot-row:not(.show) .btn.shoot {
+/* `.hud button` turns taps back on for every HUD button; a hidden shoot or horn button must not take them,
+   or it swallows taps on "Take the exit" or "Turn left" underneath it (kid mode). */
+.hud .shoot-row:not(.show) .btn.shoot,
+.hud .shoot-row:not(.show) .btn.honk {
   pointer-events: none;
   visibility: hidden;
 }
@@ -1612,112 +1521,6 @@ body.kid .howto-tip b {
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 
-/* ------------------------------------------------------------------ crate search */
-
-.scavenge {
-  position: absolute;
-  inset: 0;
-  z-index: 30;
-  background: #2a1f18;
-  animation: slideUp 0.2s;
-}
-
-.scavenge canvas {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  display: block;
-  touch-action: manipulation;
-}
-
-.scavenge-title {
-  position: absolute;
-  top: calc(8px + var(--safe-t));
-  left: 0;
-  right: 0;
-  text-align: center;
-  pointer-events: none;
-  text-shadow: 0 2px 0 #2a1404, 0 0 12px rgba(0, 0, 0, 0.6);
-}
-
-.scavenge-title b {
-  display: block;
-  font-size: 30px;
-  font-weight: 900;
-  color: var(--accent-2);
-  letter-spacing: 0.5px;
-}
-
-.scavenge-title small {
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.scavenge.ambush .scavenge-title b {
-  color: var(--bad);
-}
-
-.scavenge.ambush::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  box-shadow: inset 0 0 90px 30px rgba(255, 0, 0, 0.55);
-}
-
-.scavenge-pops {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-
-.scavenge-pop {
-  position: absolute;
-  transform: translate(-50%, -50%);
-  font-size: 32px;
-  font-weight: 900;
-  color: #fff;
-  text-shadow: 0 2px 0 #2a1404, 0 0 8px rgba(0, 0, 0, 0.5);
-  animation: popUp 1.4s ease-out forwards;
-}
-
-@keyframes popUp {
-  0% { opacity: 0; margin-top: 10px; }
-  15% { opacity: 1; }
-  75% { opacity: 1; }
-  100% { opacity: 0; margin-top: -40px; }
-}
-
-.scavenge-bottom,
-.explore.town3d-screen > .town3d-bottom {
-  position: absolute;
-  left: calc(10px + var(--safe-l));
-  right: calc(10px + var(--safe-r));
-  bottom: calc(14px + var(--safe-b));
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  max-width: 560px;
-  margin: 0 auto;
-}
-
-.scavenge-tray {
-  display: flex;
-  gap: 8px;
-  justify-content: center;
-  flex-wrap: wrap;
-  min-height: 36px;
-}
-
-.scavenge-tray span {
-  background: var(--panel);
-  border-radius: 12px;
-  padding: 6px 10px;
-  font-weight: 800;
-  font-size: 18px;
-}
-
 .noise {
   display: grid;
   grid-template-columns: 28px 1fr 28px;
@@ -1758,64 +1561,7 @@ body.kid .howto-tip b {
   to { box-shadow: 0 0 0 3px rgba(255, 77, 77, 0.6); }
 }
 
-.scavenge-run {
-  min-height: 64px;
-  font-size: 20px;
-}
-
-.scavenge-run.pulse {
-  animation: hotPulse 0.7s ease-in-out infinite alternate;
-}
-
 /* ------------------------------------------------------------------ 3D town */
-
-.explore.town3d-screen {
-  padding: 0;
-  background: #1b1410;
-  overflow: hidden;
-  max-width: none;
-}
-
-.explore.town3d-screen > * {
-  width: auto;
-  max-width: none;
-  /* Absolutely placed children of a flex column would otherwise shrink to their content. */
-  align-self: stretch;
-}
-
-.explore.town3d-screen > .town3d {
-  position: absolute;
-  inset: 0;
-}
-
-.town3d canvas {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  display: block;
-  touch-action: manipulation;
-}
-
-.explore.town3d-screen > .town3d-top {
-  position: absolute;
-  top: calc(10px + var(--safe-t));
-  left: calc(10px + var(--safe-l));
-  right: calc(10px + var(--safe-r));
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 8px;
-  pointer-events: none;
-}
-
-.town3d-top > * {
-  pointer-events: auto;
-}
-
-.town3d-top .stats {
-  flex: 0 1 230px;
-}
 
 .town-chip {
   background: var(--panel);
@@ -1836,54 +1582,82 @@ body.kid .howto-tip b {
   font-size: 12px;
 }
 
-.town3d-bottom .sheet .place,
-.town3d-bottom .sheet .hint {
-  background: var(--panel);
-  border-radius: 16px;
-  margin: 0;
-}
-
-.town3d-bottom .sheet .hint {
-  padding: 12px;
-  font-size: 18px;
-  color: var(--ink);
-}
-
-.town3d-bottom .log {
-  max-height: 52px;
-  background: var(--panel);
-}
-
-.town3d-bottom .log p:not(:first-child) {
-  display: none;
-}
-
-.town3d-bottom .back-road {
-  min-height: 58px;
-  font-size: 19px;
-}
-
-.place .row .btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
 .big-icon {
   font-size: 24px;
   line-height: 1;
 }
 
-.place h3 .big-icon {
-  font-size: 28px;
-}
-
-.noise[hidden] {
+.noise[hidden],
+.town-hint[hidden] {
   display: none;
 }
 
-.explore.town3d-screen > .town3d-bottom {
-  max-width: 560px;
+/* The town plays in the road view; its HUD keeps to the top and bottom edges. */
+.town-hud .town-bottom {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(560px, 100%);
+  align-self: center;
+}
+
+.town-hint,
+.town-log {
+  background: var(--panel);
+  border-radius: 14px;
+  padding: 8px 12px;
+  font-size: 16px;
+  color: var(--ink);
+}
+
+.town-log:empty {
+  display: none;
+}
+
+.town-log p {
+  margin: 0;
+}
+
+.town-log.fresh {
+  animation: slideUp 0.25s ease-out;
+}
+
+.town-hud .bump {
+  animation: town-bump 0.35s ease-out;
+}
+
+@keyframes town-bump {
+  40% {
+    transform: scale(1.15);
+  }
+}
+
+.town-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.town-actions .btn {
+  /* Up to three across on a phone; more buttons wrap to a second row instead of squashing. */
+  flex: 1 1 96px;
+  min-width: 0;
+  min-height: 56px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 17px;
+  pointer-events: auto;
+}
+
+/* Kid mode: picture buttons only, big. */
+.town-actions.kid .btn {
+  min-height: 76px;
+}
+
+.town-actions.kid .big-icon {
+  font-size: 40px;
 }
 
 /* ------------------------------------------------------------------ narrator voice */
@@ -2161,29 +1935,45 @@ body.kid .howto-tip b {
 }
 
 @media (orientation: landscape) and (max-height: 560px) {
-  /* Title menu: two columns of buttons. */
+  /* Town sideways: the panel moves to the right so the town stays in view. */
+  .town-hud .town-bottom {
+    align-self: flex-end;
+    width: min(380px, 48vw);
+    gap: 6px;
+  }
+  .town-hint,
+  .town-log {
+    font-size: 14px;
+    padding: 6px 10px;
+  }
+  .town-actions .btn {
+    min-height: 48px;
+  }
+  .town-chip small {
+    display: none;
+  }
+
+  /* Title: one-line logo, no tagline, smaller tiles. */
   .screen.title {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    align-content: start;
-    max-width: 760px;
-    gap: 10px;
+    gap: 6px;
+    padding-top: calc(10px + var(--safe-t));
+    padding-bottom: calc(8px + var(--safe-b));
   }
-  .screen.title > :not(.btn) {
-    grid-column: 1 / -1;
-  }
-  .screen.title > :first-child,
-  .screen.title > :last-child {
-    margin: 0;
-  }
-  .screen.title > .build-line {
-    margin-top: 4px;
+  .screen.title .tag {
+    display: none;
   }
   .title h1 {
     font-size: 40px;
   }
   .title h1 span {
     display: inline-block;
+  }
+  .title .btn.play {
+    min-height: 60px;
+    font-size: 26px;
+  }
+  .title .btn.tile {
+    min-height: 60px;
   }
 
   /* Event, out-of-gas and boss cards: story on the left, choices on the right. */
@@ -2234,32 +2024,6 @@ body.kid .howto-tip b {
     display: none;
   }
 
-  /* 3D town: the panel moves to the right so the town stays in view. */
-  .explore.town3d-screen > .town3d-bottom {
-    left: auto;
-    width: min(360px, 46vw);
-    margin: 0;
-    gap: 8px;
-  }
-  .town3d-top .stats {
-    flex-basis: 220px;
-  }
-  .town3d-bottom .back-road {
-    min-height: 50px;
-  }
-  .town3d-bottom .sheet .place {
-    padding: 8px 10px;
-  }
-  .town3d-bottom .sheet .place h3 {
-    margin-bottom: 4px;
-  }
-  .town3d-bottom .log {
-    max-height: 40px;
-    font-size: 13px;
-  }
-  .town3d-bottom .log p {
-    margin: 4px 0;
-  }
   .town-chip {
     padding: 6px 10px;
   }
@@ -2268,18 +2032,6 @@ body.kid .howto-tip b {
   }
   .town-chip small {
     display: none;
-  }
-
-  /* Crate search: a lower bar so the boxes stay tappable. */
-  .scavenge-bottom {
-    gap: 6px;
-    bottom: calc(8px + var(--safe-b));
-  }
-  .scavenge-tray {
-    min-height: 0;
-  }
-  .scavenge-run {
-    min-height: 54px;
   }
 
   /* Kid shoot button: beside the dashboard, clear of the radio and menu buttons. */
@@ -2294,17 +2046,6 @@ body.kid .howto-tip b {
   .landmark-toast {
     max-width: 34vw;
   }
-}
-
-/* Flat (Low graphics) town: the map shrinks and "Back on the road" stays on screen. */
-.explore:not(.town3d-screen) .town-map {
-  max-height: 55vh;
-  max-height: 55dvh;
-}
-.explore:not(.town3d-screen) > .back-road {
-  position: sticky;
-  bottom: 0;
-  box-shadow: 0 -6px 18px rgba(27, 20, 16, 0.9);
 }
 
 /* Shortcut flat tyre: tap until the bar fills. */
@@ -2469,4 +2210,332 @@ body.kid .howto-tip b {
   body.kid .hud.fighting .shoot-row .btn.shoot {
     bottom: 72px;
   }
+}
+
+/* ------------------------------------------------------------------ title screen */
+
+/* The menu floats over the live scene (titleScene.ts): dark at the top and bottom
+   so the words read, clear in the middle so the car and passers-by show. */
+.screen.title {
+  max-width: none;
+  align-items: center;
+  overflow-x: hidden;
+  background: linear-gradient(
+    180deg,
+    rgba(20, 14, 10, 0.55) 0%,
+    rgba(20, 14, 10, 0) 32%,
+    rgba(20, 14, 10, 0) 52%,
+    rgba(20, 14, 10, 0.7) 72%,
+    rgba(20, 14, 10, 0.9) 100%
+  );
+}
+.screen.title > * {
+  width: 100%;
+  max-width: 560px;
+}
+.screen.title > :first-child {
+  margin-top: 0;
+}
+.screen.title > :last-child {
+  margin-bottom: 0;
+}
+.title h1,
+.title .tag,
+.title .fine {
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.8);
+}
+.title h1 {
+  text-shadow:
+    0 4px 0 #000,
+    0 6px 16px rgba(0, 0, 0, 0.6);
+}
+.title .tag {
+  color: #f2e6d8;
+  margin: 0 auto;
+  width: fit-content;
+  max-width: 100%;
+  padding: 3px 12px;
+  border-radius: 14px;
+  /* A soft dark pill, so the line stays readable over the sign, clouds or a passing saucer. */
+  background: rgba(24, 14, 8, 0.45);
+}
+.title .fine {
+  margin: 0;
+  color: #e8dccd;
+}
+.title .fine a {
+  color: #ffd27a;
+}
+.title .offline-badge {
+  width: auto;
+}
+
+.title-bar {
+  display: flex;
+  gap: 4px;
+  align-items: flex-start;
+}
+.title-bar .gap {
+  flex: 1;
+}
+/* Testing only: the speed readout and the Test badge sit at the top middle; keep the icons clear of them. */
+body.perf-on .screen.title > .title-bar,
+body.devp-on .screen.title > .title-bar {
+  margin-top: 72px;
+}
+.btn.icon-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  min-height: 54px;
+  padding: 3px 1px;
+  border-radius: 16px;
+  background: rgba(20, 14, 10, 0.55);
+  gap: 1px;
+}
+.btn.icon-btn .emoji {
+  font-size: 24px;
+  line-height: 1.1;
+}
+.btn.icon-btn .word {
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.btn.icon-btn.kid-toggle {
+  width: 58px;
+}
+
+/* The gap the scene shows through. */
+.title-view {
+  flex: 1 1 40px;
+  min-height: 24px;
+}
+
+.btn.play {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-height: 74px;
+  font-size: 30px;
+  border-radius: 22px;
+  box-shadow:
+    0 6px 0 #9a4a10,
+    0 10px 24px rgba(0, 0, 0, 0.45);
+  animation: play-pulse 2.4s ease-in-out infinite;
+}
+.btn.play .emoji {
+  font-size: 30px;
+}
+.btn.play b {
+  display: block;
+  line-height: 1;
+}
+.btn.play small {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+  opacity: 0.9;
+}
+/* A gentle glow, not a size change: a button that never holds still can't be tapped by test scripts. */
+@keyframes play-pulse {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(1.15);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn.play {
+    animation: none;
+  }
+}
+
+.title-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.tiles {
+  display: flex;
+  gap: 8px;
+}
+.btn.tile {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 76px;
+  padding: 6px 2px;
+  border-radius: 18px;
+  background: rgba(20, 14, 10, 0.6);
+}
+.btn.tile .emoji {
+  font-size: 32px;
+  line-height: 1.1;
+}
+.btn.tile .word {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.tap-bubble {
+  position: fixed;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 18px;
+  background: #fff8ec;
+  color: #2a1a10;
+  font-weight: 800;
+  font-size: 17px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  animation: bubble-pop 1.8s ease-out forwards;
+}
+.tap-bubble .emoji {
+  font-size: 26px;
+}
+@keyframes bubble-pop {
+  0% {
+    transform: scale(0.4) translateY(10px);
+    opacity: 0;
+  }
+  12% {
+    transform: scale(1.05);
+    opacity: 1;
+  }
+  80% {
+    transform: none;
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-14px);
+    opacity: 0;
+  }
+}
+
+.title-settings > .btn {
+  width: 100%;
+}
+
+/* Narrow or short phones: the scene needs the room more than the tagline. */
+@media (max-width: 380px), (max-height: 700px) {
+  .screen.title .tag {
+    display: none;
+  }
+}
+
+/* Sideways phones: Play and the trip tiles share one row, so the scene gets the middle. */
+@media (max-height: 640px) and (orientation: landscape) {
+  .title .title-actions {
+    flex-direction: row;
+    align-items: stretch;
+  }
+  .title .btn.play {
+    flex: 1 1 0;
+  }
+  .title .title-actions .tiles {
+    flex: 1.3 1 0;
+  }
+  .title .btn.tile {
+    min-height: 56px;
+    flex-direction: row;
+    gap: 6px;
+  }
+  .title .btn.tile .emoji {
+    font-size: 24px;
+  }
+}
+
+/* Test trip start card (?test=...): clear of the 🛠 test button at the top. */
+.screen.test-start {
+  padding-top: calc(env(safe-area-inset-top) + 72px);
+}
+
+/* Stepping through a building's door: a quick fade to dark and back. */
+.door-fade {
+  position: fixed;
+  inset: 0;
+  background: #000;
+  pointer-events: none;
+  z-index: 5;
+  animation: door-fade 0.65s ease-in-out forwards;
+}
+@keyframes door-fade {
+  0% { opacity: 0; }
+  60% { opacity: 0.92; }
+  100% { opacity: 0; }
+}
+
+/* Resting at the motel: dark, the moon or sun you'll wake to, and drifting Zzz. */
+.sleep-fade {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: all;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 12px;
+  background: #0b1030;
+  animation: sleep-fade 3s ease-in-out forwards;
+}
+.sleep-fade.to-day {
+  animation-name: sleep-fade-day;
+}
+.sleep-fade .sky-icon {
+  font-size: min(28vw, 160px);
+  line-height: 1;
+  animation: sky-rise 3s ease-in-out forwards;
+}
+.sleep-fade .zzz {
+  display: flex;
+  gap: 8px;
+  font: 800 min(10vw, 56px) / 1 system-ui, sans-serif;
+  color: #dfe6ff;
+}
+.sleep-fade .zzz span {
+  animation: zzz 1.2s ease-in-out infinite;
+}
+.sleep-fade .zzz span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.sleep-fade .zzz span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+@keyframes sleep-fade {
+  0% { opacity: 0; }
+  20%, 75% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes sleep-fade-day {
+  0% { opacity: 0; background: #0b1030; }
+  20% { opacity: 1; background: #0b1030; }
+  60% { background: #f2b46a; }
+  75% { opacity: 1; background: #8fc6ee; }
+  100% { opacity: 0; background: #8fc6ee; }
+}
+@keyframes sky-rise {
+  0% { transform: translateY(40px) scale(0.8); opacity: 0; }
+  35% { opacity: 1; }
+  70% { transform: translateY(0) scale(1); }
+  100% { transform: translateY(0) scale(1); opacity: 1; }
+}
+@keyframes zzz {
+  0%, 100% { transform: translateY(0); opacity: 0.5; }
+  50% { transform: translateY(-10px); opacity: 1; }
 }

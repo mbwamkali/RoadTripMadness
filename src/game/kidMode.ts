@@ -6,15 +6,24 @@
  */
 const KEY = 'rtm-kid';
 
+/** A test trip's &kid=1 or &kid=0, for this page load only (never saved). */
+let forced: boolean | null = null;
+
 export const kidMode = {
   get on(): boolean {
+    if (forced != null) return forced;
     try {
       return localStorage.getItem(KEY) === '1';
     } catch {
       return false;
     }
   },
+  /** Overrides the saved switch until the page reloads (test trips). */
+  force(on: boolean | null): void {
+    forced = on;
+  },
   set(on: boolean): void {
+    forced = null;
     try {
       localStorage.setItem(KEY, on ? '1' : '0');
     } catch {

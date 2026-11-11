@@ -57,7 +57,7 @@ export const SECTIONS: Section[] = [
     title: 'Driving',
     tips: [
       { icon: '↔️', title: 'Change lanes', text: 'Swipe left or right, or tap the arrow buttons.' },
-      { icon: '↕️', title: 'Go faster or slower', text: 'Swipe up or down, or tap plus and minus. Going fast burns more gas.' },
+      { icon: '↕️', title: 'Go faster or slower', text: 'The car keeps to the speed limit. Swipe up to go faster, down to slow or stop. Too fast burns gas and hurts more.' },
       { icon: '🚙', title: 'Watch the traffic', text: 'Slow cars ahead make you brake. Stay on your side of the road.' },
       { icon: '🔫', title: 'Shoot what is in the way', text: 'Double-tap a car or a thing on the road to shoot it. In kid mode, tap the big gun button.' },
       { icon: '🚧', title: 'Off the road', text: 'Steer past the last lane to drive off the road. Posts fall over. Buildings and trees stop you!' },
@@ -72,9 +72,10 @@ export const SECTIONS: Section[] = [
     title: 'Exits and towns',
     tips: [
       { icon: '🪧', title: 'A sign shows up', text: 'When a town is coming, a sign pops up at the bottom.' },
-      { icon: '▶️', title: 'Take the exit', text: 'Tap Take the exit once. The blinker goes on and the car turns in by itself.' },
+      { icon: '▶️', title: 'Take the exit', text: 'Tap it once. The car turns in by itself. Until then you can still steer, shoot and change speed.' },
       { icon: '⏩', title: 'Or keep driving', text: 'Tap Keep driving to skip that town.' },
-      { icon: '🏘️', title: 'In town', text: 'Tap a building. Get gas, fix the car, or search: tap the boxes! Too much noise wakes zombies.' },
+      { icon: '🏘️', title: 'In town', text: 'Tap a picture sign to pull in. Get gas, fix the car, or walk inside and tap the boxes.' },
+      { icon: '🧟', title: 'Too much noise', text: 'Noisy searching brings zombies down the street. Tap them to shoot, or run back to the car!' },
     ],
   },
   {
@@ -82,7 +83,7 @@ export const SECTIONS: Section[] = [
     icon: '🔧',
     title: 'Your car',
     tips: [
-      { icon: '⛽', title: 'Gas', text: 'A full tank lasts about a third of the trip.' },
+      { icon: '⛽', title: 'Gas', text: 'A full tank goes about 450 miles (motorcycle 300, pickup 550). Long trips need lots of fill-ups.' },
       { icon: '🛠️', title: 'Garage', text: 'Fix the car and buy upgrades with scrap and cash.' },
       { icon: '🛡️', title: 'Upgrades', text: 'Armor, a bigger tank, a better engine, a roof gun and a ram plate.' },
       { icon: '⭐', title: 'Keep them', text: 'Finish a trip and your upgrades come with you to the next one.' },
@@ -127,7 +128,8 @@ export const SECTIONS: Section[] = [
     title: 'Kid mode and settings',
     tips: [
       { icon: '🧒', title: 'Kid mode', text: 'Big buttons, pictures, the easiest trip, and everything is read out loud.' },
-      { icon: '🔊', title: 'Narration', text: 'The phone reads the game out loud. Turn it on in the pause menu.' },
+      { icon: '🔊', title: 'Narration', text: 'The phone reads the game out loud. Turn it on in the pause menu, pick a voice in ⚙️ on the title.' },
+      { icon: '📻', title: 'Radio', text: 'Tap the radio button while driving to change the song, or turn it off.' },
       { icon: '⏸️', title: 'Pause', text: 'Tap the menu button to pause, change graphics, or turn sounds and scenes on and off.' },
       { icon: '⚠️', title: 'Getting harder', text: 'Every trip you finish makes the next one a little harder. Start over any time on the trip screen.' },
     ],

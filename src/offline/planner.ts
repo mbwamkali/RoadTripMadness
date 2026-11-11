@@ -5,7 +5,8 @@ import { LOCAL_TIMEOUT_MS, lookupStreets, type StreetLookup } from '../geo/local
 import { fetchMapFeatures } from '../geo/overpass';
 import type { RawRoute } from '../geo/route';
 import { loadAtlas } from './atlas';
-import { loadRouteFeatures } from './features';
+import { loadFeatureFiles, loadRouteFeatures } from './features';
+import { applyBakedCrossings } from './bakedCrossings';
 import { loadHighways, loadRoadIndex, nextFrame, type RoadFile } from './roadNet';
 import { tripCache } from './tripCache';
 
@@ -74,6 +75,14 @@ export async function addFeatures(raw: RawRoute, progress: (message: string) => 
       scout?.(null);
     }
   }
+  // Main streets crossing the trip, and which road is on top where two highways cross (step 2 of the road build).
+  if (raw.source === 'osm') {
+    const files = await loadFeatureFiles(raw.coords);
+    if (files?.some((f) => f.crossings || f.bridges)) {
+      const all = applyBakedCrossings(raw.crossings ?? [], files, raw.coords);
+      if (all.length) raw.crossings = all;
+    }
+  }
   // Gas stations alone don't make a trip interesting; borrow the atlas's sights if the lookup found none.
   if (!raw.features?.some((f) => f.kind !== 'fuel')) raw.features = [...(raw.features ?? []), ...(await atlasFeatures(raw))];
 }
@@ -83,7 +92,6 @@ export async function addFeatures(raw: RawRoute, progress: (message: string) => 
  * done by the time the player presses Plan. Does nothing offline.
  */
 export function prefetchStreets(p: LatLng): void {
-  if (isOffline()) return;
   loadRoadIndex()
     .then((index) => lookupStreets(p, index.q, index.attribution))
     .catch(() => {});
@@ -132,21 +140,26 @@ export async function planTrip(
   const own = async () => {
     const index = await loadRoadIndex();
     // The street lookups (often started when the places were picked) run while the highway map loads.
-    const lookups = isOffline() ? [] : [from, to].map((p) => lookupStreets(p, index.q, index.attribution));
+    // Offline they can still find streets remembered on the device.
+    const lookups = [from, to].map((p) => lookupStreets(p, index.q, index.attribution));
     progress('Loading the highway map…', { id: 'map', state: 'active', detail: 'checking' });
     const highways = await loadHighways([from, to], (m) =>
       progress('Loading the highway map…', { id: 'map', state: 'active', detail: m.message, ...(m.total && m.received ? { fraction: m.received / m.total } : {}) }),
     );
     progress('Highway map ready', { id: 'map', state: 'done' });
     let streets: RoadFile[] = [];
-    if (!lookups.length) progress('No connection, so no local streets', { id: 'streets', state: 'skipped', detail: 'offline' });
-    else {
+    {
       const got = await waitForStreets(lookups, progress, skipStreets);
       if (got?.length) {
         streets = got;
         const n = got.reduce((k, f) => k + f.edges.length, 0);
         progress('Local streets found', { id: 'streets', state: 'done', detail: `${n.toLocaleString()} street pieces` });
-      } else progress('Going without local streets', { id: 'streets', state: 'skipped', detail: got ? 'none found' : 'skipped, or the server was too slow' });
+      } else
+        progress('Going without local streets', {
+          id: 'streets',
+          state: 'skipped',
+          detail: isOffline() ? 'offline, and none saved for these places' : got ? 'none found' : 'skipped, or the server was too slow',
+        });
     }
     progress('Building the road network…', { id: 'network', state: 'active' });
     await nextFrame();

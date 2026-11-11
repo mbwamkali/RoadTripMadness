@@ -1,6 +1,8 @@
 import * as THREE from 'three';
+import { lit } from './materials';
 import { disposeTree, makeRide } from './common';
 import { modelsWanted } from './models';
+import { person as rigged, type Person } from './people';
 import { sampleCatship, sampleOutlaw, sampleWreck } from './samples';
 import { angryCat, paperPlaneGeometry, pizzaGeometryParts, sampleCommandDrone, simpleCommandDrone, sampleHermit, sampleKaren, samplePizzaCar, sampleSweeper, simpleCat, simpleHermit, simpleKaren, simplePizzaCar, simpleSweeper } from './bossModels';
 import { kidMode } from '../game/kidMode';
@@ -14,7 +16,7 @@ import type { Upgrades } from '../game/upgrades';
  * graphics the people, saucers and wrecks are simple shapes.
  */
 
-export type SceneKind = 'dirt' | 'flat' | 'help' | 'dog' | 'loot' | 'trade' | 'beam' | 'roadblock' | 'bridge' | 'fuel' | BossScene;
+export type SceneKind = 'dirt' | 'flat' | 'help' | 'hitch' | 'dog' | 'loot' | 'trade' | 'beam' | 'roadblock' | 'bridge' | 'fuel' | BossScene;
 /** Boss intros with their own scene (the older bosses show just their icon). */
 export type BossScene = 'hermit' | 'pizza' | 'sweeper' | 'karen' | 'drones';
 export const BOSS_SCENES: readonly string[] = ['hermit', 'pizza', 'sweeper', 'karen', 'drones'] satisfies BossScene[];
@@ -25,6 +27,7 @@ export function sceneKindFor(eventId: string): SceneKind {
     case 'flat':
       return 'flat';
     case 'hitchhiker':
+      return 'hitch';
     case 'mechanic':
       return 'help';
     case 'dog':
@@ -48,7 +51,7 @@ export function sceneKindFor(eventId: string): SceneKind {
 
 export const SCENE_SECONDS = 4;
 
-const lam = (color: number, extra: THREE.MeshLambertMaterialParameters = {}) => new THREE.MeshLambertMaterial({ color, ...extra });
+const lam = (color: number, extra: THREE.MeshStandardMaterialParameters = {}) => lit({ color, ...extra });
 function mesh(geo: THREE.BufferGeometry, mat: THREE.Material, x = 0, y = 0, z = 0): THREE.Mesh {
   const m = new THREE.Mesh(geo, mat);
   m.position.set(x, y, z);
@@ -104,7 +107,27 @@ function wreck(): THREE.Group {
   return g;
 }
 
+/** Steps a rigged person's moves from scene time (scenes are driven by time, not frames). */
+function mover(p: Person): (t: number) => void {
+  let last = 0;
+  return (t) => {
+    p.update(Math.max(0, t - last));
+    last = t;
+  };
+}
+
+/** The rigged cyclist riding along +x with the gas can on the rack, or the simple rider. */
 function bicycle(): THREE.Group {
+  const r = rigged('cyclist');
+  if (r) {
+    r.play('pedal');
+    r.obj.rotation.y = Math.PI / 2; // people face +z; the scenes run along +x
+    r.obj.userData.person = r;
+    const g = new THREE.Group();
+    g.add(r.obj);
+    g.userData.person = r;
+    return g;
+  }
   const g = new THREE.Group();
   const black = lam(0x222222);
   for (const x of [-0.55, 0.55]) {
@@ -130,6 +153,9 @@ interface Built {
 
 /** Road, sky and lights shared by every scene; the car drives along +x. */
 function stage(kind: SceneKind, ride: 'car' | 'motorcycle' | 'truck', up?: Upgrades): Built {
+  // The rigged hitchhiker isn't there on Low or before it loads: the simple waving person stands in.
+  const hitcher = kind === 'hitch' ? rigged('hitchhiker') : null;
+  if (!hitcher && kind === 'hitch') kind = 'help';
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(kind === 'beam' ? 0x1b1d3a : 0x9fc6e6);
   scene.add(new THREE.HemisphereLight(0xfff6e0, 0x6a5a45, 1.8));
@@ -209,10 +235,29 @@ function stage(kind: SceneKind, ride: 'car' | 'motorcycle' | 'truck', up?: Upgra
         puff.visible = p > 0 && p < 2.2;
         puff.position.set(car.position.x + 1.2, 0.2, 1);
         puff.scale.setScalar(1 + Math.max(0, p) * 1.5);
-        for (const m of puff.children) ((m as THREE.Mesh).material as THREE.MeshLambertMaterial).opacity = Math.max(0, 1 - p / 2.2);
+        for (const m of puff.children) ((m as THREE.Mesh).material as THREE.MeshStandardMaterial).opacity = Math.max(0, 1 - p / 2.2);
         // The car sags on the burst tyre and wobbles.
         car.rotation.z = p > 0 ? -0.12 + Math.sin(p * 18) * 0.04 * Math.max(0, 1 - p) : 0;
         car.position.y = p > 0 ? -0.12 : 0;
+      });
+      break;
+    }
+    case 'hitch': {
+      // The rigged hitchhiker thumbs a ride, then walks up to the car once it stops.
+      const h = hitcher!;
+      stopX = -2.5;
+      h.obj.position.set(2.2, 0, 2.6);
+      scene.add(h.obj);
+      const step = mover(h);
+      props.push((t) => {
+        const walking = t > stopAt + 0.4;
+        h.play(walking ? 'walk' : 'thumb');
+        if (walking) {
+          h.obj.rotation.y = -Math.PI / 2 - 0.35; // along the way he walks, toward the car
+          h.obj.position.x = Math.max(car.position.x + 1.6, 2.2 - (t - stopAt - 0.4) * 1.1);
+          h.obj.position.z = Math.max(1.6, 2.6 - (t - stopAt - 0.4) * 0.4);
+        } else h.obj.rotation.y = -0.6; // faces the oncoming car
+        step(t);
       });
       break;
     }
@@ -490,7 +535,7 @@ function stage(kind: SceneKind, ride: 'car' | 'motorcycle' | 'truck', up?: Upgra
           const k = Math.min(1, Math.max(0, (t - 0.3 - i * 0.12) / 2.2));
           p.position.set(16 + dx - k * (14 + dx) , 2.2 + dy + Math.sin(t * 3 + i) * 0.25, dz);
           p.rotation.x = Math.sin(t * 3 + i) * 0.3;
-          (p.material as THREE.MeshLambertMaterial).color.setHex(0xf4f1e6);
+          (p.material as THREE.MeshStandardMaterial).color.setHex(0xf4f1e6);
         });
       });
       break;
@@ -499,9 +544,12 @@ function stage(kind: SceneKind, ride: 'car' | 'motorcycle' | 'truck', up?: Upgra
       car.visible = false;
       const bike = bicycle();
       scene.add(bike);
+      const rider = bike.userData.person as Person | undefined;
+      const step = rider ? mover(rider) : null;
       props.push((t) => {
         bike.position.set(-9 + t * 4.5, 0, 1);
-        bike.position.y = Math.abs(Math.sin(t * 8)) * 0.05;
+        if (step) step(t);
+        else bike.position.y = Math.abs(Math.sin(t * 8)) * 0.05;
         for (const w of bike.children) if (w.name === 'wheel') w.rotation.z -= 0.25;
       });
       break;

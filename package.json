@@ -12,7 +12,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "smoke": "node scripts/smoke.mjs",
-    "layout": "node scripts/layout-audit.mjs"
+    "layout": "node scripts/layout-audit.mjs",
+    "fastrun": "node scripts/fast-run.mjs"
   },
   "dependencies": {
     "three": "^0.170.0"

@@ -18,25 +18,23 @@ import { fetchLiveConditions, liveEnabled, setLiveEnabled, type LiveConditions }
 import { isOffline, planTrip, prefetchStreets, searchAnywhere, type PlanStep, type StepId } from './offline/planner';
 import { tripCache } from './offline/tripCache';
 import { checkForUpdate, registerServiceWorker } from './offline/registerSw';
+import { loadServers } from './geo/servers';
 import { buildLabel } from './build';
 import { showClassics, showSavedTrips } from './ui/tripScreens';
 import {
-  buyFuel,
   clearSave,
-  FUEL_PRICE,
+  cashScale,
+  foundCash,
+  fuelAffordable,
+  fuelCost,
   loadGame,
   maxHealth,
   buyUpgrade,
   newGame,
   PLACE_TITLES,
-  repair,
   repairCost,
+  restCost,
   saveGame,
-  crateCount,
-  openCrate,
-  scavengeNoise,
-  scavengeSummary,
-  startScavenge,
   tankSize,
   type ActionResult,
   type GameState,
@@ -66,13 +64,26 @@ import { DriveScene, type ShotTarget } from './scenes/DriveScene';
 import { CombatScene } from './scenes/CombatScene';
 import { clearUi, fmtKm, h, ui } from './ui/dom';
 import { Minimap } from './ui/minimap';
-import { PLACE_ICONS, TownMap } from './ui/townMap';
-import { TownScene } from './scenes/townScene';
-import { openScavengeScene } from './scenes/scavengeScene';
+import type { TownPlay } from './town/play';
+import { noteError } from './game/errors';
 import { gunDamageFor, MAX_LEVEL, ramDamageFor, upgradeCost, UPGRADES, type UpgradeKind } from './game/upgrades';
 import { sound } from './audio/sound';
-import { loadQualityChoice, nextQualityChoice, quality, QUALITY_NAMES, resolveQuality, saveQualityChoice } from './scenes/quality';
+import { TAP_LINES, TitleScene, type Tapped } from './scenes/titleScene';
+import { loadGasPrice } from './game/gasPrice';
+import { hdModelsReady, loadHdModels } from './scenes/hdModels';
+import { loadHdBuildings } from './scenes/hdBuildings';
+import { loadPeople, preparePeople } from './scenes/people';
+import { PerfMeter } from './ui/perfMeter';
+import { loadStats } from './game/loadStats';
+import { mountDevPanel } from './ui/devPanel';
+import { devGfx, gfx, loadQualityChoice, nextQualityChoice, quality, QUALITY_NAMES, resolveQuality, saveAutoCap, saveQualityChoice } from './scenes/quality';
+import { AutoTune } from './scenes/autoTune';
 import type { Bloom } from './scenes/bloom';
+import { testing } from './game/testFlag';
+import { describeTest, fuelPerRoadUnit, GASTURN_LEFT, makeTestGame, parseTestFlags, type TestPlan } from './game/testTrip';
+import { townLookup } from './town/fetchTown';
+import { devClock } from './game/time';
+import { makeEvent } from './game/events';
 
 const canvas = document.getElementById('view') as HTMLCanvasElement;
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
@@ -80,6 +91,10 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPrefere
 // contexts), ask for it back instead of leaving a white screen; three.js
 // re-uploads everything once it is restored.
 canvas.addEventListener('webglcontextlost', (e) => e.preventDefault());
+// Film-style tone mapping: bright skies and sunlit paint roll off softly instead of clipping.
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+gfx.renderer = renderer;
 let bloom: Bloom | null = null;
 
 /** Applies the graphics quality to the renderer (scenes read it when they're built). */
@@ -102,9 +117,18 @@ function applyQuality(): void {
 applyQuality();
 // State outlines for state-line signs and exit numbers (small, cached offline).
 void loadStateMap();
+// The real price of gas this week, so prices follow it (gasPrice.ts).
+void loadGasPrice();
 void loadModels();
+// The detailed overhaul models (Medium and High).
+// The rigged people (the player on foot) come last: they're only needed in towns.
+void loadHdModels()
+  .then(() => loadHdBuildings())
+  .then(() => Promise.all([preparePeople(), loadPeople()]));
 
 let active: GameScene | null = null;
+/** The title screen's live scene, while the title is showing. */
+let title: TitleScene | null = null;
 let state: GameState | null = null;
 let path: Path | null = null;
 let drive: DriveScene | null = null;
@@ -129,23 +153,102 @@ function resize(): void {
 window.addEventListener('resize', resize);
 
 let last = performance.now();
+const perf = new PerfMeter(renderer, () => {
+  // What's on screen and where, for the readout's game line.
+  const s = state;
+  const screen = townPlay ? (townPlay.phase === 'inside' ? 'bldg' : 'town') : combat && active === combat ? 'fight' : drive && active === drive ? (drive.fightOn ? 'roadfight' : 'road') : 'menu';
+  if (!s || !drive) return { screen };
+  return {
+    screen,
+    hour: hourOf(s),
+    weather: weatherAt(s),
+    biome: drive.biomeId,
+    road: drive.roadClass,
+    mph: Math.round(drive.mph),
+    limit: drive.speedLimit(),
+    ride: s.ride ?? 'car',
+    kid: kidMode.on,
+    km: Math.round(realKmAt(s.route, s.distance)),
+    turn: drive.turnInfo,
+  };
+});
+// A test trip from the address bar (?test=boss&boss=karen ...; src/game/testTrip.ts). Read before anything else
+// looks at kid mode or the clock; nothing it does is saved.
+const testPlan = parseTestFlags(location.search);
+if (testPlan) {
+  testing.on = true;
+  testing.tough = testPlan.tough;
+  if (testPlan.kid != null) kidMode.force(testPlan.kid);
+  townLookup.off = testPlan.town !== 'real';
+  if (testPlan.hour != null) devClock.hour = testPlan.hour;
+  if (testPlan.weather) devClock.weather = testPlan.weather;
+}
+/** The test trip that's on the road right now (null on a normal trip). */
+let testTrip: { plan: TestPlan; state: GameState; eventShown: boolean; drained: boolean } | null = null;
+const testOn = () => (testTrip && testTrip.state === state ? testTrip : null);
+mountDevPanel(() => {
+  applyQuality();
+  resize();
+});
+const autoTune = new AutoTune();
+
+/** Auto graphics: time the first stretch of plain driving and step down if it's slow (autoTune.ts). */
+function tuneQuality(gapMs: number): void {
+  if (autoTune.settled) return;
+  const counting =
+    !!drive && active === drive && !drive.paused && !drive.fightOn && !document.hidden &&
+    state?.status === 'driving' && loadQualityChoice() === 'auto' &&
+    devGfx.post === undefined && devGfx.ratio === undefined &&
+    !townPlay && !document.querySelector('.modal');
+  const next = autoTune.frame(gapMs, counting, quality.level);
+  if (!next) return;
+  saveAutoCap(next);
+  quality.level = next;
+  applyQuality();
+  // Shadows, draw distance and scenery are built with the scene, so rebuild it (after this frame).
+  setTimeout(() => {
+    if (state?.status !== 'driving') return;
+    startTrip(state);
+    showToast('⚙️', `Graphics set to ${QUALITY_NAMES[next]}`, 'So the game runs smoother');
+  }, 0);
+}
+
 function frame(now: number): void {
-  const dt = Math.min(0.05, (now - last) / 1000);
+  // Ask for the next frame first, so one error can never stop the game for good.
+  requestAnimationFrame(frame);
+  const gap = now - last;
+  const dt = Math.min(0.05, gap / 1000);
   last = now;
+  tuneQuality(gap);
+  perf.begin();
   if (active) {
-    active.update(dt);
-    if (bloom) bloom.render(active.scene, active.camera);
-    else renderer.render(active.scene, active.camera);
+    try {
+      active.update(dt);
+    } catch (e) {
+      noteError(e, 'update');
+    }
+    try {
+      if (bloom) {
+        // Inside a building the pale room fills the screen: a softer glow keeps it from washing out.
+        bloom.glow = townPlay?.phase === 'inside' ? 0.3 : 1;
+        bloom.render(active.scene, active.camera);
+      }
+      else renderer.render(active.scene, active.camera);
+    } catch (e) {
+      noteError(e, 'render');
+    }
   } else {
     renderer.setClearColor(0x1b1410);
     renderer.clear();
   }
+  perf.end();
   if (state && state.status === 'driving' && now - lastSave > 3000) {
     saveGame(state);
     lastSave = now;
   }
-  requestAnimationFrame(frame);
 }
+window.addEventListener('error', (e) => noteError(e.error ?? e.message, 'window'));
+window.addEventListener('unhandledrejection', (e) => noteError(e.reason, 'promise'));
 
 function setScene(scene: GameScene | null): void {
   active = scene;
@@ -163,33 +266,115 @@ function showTitle(): void {
   const saved = loadGame();
   const savedTrips = tripCache.list().length;
   const pick = (raw: RawRoute) => previewRoute(buildRouteData(raw), undefined, showTitle);
-  ui().append(
+  // The live scene behind the menu (titleScene.ts); it goes away as soon as you leave.
+  title = new TitleScene();
+  setScene(title);
+  const go = (fn: () => void) => () => {
+    closeTitleScene();
+    fn();
+  };
+  /** A round picture button with a small word under it; `name` is what screen readers (and the tests) use. */
+  const icon = (emoji: string, word: string, name: string, onclick: () => void, cls = '') =>
+    h('button', { class: `btn icon-btn ${cls}`, 'aria-label': name, onclick }, h('span', { class: 'emoji', 'aria-hidden': 'true' }, emoji), h('span', { class: 'word' }, word));
+  const tile = (emoji: string, word: string, name: string, onclick: () => void) =>
+    h('button', { class: 'btn tile', 'aria-label': name, onclick }, h('span', { class: 'emoji', 'aria-hidden': 'true' }, emoji), h('span', { class: 'word' }, word));
+  const demo = () => previewRoute(buildRouteData(demoRawRoute(Date.now() % 1000)), undefined, showTitle);
+  const play = saved
+    ? h(
+        'button',
+        { class: 'btn primary play', 'aria-label': `Continue to ${saved.route.endLabel.split(',')[0]}`, onclick: go(() => startTrip(saved)) },
+        h('span', { class: 'emoji', 'aria-hidden': 'true' }, '▶'),
+        h('span', {}, h('b', {}, 'Keep going'), h('small', {}, `to ${saved.route.endLabel.split(',')[0]}`)),
+      )
+    : h('button', { class: 'btn primary play', 'aria-label': 'Plan a new trip', onclick: go(showSetup) }, h('span', { class: 'emoji', 'aria-hidden': 'true' }, '▶'), h('b', {}, 'Play'));
+  const screen = h(
+    'div',
+    { class: 'screen title' },
     h(
       'div',
-      { class: 'screen title' },
-      h('h1', {}, 'Road Trip ', h('span', {}, 'Madness')),
-      h('p', { class: 'tag' }, 'Real roads. Zombies, outlaws and alien cats. Keep your tank full.'),
-      saved && h('button', { class: 'btn primary', onclick: () => startTrip(saved) }, `Continue to ${saved.route.endLabel.split(',')[0]}`),
-      h('button', { class: `btn ${saved ? '' : 'primary'}`, onclick: showSetup }, 'Plan a new trip'),
-      h('button', { class: 'btn', onclick: () => showClassics(pick, showTitle) }, 'Classic road trips'),
-      savedTrips > 0 && h('button', { class: 'btn', onclick: () => showSavedTrips(pick, showTitle) }, `Saved trips (${savedTrips})`),
-      h('button', { class: 'btn', onclick: () => previewRoute(buildRouteData(demoRawRoute(Date.now() % 1000)), undefined, showTitle) }, 'Quick demo trip (made-up map)'),
-      h('button', { class: 'btn', onclick: () => showHowToPlay(showTitle) }, '❓ How to play'),
-      h('button', { class: 'btn ghost', onclick: showScores }, '🏆 High scores'),
+      { class: 'title-bar' },
       kidModeButton(),
-      voiceButton(),
-      installButton(),
-      isOffline() && h('div', { class: 'offline-badge' }, 'Offline: classic, saved and atlas trips still work'),
-      h('button', { class: 'btn ghost', onclick: () => showAbout(showTitle, buildLine) }, 'ℹ️ About and credits'),
+      h('span', { class: 'gap' }),
+      icon('❓', 'Help', 'How to play', go(() => showHowToPlay(showTitle))),
+      icon('🏆', 'Scores', 'High scores', go(showScores)),
+      icon('⚙️', 'Settings', 'Settings', showTitleSettings),
+      icon('ℹ️', 'About', 'About and credits', go(() => showAbout(showTitle, buildLine))),
+    ),
+    h('h1', {}, 'Road Trip ', h('span', {}, 'Madness')),
+    h('p', { class: 'tag' }, 'Real roads. Zombies, outlaws and alien cats. Keep your tank full.'),
+    h('div', { class: 'title-view' }),
+    h(
+      'div',
+      { class: 'title-actions' },
+      play,
       h(
-        'p',
-        { class: 'fine' },
-        'Maps © ',
-        h('a', { href: 'https://www.openstreetmap.org/copyright', target: '_blank', rel: 'noopener' }, 'OpenStreetMap'),
-        ' contributors (ODbL). More in About.',
+        'div',
+        { class: 'tiles' },
+      saved && tile('🗺️', 'New trip', 'Plan a new trip', go(showSetup)),
+      tile('⭐', 'Classic', 'Classic road trips', go(() => showClassics(pick, showTitle))),
+      savedTrips > 0 && tile('💾', `Saved (${savedTrips})`, `Saved trips (${savedTrips})`, go(() => showSavedTrips(pick, showTitle))),
+        tile('🎲', 'Demo', 'Quick demo trip (made-up map)', go(demo)),
       ),
     ),
+    isOffline() && h('div', { class: 'offline-badge' }, 'Offline: classic, saved and atlas trips still work'),
+    h(
+      'p',
+      { class: 'fine' },
+      'Maps © ',
+      h('a', { href: 'https://www.openstreetmap.org/copyright', target: '_blank', rel: 'noopener' }, 'OpenStreetMap'),
+      ' contributors (ODbL). More in About.',
+    ),
   );
+  // Taps that miss the buttons land in the scene: the zombie groans, the car honks.
+  screen.addEventListener('pointerdown', (e) => {
+    if (!title || (e.target as HTMLElement).closest('button, a, .modal')) return;
+    const what = title.tap(e.clientX, e.clientY, window.innerWidth, window.innerHeight);
+    if (what) tapBubble(screen, e.clientX, e.clientY, what);
+  });
+  ui().append(screen);
+}
+
+
+function closeTitleScene(): void {
+  if (!title) return;
+  if (active === title) setScene(null);
+  title.dispose();
+  title = null;
+}
+
+/** A speech bubble where the player tapped, with the line read out in kid mode. */
+function tapBubble(host: HTMLElement, x: number, y: number, what: Tapped): void {
+  const lines = TAP_LINES[what];
+  const line = lines[Math.floor(Math.random() * lines.length)];
+  host.querySelector('.tap-bubble')?.remove();
+  const b = h('div', { class: 'tap-bubble' }, h('span', { class: 'emoji' }, line.icon), h('span', {}, line.text));
+  const w = Math.min(240, window.innerWidth - 24);
+  b.style.left = `${Math.max(12, Math.min(window.innerWidth - w - 12, x - w / 2))}px`;
+  b.style.top = `${Math.max(12, y - 70)}px`;
+  b.style.width = `${w}px`;
+  host.append(b);
+  setTimeout(() => b.remove(), 1800);
+  narrator.say(line.text);
+}
+
+/** The title's settings: narrator voice and installing the app. */
+function showTitleSettings(): void {
+  const close = () => overlay.remove();
+  const overlay = h(
+    'div',
+    { class: 'modal' },
+    h(
+      'div',
+      { class: 'card title-settings' },
+      h('h2', {}, '⚙️ Settings'),
+      voiceButton(),
+      installButton(),
+      h('p', { class: 'muted' }, 'Graphics and sounds are in the pause menu during a trip.'),
+      h('div', { class: 'card-actions' }, h('button', { class: 'btn primary', onclick: close }, 'Done')),
+    ),
+  );
+  overlay.addEventListener('click', (e) => e.target === overlay && close());
+  ui().append(overlay);
 }
 
 /** The build number, with a button that looks for a newer one. */
@@ -203,14 +388,19 @@ function buildLine(): HTMLElement {
   return h('div', { class: 'build-line' }, h('span', { class: 'build' }, buildLabel()), check);
 }
 
-/** The Kid mode switch on the title screen. */
+/** The Kid mode switch on the title screen: a round picture button that lights up green when on. */
 function kidModeButton(): HTMLElement {
-  const label = () => `🧒 Kid mode: ${kidMode.on ? 'on' : 'off'}`;
-  const b = h('button', { class: `btn kid-toggle ${kidMode.on ? 'on' : ''}` }, label());
+  const word = h('span', { class: 'word' }, '');
+  const b = h('button', { class: 'btn icon-btn kid-toggle' }, h('span', { class: 'emoji', 'aria-hidden': 'true' }, '🧒'), word);
+  const sync = () => {
+    word.textContent = kidMode.on ? 'Kid: on' : 'Kid: off';
+    b.setAttribute('aria-label', `Kid mode: ${kidMode.on ? 'on' : 'off'}`);
+    b.classList.toggle('on', kidMode.on);
+  };
+  sync();
   b.addEventListener('click', () => {
     kidMode.set(!kidMode.on);
-    b.textContent = label();
-    b.classList.toggle('on', kidMode.on);
+    sync();
     document.body.classList.toggle('kid', kidMode.on);
     if (kidMode.on) narrator.say('Kid mode is on. I will read everything out loud.');
     else narrator.stop();
@@ -467,7 +657,7 @@ function previewRoute(route: RouteData, note?: string, back: () => void = showSe
   const rideBlurb = h('p', { class: 'ride-blurb muted' }, '');
   const syncRide = () => {
     rideBtns.forEach((b, i) => b.classList.toggle('selected', RIDE_IDS[i] === ride));
-    rideBlurb.textContent = RIDES[ride].blurb;
+    rideBlurb.textContent = `${RIDES[ride].blurb} Top speed ${RIDES[ride].topMph} mph.`;
   };
   syncRide();
   const p = pathFromRoute(route);
@@ -544,7 +734,7 @@ function previewRoute(route: RouteData, note?: string, back: () => void = showSe
         (route.fuel?.length ?? 0) > 0 && h('li', {}, `Fuel stops are real gas stations from the map (${route.fuel!.length} along the way)`),
         (route.states?.length ?? 0) > 1 && h('li', {}, `Crosses ${route.states!.length} states: ${route.states!.map((st) => st.code).join(' → ')}`),
         realMap && liveLi,
-        h('li', {}, 'Green dots have gas pumps. Your tank lasts about a third of the trip.'),
+        h('li', {}, 'Green dots have gas pumps. A full tank goes about 450 miles in the car, less on the motorcycle, more in the pickup.'),
         h('li', {}, 'Something big is waiting halfway, and another at the end of the road.'),
       ),
       note && h('p', { class: 'note' }, note),
@@ -606,6 +796,7 @@ function describeLive(c: LiveConditions): string {
 // --------------------------------------------------------------- driving
 
 function disposeAll(): void {
+  closeTitleScene();
   drive?.dispose();
   combat?.dispose();
   drive = null;
@@ -616,29 +807,48 @@ function disposeAll(): void {
 function startTrip(s: GameState): void {
   // The CC0 models load in the background at startup; wait for them on the
   // rare first trip that starts before they arrive (they never block on Low).
-  if (modelsWanted() && !modelsReady()) {
-    void loadModels().then(() => startTripNow(s));
+  if (modelsWanted() && (!modelsReady() || !hdModelsReady())) {
+    const t0 = performance.now();
+    void Promise.all([loadModels(), loadHdModels()]).then(() => {
+      loadStats.tripWait = performance.now() - t0;
+      startTripNow(s);
+    });
     return;
   }
+  loadStats.tripWait = 0;
   startTripNow(s);
 }
 
 function startTripNow(s: GameState): void {
   disposeAll();
+  autoTune.reset();
   state = s;
   path = pathFromRoute(s.route);
   saveGame(s);
   drive = new DriveScene(s, path, {
-    onEncounter: () => startCombat(false),
+    onEncounter: () => {
+      const t = testOn();
+      if (t?.plan.kind !== 'fight') return startCombat(false);
+      testHorde = t.plan.horde;
+      startCombat(false, t.plan.enemy);
+      testHorde = undefined;
+    },
     onArrive: () => setTimeout(showEnd, 600),
     onOutOfFuel: () => setTimeout(() => (state?.status === 'lost' ? showEnd() : showBikeRescue()), 600),
     onPrompt: (stop, dist) => updatePrompt(stop, dist),
-    onEnterStop: (stop) => (stop.kind === 'shortcut' ? showShortcut(stop) : showStop(stop)),
+    onEnterStop: (stop) => (stop.kind === 'shortcut' ? showShortcut(stop) : showTown(stop)),
     onLandmark: (l) => showLandmarkToast(l),
     onBiome: (icon, name) => showToast(icon, 'Now entering', name),
-    onRoadEvent: () => showRoadEvent(rollEvent(s)),
+    onRoadEvent: () => {
+      const t = testOn();
+      // A test trip's event comes first; any later ones are random as usual.
+      if (t?.plan.event && !t.eventShown) {
+        t.eventShown = true;
+        showRoadEvent(makeEvent(t.plan.event, s));
+      } else showRoadEvent(rollEvent(s));
+    },
     // Bosses arrive right on the road (a name banner and the narrator); the old intro card stays for the fight view.
-    onBoss: (boss) => (roadFights ? startCombat(false, undefined, undefined, boss) : showBossIntro(boss)),
+    onBoss: (boss) => (roadFights ? startCombat(false, undefined, boss) : showBossIntro(boss)),
     onTick: () => hudTick?.(),
     onRam: (kind, cost) => {
       const what = { debris: 'You plough through the junk', zombie: 'Splat! You run down a zombie', wreck: 'You shove a wreck aside', roadblock: 'You smash through the roadblock' }[kind];
@@ -683,7 +893,7 @@ function startTripNow(s: GameState): void {
       showToast('🚧', 'Off the road!', 'Bumpy and slow. Posts fall over, buildings do not. Steer back to the road');
     },
     onRoadside: (what, cost, big) => {
-      const icon = { delineator: '🚧', mile: '🪧', sign: '🪧', lamp: '💡', pole: '🪵', tree: '🌳', rock: '🪨', building: '🏢', barrier: '🧱', guardrail: '🚧', bridge: '🌉' }[what];
+      const icon = { delineator: '🚧', mile: '🪧', sign: '🪧', lamp: '💡', pole: '🪵', tree: '🌳', rock: '🪨', building: '🏢', barrier: '🧱', guardrail: '🚧', bridge: '🌉', pier: '🌉' }[what];
       showToast(big ? '💥' : icon, big ? `Crash! You hit ${SOLIDS[what].name}` : `Bonk! You knocked over ${SOLIDS[what].name}`, cost ? `−${cost} car health` : 'No harm done');
       if (cost) navigator.vibrate?.(big ? 140 : 40);
       if (state?.status === 'lost' && drive) {
@@ -758,6 +968,12 @@ function updatePrompt(stop: Stop | null, dist: number): void {
 }
 
 function chooseTurn(stop: Stop): void {
+  const t = testOn();
+  if (t?.plan.kind === 'gasturn' && !t.drained && state) {
+    // The gas-turn test: the tank runs dry about a second after Turn is tapped.
+    t.drained = true;
+    state.inv.fuel = Math.min(state.inv.fuel, GASTURN_LEFT * fuelPerRoadUnit(state));
+  }
   drive?.takeTurn(stop);
   navigator.vibrate?.(40);
   renderSignalling(stop);
@@ -915,14 +1131,21 @@ function showDriveHud(fight?: CombatState): void {
     showToast('🤖', 'Autopilot', drive!.autopilot ? 'On: faster, stays in its lane, slows for traffic' : 'Off: you are driving');
   });
   const menuBtn = h('button', { class: 'btn small round', title: 'Menu' }, '☰');
-  const stationName = () => ({ off: 'Radio off', twang: 'KTWG Country', synth: 'Neon FM' })[sound.station];
+  const stationName = () => ({ off: 'Radio off', road: 'Home Stretch', classical: 'Evening Drive', west: 'Desert Highway' })[sound.station];
   const radioBtn = h('button', { class: `btn small round ${sound.station === 'off' ? 'off' : ''}`, title: stationName() }, '📻');
   radioBtn.addEventListener('click', () => {
     sound.nextStation();
     radioBtn.classList.toggle('off', sound.station === 'off');
     radioBtn.title = stationName();
-    showToast('📻', 'Car radio', stationName());
+    showToast('📻', sound.tuning ? 'Car radio · tuning in…' : 'Car radio', stationName());
   });
+  const radioFailed = new Set<string>();
+  sound.onRadioFail = (id) => {
+    // Once per song per visit, so a fight starting and ending offline doesn't keep repeating it.
+    if (radioFailed.has(id)) return;
+    radioFailed.add(id);
+    showToast('📻', 'Car radio', 'The radio needs internet the first time');
+  };
   menuBtn.addEventListener('click', () => showPauseMenu());
   // Driving: change lanes and pick your speed.
   const pad = (label: string, title: string, fn: () => void) => {
@@ -1004,7 +1227,7 @@ function showDriveHud(fight?: CombatState): void {
       lastInv = key;
     }
     (progress.firstChild as HTMLElement).style.width = `${(s.distance / p.length) * 100}%`;
-    const left = realKmAt(s.route, p.length - s.distance);
+    const left = realKmAt(s.route, Math.max(0, p.length - s.distance));
     const hour = hourOf(s);
     const wx = weatherAt(s);
     const road = roadAt(s.route, s.distance);
@@ -1014,26 +1237,30 @@ function showDriveHud(fight?: CombatState): void {
     if (drive) {
       const limit = drive.speedLimit();
       if (fight) {
-        dashSpeed.textContent = String(Math.round(limit * drive.throttle * (fight.boostTime > 0 ? 1.6 : 1)));
-        dashMpg.textContent = String(Math.round(mpg(s, drive.throttle)));
+        dashSpeed.textContent = String(Math.round(drive.mph));
+        dashMpg.textContent = String(Math.round(mpg(s, drive.mph, limit)));
         return;
       }
-      const mph = Math.round(limit * drive.throttle);
       speedText.textContent = `Limit ${limit}`;
-      dashSpeed.textContent = String(mph);
-      dash.classList.toggle('fast', drive.throttle > 1);
-      if (drive.throttle > 1 && !warnedSpeeding) {
+      dashSpeed.textContent = String(Math.round(drive.mph));
+      dash.classList.toggle('fast', drive.speeding);
+      if (drive.speeding && !warnedSpeeding) {
         warnedSpeeding = true;
         showToast('⛽', 'Speeding burns gas', 'Faster empties the tank sooner and gives you less time to react');
       }
-      dashMpg.textContent = String(Math.round(mpg(s, drive.throttle)));
+      dashMpg.textContent = String(Math.round(mpg(s, drive.mph, limit)));
       controls.classList.toggle('wrong-side', drive.wrongSide);
-      // The horn steps aside for a turn prompt too, so it never catches a tap meant for the exit.
-      hornRow.classList.toggle('show', !!drive.animalAhead && !promptEl?.classList.contains('show'));
+      // The horn and big shoot button sit just above the stop prompt. They step aside while the turn buttons
+      // are on offer, or they would catch taps meant for "Take the exit", and come back once the car is
+      // signalling so you can still clear the road on the way to the turn.
+      const turnOnOffer = !!promptEl?.classList.contains('show') && !promptEl.classList.contains('signalling');
+      // While signalling, the "Turning…" bar (with its Cancel button) stays up, so the buttons ride above it.
+      const signalBar = !!promptEl?.classList.contains('show') && promptEl.classList.contains('signalling');
+      const lift = signalBar ? `${promptEl!.offsetHeight + 6}px` : '0px';
+      if (hornRow.parentElement && hornRow.parentElement.style.getPropertyValue('--prompt-lift') !== lift) hornRow.parentElement.style.setProperty('--prompt-lift', lift);
+      hornRow.classList.toggle('show', !!drive.animalAhead && !turnOnOffer);
       const t = drive.target;
-      // The big shoot button sits just above the stop prompt; it steps aside while a turn is on offer,
-      // or it would catch taps meant for "Take the exit".
-      shootRow.classList.toggle('show', !!t && !promptEl?.classList.contains('show'));
+      shootRow.classList.toggle('show', !!t && !turnOnOffer);
       if (t && !bigShoot) tapHint();
       if (t) {
         const label = t.type === 'obstacle' ? `🔫 ${OBSTACLE_LABEL[t.o.kind]}` : `🔫 ${t.v.hostile ? '😠 ' : ''}${VEHICLE_LABEL[t.v.kind]}`;
@@ -1239,6 +1466,11 @@ function showPauseMenu(): void {
           onclick: (e: Event) => {
             const c = nextQualityChoice(loadQualityChoice());
             saveQualityChoice(c);
+            // Picking Auto again times this device afresh.
+            if (c === 'auto') {
+              saveAutoCap(null);
+              autoTune.settled = false;
+            }
             quality.level = resolveQuality(c);
             applyQuality();
             (e.currentTarget as HTMLElement).textContent = qualityText();
@@ -1301,7 +1533,7 @@ function showRoadEvent(ev: RoadEvent): void {
   const finish = (fight?: EnemyType) => {
     overlay.remove();
     if (s.status === 'lost') return showEnd();
-    if (fight) return startCombat(false, undefined, fight);
+    if (fight) return startCombat(false, fight);
     drive?.resume();
     hudTick?.();
   };
@@ -1348,7 +1580,7 @@ function showShortcut(stop: Stop): void {
   const rng = makeRngFor(s.seed ^ hashStr(stop.id));
   const skip = shortcutSkip(s, p.length, stop.at, rng);
   const outcome = rollShortcut(rng, kid);
-  takeShortcut(s, stop, skip, fuelPerUnit(p.length));
+  takeShortcut(s, stop, skip, fuelPerUnit(s.route.scale));
   saveGame(s);
   sound.engine(0);
   const km = realKmAt(s.route, skip);
@@ -1368,7 +1600,7 @@ function showShortcut(stop: Stop): void {
     if (s.status === 'lost') return showEnd();
     // Back on the route further along (a fresh drive view at the new spot).
     startTrip(s);
-    if (fight) startCombat(!kid, undefined, 'outlaw');
+    if (fight) startCombat(!kid, 'outlaw');
   };
   const say = (text: string, good: boolean) => {
     narrator.say(text);
@@ -1451,7 +1683,8 @@ function showBikeRescue(): void {
     const done = h('button', { class: 'btn primary', disabled: true, onclick: () => {
       overlay.remove();
       hudTick?.();
-      drive?.resume();
+      // Keeps a turn you'd signalled for, or signals for the next stop if it's close.
+      drive?.resume({ signalNext: true });
     } }, 'Back on the road');
     body.replaceChildren(track, lines, done);
     out.story.forEach((line, i) =>
@@ -1476,164 +1709,195 @@ function showBikeRescue(): void {
 
 // --------------------------------------------------------------- explore a stop
 
-const PLACE_BLURBS: Record<PlaceKind, string> = {
-  pumps: 'Pumps still work if you pay. Or poke around for gas cans.',
-  garage: 'Tools, lifts and spare parts. A mechanic will fix you up for a price.',
-  grocery: 'Shelves mostly bare, but the till might have cash.',
-  hardware: 'Scrap metal, pipes and the odd box of shells.',
-  gunshop: 'Bars on the windows. Whatever is left in here is worth it.',
-  pharmacy: 'Cash in the register and, weirdly, catnip.',
-  police: 'Evidence lockers full of ammo. Doors hanging open.',
-  junkyard: 'Mountains of scrap. Something growls behind the crusher.',
-  barn: 'Hay, a tractor, and a few jerry cans.',
-  motel: 'Room keys still on the hooks. Guests left in a hurry.',
-};
+/** The town you're in, for play tests. */
+let townPlay: TownPlay | null = null;
 
-/** The town on screen, for play tests. */
-let townView: TownScene | TownMap | null = null;
-
-function showStop(stop: Stop): void {
+/**
+ * A town, right in the road view: the car turns onto Main Street and the town
+ * (src/town/play.ts) takes over the car and the camera. This is its HUD: the
+ * meters, the town's name, what just happened, and a few big buttons for what
+ * you can do where you are. Taps on the view go to the town (signs, zombies,
+ * crates, the ground to walk to).
+ */
+function showTown(stop: Stop): void {
   const s = state!;
   saveGame(s);
   clearUi();
-  const night = isNight(hourOf(s));
   const kid = kidMode.on;
-  // Medium and High draw the town in 3D with the road's models; Low keeps the flat map.
-  const in3d = modelsWanted() && modelsReady();
-  const log = h('div', { class: 'log' }, h('p', {}, kid ? `You pull into ${stop.name}.` : `You pull into ${stop.name}. The place is quiet. Too quiet.`));
-  const invEl = h('div', {});
-  const meters = h('div', { class: 'stats' });
   const fuel = bar('fuel', '⛽');
   const hp = bar('hp', '🔧');
-  meters.append(fuel.el, hp.el, invEl);
+  const invEl = h('div', {});
+  const meters = h('div', { class: 'stats' }, fuel.el, hp.el, invEl);
+  const clock = () => `${isNight(hourOf(s)) ? '🌙' : '☀️'} ${clockText(hourOf(s))}`;
+  const clockEl = h('small', {}, '');
+  const menuBtn = h('button', { class: 'btn small round', title: 'Menu' }, '☰');
+  menuBtn.addEventListener('click', () => showPauseMenu());
   const noise = h('div', { class: 'noise' }, h('span', {}, '🔊'), h('div', { class: 'track' }, h('span', { class: 'fill' })), h('span', {}, '🧟'));
-  const searchesAt = (p: PlaceKind) => s.searches[`${stop.id}:${p}`] ?? 0;
+  const hint = h('div', { class: 'town-hint' });
+  const log = h('div', { class: 'town-log' });
+  const actions = h('div', { class: `town-actions ${kid ? 'kid' : ''}` });
+  const hudTop = h('div', { class: 'hud-top' }, meters, h('div', { class: 'side' }, h('div', { class: 'town-chip' }, h('h2', {}, stop.name), clockEl), menuBtn));
+  const bottom = h('div', { class: 'town-bottom' }, hint, noise, log, actions);
+  ui().append(
+    h(
+      'div',
+      { class: 'hud town-hud' },
+      hudTop,
+      bottom,
+    ),
+  );
+  const say = (text: string, speak = true) => {
+    log.replaceChildren(h('p', {}, kid ? oneLine(text) : text));
+    log.classList.remove('fresh');
+    void log.offsetWidth;
+    log.classList.add('fresh');
+    if (speak) narrator.say(text);
+  };
+  const button = (icon: string, text: string, fn: () => void, primary = false, disabled = false) => {
+    const b = h('button', { class: `btn ${primary ? 'primary' : ''}`, title: text, disabled }, h('span', { class: 'big-icon' }, icon), kid ? '' : h('span', {}, text));
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      sound.click();
+      fn();
+    });
+    return b;
+  };
+  let shown = '';
   const refresh = () => {
+    const p = townPlay;
     fuel.set(s.inv.fuel, tankSize(s));
     hp.set(s.health, maxHealth(s));
     invEl.replaceChildren(kid ? kidSupplies(s) : inventoryLine(s));
-    map.setSearches(Object.fromEntries(stop.places.map((p) => [p, searchesAt(p)])));
-    // The meter shows how noisy the chosen building already is.
-    const v = current ? Math.min(0.6, searchesAt(current) * 0.25) : 0;
+    clockEl.textContent = `${clock()} · ${STOP_TITLES[stop.kind]}`;
+    if (!p) return;
+    const v = p.noise;
     (noise.querySelector('.fill') as HTMLElement).style.width = `${Math.round(v * 100)}%`;
     noise.classList.toggle('warm', v > 0.33 && v <= 0.66);
     noise.classList.toggle('hot', v > 0.66);
-    noise.hidden = !current;
-    sheet.replaceChildren(current ? placeCard(current) : h('p', { class: 'muted hint' }, kid ? '👆 Tap a building!' : '👆 Tap a building to walk over and look around.'));
-  };
-  const say = (r: ActionResult) => {
-    log.prepend(h('p', { class: r.ok ? '' : 'muted' }, kid ? oneLine(r.message) : r.message));
-    if (r.ambush) sound.bad();
-    else if (r.ok) sound.coin();
-    if (r.ambush) {
-      setTimeout(() => {
-        if (map instanceof TownScene) map.dispose();
-        startCombat(true, stop);
-      }, 700);
-      return;
+    noise.hidden = p.phase !== 'inside';
+    // The buttons change only when where you are or what's around does.
+    const near = p.nearZombies() > 0;
+    const at = p.at?.lot.place;
+    const key = [p.phase, p.view, at, near, p.filling > 0, p.canFill(), repairCost(s).hp > 0, p.cratesLeft(), s.inv.cash, p.canRest()].join('|');
+    if (key === shown) return;
+    shown = key;
+    const b: HTMLElement[] = [];
+    let tip = '';
+    const driveOn = () => button('🚗', 'Drive on', () => p.leave());
+    const runOrWalk = () => button(near ? '🏃' : '🚗', near ? 'Run to the car!' : 'Back to car', () => p.backToCar(near), near);
+    // Pulling out of town: the town's last words ('Inside the motel...') shouldn't ride along onto the highway.
+    log.hidden = p.phase === 'leaving' || p.phase === 'done';
+    if (p.phase === 'street') {
+      tip = kid ? '👆 🪧' : 'Tap a sign to pull in.';
+      if (p.viewCount > 1) b.push(button('👀', p.view === 0 ? 'Closer look' : p.view < p.viewCount - 1 ? 'Further up' : 'Whole street', () => p.nextView()));
+      b.push(driveOn());
+    } else if (p.phase === 'parked') {
+      if (at === 'pumps') {
+        const want = Math.max(0, Math.floor(tankSize(s) - s.inv.fuel));
+        const price = fuelCost(s, Math.min(want, fuelAffordable(s)));
+        b.push(button('⛽', want === 0 ? 'Tank is full' : `Fill up ($${price})`, () => p.fillUp(), true, !p.canFill() || p.filling > 0));
+      }
+      if (at === 'garage') {
+        const cost = repairCost(s);
+        // Short labels so the buttons stay one line on a phone; scrap is used first when you have it.
+        const fixLabel = !cost.hp ? 'Car is fine' : s.inv.scrap >= cost.scrap ? `Fix: ${cost.scrap} scrap` : `Fix $${cost.cash}`;
+        b.push(button('🔧', fixLabel, () => p.fix(), true, cost.hp === 0));
+        b.push(button('⬆️', 'Upgrades', () => showUpgrades(s, (r) => say(r.message))));
+      }
+      b.push(button('🚶', 'Get out', () => p.getOut(), at !== 'pumps' && at !== 'garage'));
+      b.push(button('🏘️', 'Main Street', () => p.toStreet()));
+      b.push(driveOn());
+      tip = kid ? '' : near ? 'Zombies! Drive on, or tap them to shoot.' : 'Get out to look inside, or tap another sign.';
+    } else if (p.phase === 'walking') {
+      if (p.at) b.push(button('🚪', 'Go in', () => p.goIn(p.at!), !near));
+      if (at === 'pumps' && p.canFill()) b.push(button('⛽', 'Fill up', () => p.fillUp(), false, p.filling > 0));
+      b.push(runOrWalk());
+      tip = kid ? (near ? '👆 🧟' : '') : near ? 'Tap zombies to shoot them, or run for the car!' : 'Tap a building to go in, or tap the ground to walk.';
+    } else if (p.phase === 'inside') {
+      // The motel: sleep till night (or morning). Tapping the bed does the same.
+      if (at === 'motel') b.push(button('🛏️', `Rest $${restCost(s)}`, () => p.rest(), !near, !p.canRest() || s.inv.cash < restCost(s)));
+      b.push(button('🚪', 'Go outside', () => p.leaveBuilding(false)));
+      b.push(runOrWalk());
+      const left = p.cratesLeft();
+      tip = kid ? (left ? '👆 📦' : '') : left ? `Tap the boxes (${left} left). Noise brings zombies.` : 'Nothing left in here.';
     }
-    refresh();
+    hint.textContent = tip;
+    hint.hidden = !tip;
+    actions.replaceChildren(...b);
   };
-  /** Search, played: tap crates inside the building (state.ts keeps the same loot and odds). */
-  const scavenge = (place: PlaceKind) => {
-    const sc = startScavenge(s, stop.id, place, crateCount(kid));
+  const timer = setInterval(refresh, 400);
+  let wrecked = false;
+  const leave = () => {
+    clearInterval(timer);
+    townPlay = null;
     saveGame(s);
-    sound.click();
-    openScavengeScene(ui(), {
-      place,
-      title: PLACE_TITLES[place],
-      crates: sc.crates.length,
+    if (s.status === 'lost') return showEnd();
+    showDriveHud();
+    drive!.resume();
+    sound.startMusic();
+    setScene(drive);
+  };
+  try {
+    townPlay = drive!.enterTown(stop, {
       kid,
-      night,
-      noise: scavengeNoise(sc),
-      open: (i) => {
-        const r = openCrate(s, sc, i);
-        return { ...r, noise: scavengeNoise(sc) };
+      state: s,
+      stopId: stop.id,
+      say,
+      sfx: { coin: () => sound.coin(), bad: () => sound.bad(), click: () => sound.click(), shot: () => sound.shot('bullets') },
+      changed: () => {
+        refresh();
+        // Zombies banging on the parked car can wreck it (state.ts marks the trip lost).
+        if (s.status === 'lost' && !wrecked) {
+          wrecked = true;
+          clearInterval(timer);
+          drive!.paused = true;
+          setTimeout(showEnd, 900);
+        }
       },
-      done: (ambush) => {
-        saveGame(s);
-        say(scavengeSummary(sc, ambush));
+      save: () => saveGame(s),
+      done: leave,
+      clearArea: () => {
+        // Below the meters, and above the buttons (or left of them, sideways, where they sit on the right).
+        const W = window.innerWidth;
+        const H = window.innerHeight;
+        const top = (hudTop.getBoundingClientRect().bottom || 0) + 4;
+        const r = bottom.getBoundingClientRect();
+        if (!W || !H || !r.width) return null;
+        // Sideways phones pin the buttons to the right edge; a wide screen centres them below the view.
+        const beside = r.left > W * 0.35 && r.right > W * 0.92;
+        const nx = (px: number) => (px / W) * 2 - 1;
+        const ny = (py: number) => 1 - (py / H) * 2;
+        return { left: -0.98, right: beside ? nx(r.left - 6) : 0.98, top: ny(top), bottom: beside ? -0.96 : ny(r.top - 4) };
       },
-      say: (t) => narrator.say(t),
-      sfx: sound,
+      sleep: (wokeAtNight, done) => {
+        // Lights out: the moon (or sun) you'll wake to and a few Zzz, no reading needed.
+        const zzz = h('div', { class: 'zzz' }, h('span', {}, '💤'), h('span', {}, 'Z'), h('span', {}, 'z'));
+        const f = h('div', { class: `sleep-fade ${wokeAtNight ? 'to-night' : 'to-day'}` }, h('div', { class: 'sky-icon' }, wokeAtNight ? '🌙' : '☀️'), zzz);
+        ui().append(f);
+        narrator.say(wokeAtNight ? 'Sleep tight. Night time.' : 'Sleep tight. Good morning!');
+        setTimeout(done, 1700);
+        setTimeout(() => f.remove(), 3000);
+      },
+      fade: () => {
+        const f = h('div', { class: 'door-fade' });
+        ui().append(f);
+        setTimeout(() => f.remove(), 700);
+      },
+      bump: () => {
+        invEl.classList.remove('bump');
+        void invEl.offsetWidth;
+        invEl.classList.add('bump');
+      },
     });
-    narrator.say(kid ? 'Tap the boxes!' : `${PLACE_TITLES[place]}. Tap the boxes. Too much noise brings zombies.`);
-  };
-  const placeCard = (place: PlaceKind) => {
-    const n = searchesAt(place);
-    const actions: HTMLElement[] = [];
-    const big = (icon: string, text: string) => [h('span', { class: 'big-icon' }, icon), text] as const;
-    if (place === 'pumps') {
-      const want = Math.max(0, Math.floor(tankSize(s) - s.inv.fuel));
-      const price = Math.min(want * FUEL_PRICE, Math.floor(s.inv.cash / FUEL_PRICE) * FUEL_PRICE);
-      actions.push(h('button', { class: 'btn small primary', onclick: () => say(buyFuel(s)), disabled: want === 0 }, ...big('⛽', want === 0 ? 'Tank is full' : kid ? `$${price}` : `Fill up ($${price})`)));
-    }
-    if (place === 'garage') {
-      const cost = repairCost(s);
-      actions.push(
-        h('button', { class: 'btn small primary', onclick: () => say(repair(s)), disabled: cost.hp === 0 }, ...big('🔧', cost.hp ? (kid ? 'Fix' : `Repair (${cost.scrap} scrap or $${cost.cash})`) : 'Car is fine')),
-        h('button', { class: 'btn small', onclick: () => showUpgrades(s, say) }, ...big('⬆️', 'Upgrades')),
-      );
-    }
-    actions.push(h('button', { class: `btn small ${actions.length ? '' : 'primary'}`, onclick: () => scavenge(place) }, ...big('🔍', n === 0 ? 'Search' : kid ? 'Again' : 'Search again')));
-    return h(
-      'div',
-      { class: `place ${place}` },
-      h('h3', {}, h('span', { class: 'big-icon' }, PLACE_ICONS[place]), ` ${PLACE_TITLES[place]}`),
-      kid || in3d ? '' : h('p', { class: 'muted' }, PLACE_BLURBS[place]),
-      h('div', { class: 'row' }, ...actions),
-    );
-  };
-  let current: PlaceKind | null = null;
-  const sheet = h('div', { class: 'sheet' });
-  const arrive = (place: PlaceKind) => {
-    current = place;
-    refresh();
-    narrator.say(PLACE_TITLES[place]);
-  };
-  const map = in3d ? new TownScene(stop, night, arrive, s.upgrades) : new TownMap(stop, night, arrive);
-  townView = map;
-  const back = h(
-    'button',
-    {
-      class: 'btn primary back-road',
-      onclick: () => {
-        if (map instanceof TownScene) map.dispose();
-        saveGame(s);
-        showDriveHud();
-        drive!.resume();
-        sound.startMusic();
-        setScene(drive);
-      },
-    },
-    '🚗 Back on the road',
-  );
-  const clock = night ? `🌙 ${clockText(hourOf(s))}` : `☀️ ${clockText(hourOf(s))}`;
-  if (map instanceof TownScene) {
-    ui().append(
-      h(
-        'div',
-        { class: 'screen explore town3d-screen' },
-        map.el,
-        h('div', { class: 'town3d-top' }, meters, h('div', { class: 'town-chip' }, h('h2', {}, stop.name), h('small', {}, `${clock} · ${STOP_TITLES[stop.kind]}`))),
-        h('div', { class: 'town3d-bottom' }, noise, sheet, log, back),
-      ),
-    );
-  } else {
-    ui().append(
-      h(
-        'div',
-        { class: 'screen explore' },
-        h('h2', {}, `${stop.name}`, h('small', {}, ` ${STOP_TITLES[stop.kind]}`)),
-        h('p', { class: 'muted' }, night ? `${clock}. It's dark: you'll find more, but every search takes 45 minutes.` : `${clock}. Every search takes 45 minutes.`),
-        meters,
-        map.svg,
-        noise,
-        sheet,
-        log,
-        back,
-      ),
-    );
+  } catch (e) {
+    // A town that fails to open must never strand the car: carry on down the road.
+    noteError(e, 'town');
+    clearInterval(timer);
+    townPlay = null;
+    showDriveHud();
+    drive!.resume();
+    showToast('🚧', `${stop.name} is closed`, 'Back on the road');
+    return;
   }
   refresh();
 }
@@ -1649,7 +1913,7 @@ function showUpgrades(s: GameState, say: (r: ActionResult) => void): void {
         const u = UPGRADES[k];
         const level = s.upgrades[k];
         const maxed = level >= MAX_LEVEL;
-        const cost = upgradeCost(level);
+        const cost = upgradeCost(level, cashScale(s));
         const afford = s.inv.scrap >= cost.scrap && s.inv.cash >= cost.cash;
         return h(
           'div',
@@ -1660,7 +1924,8 @@ function showUpgrades(s: GameState, say: (r: ActionResult) => void): void {
             { class: 'info' },
             h('strong', {}, u.name),
             h('span', { class: 'pips' }, '●'.repeat(level) + '○'.repeat(MAX_LEVEL - level)),
-            h('small', {}, maxed ? u.describe(level) : `Next: ${u.describe(level + 1)}`),
+            // What you have now and what the next level gives, so the card and the 'Installed' line agree.
+            h('small', {}, level > 0 ? `Now: ${u.describe(level)}` : '', level > 0 && !maxed ? h('br') : '', maxed ? '' : `Next: ${u.describe(level + 1)}`),
           ),
           h(
             'button',
@@ -1717,7 +1982,7 @@ function showBossIntro(boss: BossKind): void {
         boss === 'mothership' && s.karenBeaten && h('p', { class: 'story' }, KAREN_STORY.queen),
         h('p', {}, info.intro),
         h('p', { class: 'muted' }, `No running from this one. Ammo: ${s.inv.bullets} bullets, ${s.inv.shells} shells, ${s.inv.catnip} catnip.`),
-        h('button', { class: 'btn primary', onclick: () => startCombat(false, undefined, undefined, boss) }, 'Bring it on'),
+        h('button', { class: 'btn primary', onclick: () => startCombat(false, undefined, boss) }, 'Bring it on'),
       ),
     ),
   );
@@ -1732,9 +1997,8 @@ const FIGHT_NOTE_MS = 2000;
 /** A fight is on, in its own view or on the road. */
 const inFight = () => !!combat && (active === combat || !!drive?.fighting);
 
-function startCombat(ambush: boolean, stop?: Stop, theme?: EnemyType, boss?: BossKind): void {
+function startCombat(ambush: boolean, theme?: EnemyType, boss?: BossKind): void {
   const s = state!;
-  sound.stopMusic();
   const diff = DIFFICULTIES[s.difficulty];
   const ts = threatScale(s.threat ?? 0);
   const c = createCombat({
@@ -1756,8 +2020,11 @@ function startCombat(ambush: boolean, stop?: Stop, theme?: EnemyType, boss?: Bos
     hordeMax: quality.level === 'low' || kidMode.on ? 20 : 40,
   });
   combat?.dispose();
-  // Fights happen right on the road in the drive view. Ambushes at a town stop keep the old fight view until the walkable town replaces it.
-  const onRoad = roadFights && !stop && !!drive;
+  // Fights happen right on the road in the drive view (a town's zombies come down its street: town/play.ts).
+  const onRoad = roadFights && !!drive;
+  // Road fights keep the radio on (Home Stretch plays its fight version; the Cat Queen has her own song).
+  if (onRoad) sound.fightMusic(boss);
+  else sound.stopMusic();
   if (onRoad) {
     useLanes(c, drive!.sideX);
     c.pace = 1;
@@ -1771,7 +2038,7 @@ function startCombat(ambush: boolean, stop?: Stop, theme?: EnemyType, boss?: Bos
         void document.body.offsetWidth;
         document.body.classList.add('hurt');
       },
-      onEnd: (outcome) => setTimeout(() => endCombat(c, outcome, stop), onRoad ? 300 : 700),
+      onEnd: (outcome) => setTimeout(() => endCombat(c, outcome), onRoad ? 300 : 700),
       onTick: () => hudTick?.(),
     },
     onRoad ? { scene: drive!.scene, camera: drive!.camera } : undefined,
@@ -1949,6 +2216,11 @@ canvas.addEventListener('pointerup', (e) => {
   const from = press;
   press = null;
   if (!from || from.id !== e.pointerId) return;
+  // In a town a tap picks a sign, a zombie, a crate or a spot to walk to.
+  if (townPlay && drive && active === drive) {
+    if (!swipeAction(e.clientX - from.x, e.clientY - from.y)) townPlay.tap(toNdc(e));
+    return;
+  }
   if (inFight()) {
     // A sideways swipe keeps steering for a moment after the finger lifts.
     if (fightSteer) {
@@ -2002,7 +2274,7 @@ function fightSwipe(act: ReturnType<typeof swipeAction>): void {
   else easeOff(c);
 }
 
-function endCombat(c: CombatState, outcome: 'cleared' | 'escaped' | 'wrecked', stop?: Stop): void {
+function endCombat(c: CombatState, outcome: 'cleared' | 'escaped' | 'wrecked'): void {
   const s = state!;
   const onRoad = !!drive?.fighting;
   if (onRoad) drive!.detachFight();
@@ -2011,7 +2283,8 @@ function endCombat(c: CombatState, outcome: 'cleared' | 'escaped' | 'wrecked', s
     return;
   }
   const found: string[] = [];
-  for (const [k, v] of Object.entries(c.loot) as [keyof typeof s.inv, number][]) {
+  for (const [k, raw] of Object.entries(c.loot) as [keyof typeof s.inv, number][]) {
+    const v = k === 'cash' ? foundCash(s, raw) : raw;
     s.inv[k] += v;
     found.push(`${v} ${k}`);
   }
@@ -2059,18 +2332,13 @@ function endCombat(c: CombatState, outcome: 'cleared' | 'escaped' | 'wrecked', s
             onclick: () => {
               combat?.dispose();
               combat = null;
-              if (stop) {
-                setScene(drive);
-                showStop(stop);
-              } else {
-                showDriveHud();
-                drive!.resume();
-            sound.startMusic();
-                setScene(drive);
-              }
+              showDriveHud();
+              drive!.resume();
+              sound.startMusic();
+              setScene(drive);
             },
           },
-          stop ? `Back to ${stop.name}` : c.boss === 'mothership' ? `Roll into ${s.route.endLabel.split(',')[0]}` : 'Keep driving',
+          c.boss === 'mothership' ? `Roll into ${s.route.endLabel.split(',')[0]}` : 'Keep driving',
         ),
       ),
     ),
@@ -2082,6 +2350,10 @@ function endCombat(c: CombatState, outcome: 'cleared' | 'escaped' | 'wrecked', s
 function showEnd(): void {
   const s = state!;
   clearSave();
+  // The trip is over: stop drawing the road (a plain background) and free it, so the end screen never sits on a stalled scene.
+  townPlay = null;
+  setScene(null);
+  disposeAll();
   const won = s.status === 'won';
   sound.stopMusic();
   sound.engine(0);
@@ -2096,6 +2368,7 @@ function showEnd(): void {
     ...(s.threat ? { threat: s.threat } : {}),
     date: new Date().toLocaleDateString(),
   };
+  const wasTest = testing.on;
   const { list, rank } = addScore(entry);
   // A finished trip keeps its upgrades and raises the threat for the next one.
   const before = loadCareer();
@@ -2107,6 +2380,7 @@ function showEnd(): void {
       { class: `screen end ${won ? 'won' : 'lost'}` },
       h('h1', {}, won ? 'You made it!' : 'Road trip over'),
       h('p', {}, won ? `Welcome to ${s.route.endLabel}.` : s.lostReason ?? 'Your trip ended early.'),
+      wasTest && h('p', { class: 'note' }, '🧪 Test trip: nothing was saved or scored.'),
       h(
         'ul',
         { class: 'facts' },
@@ -2137,6 +2411,78 @@ function showEnd(): void {
   state = null;
 }
 
+// --------------------------------------------------------------- test trips (?test=...)
+
+/** The test trip's start card: one tap starts it (and lets the sound start). */
+function showTestStart(plan: TestPlan): void {
+  setScene(null);
+  disposeAll();
+  clearUi();
+  const extras = [
+    plan.town === 'none' ? 'no town' : plan.town === 'real' ? 'real town lookup' : 'made-up town',
+    plan.ride && `ride: ${plan.ride}`,
+    plan.difficulty && `difficulty: ${plan.difficulty}`,
+    plan.kid != null && `kid mode ${plan.kid ? 'on' : 'off'}`,
+    plan.hour != null && `time ${clockText(plan.hour)}`,
+    plan.weather && `weather: ${plan.weather}`,
+    plan.cash != null && `cash $${plan.cash}`,
+    plan.gas != null && `gas ${plan.gas}`,
+    plan.tough && 'no damage',
+    plan.radio && `radio: ${plan.radio}`,
+  ].filter(Boolean);
+  const tip: Partial<Record<TestPlan['kind'], string>> = {
+    boss: plan.boss === 'mothership' ? 'The Cat Queen waits about 25 seconds up the road.' : `${plan.town === 'none' ? '' : 'The town comes first (tap Keep driving to skip it). '}The boss is about 45 seconds up the road.`,
+    gasturn: 'Tap Turn at the town: the tank runs dry about a second later.',
+    bike: 'The tank runs dry before the town; the bike goes to its pumps.',
+    event: 'The event pops up a few seconds in.',
+    fight: 'The fight starts a few seconds in.',
+  };
+  ui().append(
+    h(
+      'div',
+      { class: 'screen test-start' },
+      h('h2', {}, `🧪 ${describeTest(plan)}`),
+      h('p', {}, tip[plan.kind] ?? 'Short test trip.'),
+      h('p', { class: 'muted' }, extras.join(' · ')),
+      h('p', { class: 'note' }, 'Test trip: your saved trip, scores and upgrades are left alone.'),
+      h(
+        'div',
+        { class: 'actions' },
+        h('button', { class: 'btn ghost', onclick: () => location.assign(`${location.pathname}?dev=1`) }, 'Title screen'),
+        h('button', { class: 'btn primary', onclick: () => startTestTrip(plan) }, 'Start test'),
+      ),
+    ),
+  );
+}
+
+function startTestTrip(plan: TestPlan): void {
+  const s = makeTestGame(plan);
+  testTrip = { plan, state: s, eventShown: false, drained: false };
+  if (plan.radio) sound.tuneTo(plan.radio);
+  startTrip(s);
+  if (plan.kind !== 'town' && plan.kind !== 'garage') return;
+  // Into the town as soon as the road is up (the models may still be loading), then to the garage.
+  let tries = 0;
+  const wait = setInterval(() => {
+    if (++tries > 120 || state !== s) return clearInterval(wait);
+    if (!drive || !s.stops[0]) return;
+    if (!townPlay) {
+      if (tries === 1 || tries % 20 === 0) {
+        clearUi();
+        showDriveHud();
+        drive.turnInNow(s.stops[0]);
+      }
+      return;
+    }
+    if (plan.kind === 'town') return clearInterval(wait);
+    const garage = townPlay.world.spots.find((x) => x.lot.place === 'garage');
+    if (garage && !townPlay.busy) {
+      townPlay.driveTo(garage);
+      clearInterval(wait);
+    }
+  }, 500);
+}
+
 // Audio may only start after a user gesture; every tap makes sure it's running.
 window.addEventListener('pointerdown', () => sound.unlock(), { capture: true });
 window.addEventListener('click', (e) => {
@@ -2147,7 +2493,10 @@ resize();
 requestAnimationFrame(frame);
 document.body.classList.toggle('kid', kidMode.on);
 narrateUi(ui());
-showTitle();
+if (testPlan) showTestStart(testPlan);
+else showTitle();
+// Map server addresses can be changed on the site without an app update (src/geo/servers.ts).
+void loadServers();
 registerServiceWorker(() => {
   // A new build just took over. Off the road, reload straight into it; mid-trip, offer it (the trip is saved).
   if (!state || state.status !== 'driving') {
@@ -2174,6 +2523,10 @@ registerServiceWorker(() => {
   get combat() {
     return combat;
   },
+  /** The clock hour on the road (for look checks: scripts/game-shots.mjs). */
+  hour() {
+    return state ? hourOf(state) : null;
+  },
   /** Shows an event scene on its own card, for checking how each one looks. */
   showScene(kind: SceneKind) {
     const card = h('div', { class: 'card event', 'data-quiet': true }, eventPicture('🎬', kind), h('h2', {}, kind));
@@ -2185,17 +2538,25 @@ registerServiceWorker(() => {
   bossIntro(boss: BossKind) {
     showBossIntro(boss);
   },
-  /** Opens a stop's town (index into the trip's stops; the first town by default). */
+  /** Jumps to a stop and turns into its town (index into the trip's stops; the first big town by default). */
   stop(i?: number) {
     const s = state!;
-    const st = i == null ? s.stops.find((x) => x.places.length >= 4) ?? s.stops[0] : s.stops[i];
-    if (drive) (drive as unknown as { paused: boolean }).paused = true;
-    showStop(st);
+    const st = i == null ? s.stops.find((x) => x.places.length >= 4 && x.kind !== 'shortcut') ?? s.stops[0] : s.stops[i];
+    clearUi();
+    showDriveHud();
+    drive?.turnInNow(st);
     return st;
   },
-  /** Walks to a building in the open town, as if it was tapped. */
+  /** The town you're in (its phase, spots and actions), for play tests. */
+  get town() {
+    return townPlay;
+  },
+  /** Pulls in at a place in the town, as if its sign was tapped (false while the car is still moving). */
   visit(place: PlaceKind) {
-    townView?.walkTo(place);
+    const sp = townPlay?.world.spots.find((x) => x.lot.place === place);
+    if (!townPlay || !sp || townPlay.busy) return false;
+    townPlay.driveTo(sp);
+    return true;
   },
   /** Opens overlays straight away, for the layout check (scripts/layout-audit.mjs). */
   pause() {
@@ -2218,19 +2579,19 @@ registerServiceWorker(() => {
   },
   /** Starts a boss fight on the spot (on the road, as when you reach the boss). */
   boss(boss: BossKind) {
-    startCombat(false, undefined, undefined, boss);
+    startCombat(false, undefined, boss);
   },
   /** Starts a fight on the spot; `horde` forces (true) or blocks (false) a zombie horde. */
   fight(theme?: EnemyType, horde?: boolean) {
     testHorde = horde;
-    startCombat(false, undefined, theme);
+    startCombat(false, theme);
     testHorde = undefined;
   },
 };
 
 // Keyboard driving: arrows or WASD change lanes and speed.
 window.addEventListener('keydown', (e) => {
-  if (!drive || active !== drive || (e.target as HTMLElement)?.tagName === 'INPUT') return;
+  if (!drive || active !== drive || townPlay || (e.target as HTMLElement)?.tagName === 'INPUT') return;
   const k = e.key.toLowerCase();
   if (k === 'arrowleft' || k === 'a') drive.steer(-1);
   else if (k === 'arrowright' || k === 'd') drive.steer(1);

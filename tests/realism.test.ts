@@ -5,7 +5,8 @@ import { unpackRoute, type PackedRoute } from '../src/offline/curated';
 import { buildRouteData, pathFromRoute } from '../src/geo/route';
 import { simplify } from '../src/geo/overpass';
 import { haversineMeters as haversine } from '../src/geo/geo';
-import { generateStops } from '../src/game/stops';
+import { generateStops, hasFuel } from '../src/game/stops';
+import { gasGapFor } from '../src/game/state';
 import { roadAt, roadSigns } from '../src/game/landmarks';
 
 const atlas = new Atlas(JSON.parse(fs.readFileSync('public/data/atlas-us.json', 'utf8')) as AtlasFile);
@@ -200,6 +201,20 @@ describe('stop names', () => {
       const r = buildRouteData({ ...demoRawRoute(seed), steps: [] });
       const names = generateStops(r, pathFromRoute(r).length, seed).map((s) => s.name);
       expect(new Set(names).size).toBe(names.length);
+    }
+  });
+
+  it('long trips get a gas stop within reach all the way, for every ride', () => {
+    for (const ride of ['motorcycle', 'car', 'truck'] as const) {
+      const gap = gasGapFor(ride, route66.scale);
+      const stops = generateStops(route66, path.length, 5, gap);
+      let last = 0;
+      for (const st of stops.filter(hasFuel)) {
+        expect(st.at - last).toBeLessThanOrEqual(gap + 1);
+        last = st.at;
+      }
+      expect(path.length - last).toBeLessThanOrEqual(gap + 1);
+      for (let i = 1; i < stops.length; i++) expect(stops[i].at - stops[i - 1].at).toBeGreaterThanOrEqual(299);
     }
   });
 });

@@ -26,7 +26,7 @@ for (const size of sizes) {
     await page.goto(`http://localhost:${PORT}/${QUERY}`);
     await page.evaluate((k) => { localStorage.clear(); localStorage.setItem('rtm-kid', k ? '1' : '0'); localStorage.setItem('rtm-quality', 'medium'); }, kid);
     await page.goto(`http://localhost:${PORT}/${QUERY}`);
-    await page.getByText('Quick demo trip').click();
+    await page.getByRole('button', { name: 'Quick demo trip' }).click();
     await page.getByText('Hit the road').click();
     await page.waitForTimeout(800);
     await page.evaluate(() => { const s = window.rtm.state; s.nextEncounterAt = 1e9; s.nextEventAt = 1e9; s.distance += 900; });
