@@ -82,6 +82,50 @@ export interface TownWorld {
   dispose(): void;
 }
 
+/** Cross streets run this far either side of Main Street (metres). */
+export const CROSS_ARM = 60;
+const CROSS_HALF = 3.6;
+
+/**
+ * Whether a town point (x right, y out from the highway's edge, as in the
+ * layout) falls on the town: Main Street with its lots and houses either side
+ * (out to the back of the lots), the turning circle at the end, and the cross
+ * streets, all with `margin` to spare. Points on the highway's side of its edge
+ * (y below 0) never count: the turn-off itself is kept clear along the road
+ * instead (TURN_CLEAR in game/stops.ts). Roadside scenery that lands here is hidden.
+ */
+export function townCovers(layout: TownLayout, margin: number): (x: number, y: number) => boolean {
+  const line = layout.line;
+  const reach = LOT_NEAR + LOT_DEPTH + margin;
+  const cross = layout.crossings.map((c) => pointAlong(line, c.along));
+  return (x, y) => {
+    if (y < 0) return false;
+    for (let i = 1; i < line.length; i++) {
+      const a = line[i - 1];
+      const b = line[i];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const l2 = dx * dx + dy * dy || 1;
+      // Past the street's end only as far as the lots and turning circle reach.
+      const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / l2));
+      const px = a.x + dx * t - x;
+      const py = a.y + dy * t - y;
+      if (px * px + py * py <= reach * reach) {
+        if (i < line.length - 1 || t < 1) return true;
+        // At the far end: the last lot reaches half a lot past it, the circle 11.
+        const along = ((x - b.x) * dx + (y - b.y) * dy) / Math.sqrt(l2);
+        if (along <= LOT_ALONG / 2 + margin) return true;
+      }
+    }
+    for (const { p, dir } of cross) {
+      const ax = (x - p.x) * dir.x + (y - p.y) * dir.y; // along Main Street
+      const cx = (x - p.x) * dir.y - (y - p.y) * dir.x; // along the cross street
+      if (Math.abs(ax) <= CROSS_HALF + margin && Math.abs(cx) <= CROSS_ARM + margin) return true;
+    }
+    return false;
+  };
+}
+
 /** Town point (x right, y along Main Street) to the group's 3D frame. */
 export const v3 = (x: number, y: number, h = 0) => new THREE.Vector3(x, h, -y);
 
@@ -241,10 +285,10 @@ export function buildTownWorld(layout: TownLayout, mats: TownMaterials, seed: nu
     const rx = dir.y;
     const ry = -dir.x;
     const cross = [
-      { x: p.x - rx * 60, y: p.y - ry * 60 },
-      { x: p.x + rx * 60, y: p.y + ry * 60 },
+      { x: p.x - rx * CROSS_ARM, y: p.y - ry * CROSS_ARM },
+      { x: p.x + rx * CROSS_ARM, y: p.y + ry * CROSS_ARM },
     ];
-    group.add(strip(cross, -3.6, 3.6, 0.09, mats.asphalt));
+    group.add(strip(cross, -CROSS_HALF, CROSS_HALF, 0.09, mats.asphalt));
     const blade = textSprite(c.name, '', '#1f6b3a');
     blade.scale.set(4.2, 1.6, 1);
     blade.position.copy(v3(p.x + rx * (STREET_HALF + 1.5) - dir.x * 5, p.y + ry * (STREET_HALF + 1.5) - dir.y * 5, 3.6));

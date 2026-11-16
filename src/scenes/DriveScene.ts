@@ -20,7 +20,7 @@ import { crashCost, OFFROAD_SPEED, offRoadWreckReason, offRoadX, SOLIDS, steerOf
 import { kidMode } from '../game/kidMode';
 import { boardSign, disposeRoadside, faceDownRoad, greenSign, lampGeometries, PROFILES as SHAPES, rumbleTexture, speedLimitSign, sweep } from './roadside';
 import { rideOf } from '../game/rides';
-import { STOP_TITLES, type Stop } from '../game/stops';
+import { STOP_TITLES, inTurnClear, type Stop } from '../game/stops';
 import { hashString, makeRng, pick, type Rng } from '../game/rng';
 import { ANNOUNCED, roadAt, type Landmark } from '../game/landmarks';
 import { interstateNumber, latLngAt, stateMap } from '../geo/states';
@@ -43,7 +43,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { crateCount } from '../game/state';
 import { layoutTown, townSeed } from '../town/layout';
 import { knownTown, lookupTown } from '../town/fetchTown';
-import { buildTownWorld, type TownWorld } from '../town/world';
+import { buildTownWorld, townCovers, type TownWorld } from '../town/world';
 import { TownPlay, type TownHooks } from '../town/play';
 import { noteError } from '../game/errors';
 
@@ -58,8 +58,13 @@ const ROAD_HALF = 4.5;
 const TOWN_LOOKAHEAD = 4000;
 /** Wait for the lookup until the town is this close, then lay it out from made-up data. */
 const TOWN_WAIT = 700;
-/** Roadside scenery keeps this far (along the road) from a town's turn-off. */
-const TOWN_CLEAR = 85;
+/** Roadside scenery is also hidden on a town's own ground (its streets, lots and houses) with this much to spare. */
+const TOWN_MARGIN = 10;
+/** ...and within this far of a shortcut's dirt track. */
+const TRACK_MARGIN = 8;
+/** The highway's curbs and sidewalks gap this far either side of a town's Main Street (a shortcut's track: 6). */
+const MOUTH_HALF = 10;
+
 /** Where the car rejoins the highway after a town, past the turn-off. */
 const TOWN_EXIT = 14;
 
@@ -247,6 +252,8 @@ export class DriveScene implements GameScene {
   private fightCam = 0;
 
   private chunks = new Map<number, THREE.Group>();
+  /** Each built town's ground (3D x, z), by stop id: roadside scenery there is hidden. */
+  private townAreas = new Map<string, (x: number, z: number) => boolean>();
   /** The walkable towns built along the road, by stop id. */
   private towns = new Map<string, TownWorld>();
   /** You're in a town: it drives the car, the walker and the camera. */
@@ -507,7 +514,7 @@ export class DriveScene implements GameScene {
   /** Sidewalks with curbs and street lights: town streets (not freeways), leaving a gap at side roads. */
   sidewalkAt(d: number): boolean {
     if (isDivided(classAt(this.segments, d)) || this.urbanAt(d) < 0.4) return false;
-    return !this.state.stops.some((s) => Math.abs(s.at - d) < 6) && !this.flatSpans.some((f) => d > f.from && d < f.to);
+    return !this.state.stops.some((s) => Math.abs(s.at - d) < (s.kind === 'shortcut' ? 6 : MOUTH_HALF)) && !this.flatSpans.some((f) => d > f.from && d < f.to);
   }
 
   private readonly crossFit: CrossingFit = {
@@ -639,7 +646,7 @@ export class DriveScene implements GameScene {
         break;
       case 'move':
         // A guardrail on a bend stops you going any further out.
-        if (res.off.step === 2 && this.shoulder(d) > 1.2 && this.sharpBend(d)) this.crashInto('guardrail');
+        if (res.off.step === 2 && this.shoulder(d) > 1.2 && this.sharpBend(d) && !inTurnClear(this.state.stops, d, res.off.side)) this.crashInto('guardrail');
         else {
           this.off = res.off;
           sound.rumble();
@@ -1738,6 +1745,7 @@ export class DriveScene implements GameScene {
     const solid = (kind: SolidKind, d: number, x: number, r: number, ...keys: string[]) =>
       solids.push({ kind, d, x, r, inst: keys.map((key) => ({ key, index: inst[key].length - 1 })) });
     const stopsHere = this.state.stops.filter((s) => s.at > from - 200 && s.at < to + 200);
+    const turnClear = (d: number, side: number) => inTurnClear(stopsHere, d, side);
     const marksHere = this.state.landmarks.filter((l) => l.at > from - 120 && l.at < to + 120 && l.kind !== 'mountains' && l.kind !== 'peak' && l.kind !== 'mesa');
     const clear = (d: number, side: number) =>
       !!structureAt(this.structures, d, 30) ||
@@ -1778,7 +1786,7 @@ export class DriveScene implements GameScene {
       const lampSpots = sidewalk ? { every: 40, off: this.edge(d) + SIDEWALK - 0.6 } : cls === 'metro' ? { every: 64, off: this.outer(d) + 0.5 } : null;
       if (lampSpots && Math.round(d) % lampSpots.every < 8) {
         for (const side of [-1, 1]) {
-          if (structureAt(this.structures, d, 10)) continue;
+          if (structureAt(this.structures, d, 10) || turnClear(d, side)) continue;
           // The arm reaches out over the road.
           const yaw = Math.atan2(side * f.x, -side * f.y);
           placeAt(inst.lampPost, p, right, side * lampSpots.off, yaw, 1);
@@ -1791,7 +1799,7 @@ export class DriveScene implements GameScene {
       // Reflector posts along the shoulders of bigger roads (guardrail posts on sharp bends).
       if (Math.round(d) % 40 < 8 && cls !== 'local' && urban < 0.3) {
         for (const side of [-1, 1]) {
-          if (postClear(d, side)) continue;
+          if (postClear(d, side) || turnClear(d, side)) continue;
           const off = side * (this.outer(d) + 0.8);
           placeAt(inst.delineator, p, right, off, 0, 1);
           placeAt(inst.reflector, p, right, off, 0, 1);
@@ -1799,10 +1807,10 @@ export class DriveScene implements GameScene {
         }
       }
       if (this.shoulder(d) > 1.2 && this.sharpBend(d)) {
-        for (const side of [-1, 1]) placeAt(inst.railPost, p, right, side * (this.edge(d) + this.shoulder(d) + 0.52), 0, 1);
+        for (const side of [-1, 1]) if (!turnClear(d, side)) placeAt(inst.railPost, p, right, side * (this.edge(d) + this.shoulder(d) + 0.52), 0, 1);
       }
       for (const side of [-1, 1]) {
-        if (stopsHere.some((s) => Math.abs(s.at - d) < (s.kind === 'shortcut' ? 30 : TOWN_CLEAR) && (s.side === 'right' ? 1 : -1) === side)) continue;
+        if (turnClear(d, side)) continue;
         if (clear(d, side)) continue;
         const r = rng();
         if (r < urban * 0.6) {
@@ -1880,8 +1888,15 @@ export class DriveScene implements GameScene {
       const mesh = new THREE.InstancedMesh(this.geos[key], this.mats[key], mats.length);
       mats.forEach((m, i) => mesh.setMatrixAt(i, m));
       if (key === 'building') buildingColors.forEach((c, i) => mesh.setColorAt(i, c));
+      // Roadside scenery a town or a shortcut's track may hide later (power poles stay with their wires).
+      if (key !== 'pole') mesh.userData.roadside = true;
       g.add(mesh);
       for (const sol of solids) for (const i of sol.inst ?? []) if (i.key === key) i.mesh = mesh;
+    }
+    // Nothing roadside on a town's own ground or a shortcut's track, even from a bend further along.
+    for (const stop of stopsHere) {
+      const covers = stop.kind === 'shortcut' ? this.trackCovers(stop) : this.townAreas.get(stop.id);
+      if (covers) this.hideRoadside(g, k, covers);
     }
     if (wires.length) {
       const geo = new THREE.BufferGeometry();
@@ -1997,8 +2012,8 @@ export class DriveScene implements GameScene {
       if (geo) add(this.roadsideMats.barrier, geo);
     }
     // Guardrails on the outside of sharp bends on highways and freeways.
-    for (const [a, b] of this.spans(from, to, (d) => sh(d) > 1.2 && this.sharpBend(d))) {
-      for (const left of [false, true]) {
+    for (const left of [false, true]) {
+      for (const [a, b] of this.spans(from, to, (d) => sh(d) > 1.2 && this.sharpBend(d) && !inTurnClear(this.state.stops, d, left ? -1 : 1))) {
         const geo = sweep(this.path, a, b, SHAPES.guardrail, (d) => xs(d).edge + sh(d) + 0.4, left);
         if (geo) add(this.roadsideMats.rail, geo);
       }
@@ -2069,7 +2084,7 @@ export class DriveScene implements GameScene {
    */
   private poleSpot(d: number): 'pole' | 'sign' | 'none' {
     if (Math.round(d) % 48 >= 8 || d < 0 || d >= this.path.length) return 'none';
-    if (this.sidewalkAt(d) || structureAt(this.structures, d, 30)) return 'none';
+    if (this.sidewalkAt(d) || structureAt(this.structures, d, 30) || inTurnClear(this.state.stops, d, 1)) return 'none';
     // Power lines stop at an overpass's ramp, and carry on over a side street.
     const on = this.onCrossing(d, 7.5 + this.widen(d));
     if (on) return on.kind === 'flat' ? 'sign' : 'none';
@@ -2214,7 +2229,7 @@ export class DriveScene implements GameScene {
     if (dirt) {
       const road = new THREE.Mesh(new THREE.PlaneGeometry(5, len - edge), this.dirtMat);
       road.rotation.x = -Math.PI / 2;
-      road.rotation.z = Math.atan2(side.x, side.y);
+      road.rotation.z = Math.atan2(-side.x, side.y);
       road.position.copy(to3({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, 0.09));
       g.add(road);
     }
@@ -2259,6 +2274,53 @@ export class DriveScene implements GameScene {
     return latLngAt(this.state.route, this.path, stop.at);
   }
 
+  /** Whether a world point (3D x, z) is within TRACK_MARGIN of a shortcut's dirt track. */
+  private trackCovers(stop: Stop): (x: number, z: number) => boolean {
+    const p = this.path.pointAt(stop.at);
+    const f = this.path.directionAt(stop.at);
+    const k = stop.side === 'right' ? 1 : -1;
+    const side = { x: f.y * k, y: -f.x * k };
+    const from = this.edge(stop.at);
+    const to = 70 + this.widen(stop.at) + TRACK_MARGIN;
+    return (x, z) => {
+      const dx = x - p.x;
+      const dy = -z - p.y;
+      const out = dx * side.x + dy * side.y;
+      const along = dx * f.x + dy * f.y;
+      return out > from && out < to && Math.abs(along) < 2.5 + TRACK_MARGIN;
+    };
+  }
+
+  /** Hides a chunk's roadside scenery (instances keep their numbers) and drops what the car could hit, where `covers` says. */
+  private hideRoadside(g: THREE.Group, k: number, covers: (x: number, z: number) => boolean): void {
+    const m = new THREE.Matrix4();
+    const hide = new THREE.Matrix4().makeScale(0, 0, 0);
+    const ox = g.position.x;
+    const oz = g.position.z;
+    for (const o of g.children) {
+      const mesh = o as THREE.InstancedMesh;
+      if (!mesh.isInstancedMesh || !mesh.userData.roadside) continue;
+      let changed = false;
+      for (let i = 0; i < mesh.count; i++) {
+        mesh.getMatrixAt(i, m);
+        if (m.elements[0] === 0 && m.elements[5] === 0 && m.elements[10] === 0) continue;
+        if (!covers(m.elements[12] + ox, m.elements[14] + oz)) continue;
+        mesh.setMatrixAt(i, hide);
+        changed = true;
+      }
+      if (changed) mesh.instanceMatrix.needsUpdate = true;
+    }
+    const solids = this.solids.get(k);
+    if (!solids) return;
+    for (let i = solids.length - 1; i >= 0; i--) {
+      const so = solids[i];
+      if (so.kind === 'pole') continue;
+      const p = this.path.pointAt(so.d);
+      const f = this.path.directionAt(so.d);
+      if (covers(p.x + f.y * so.x, -(p.y - f.x * so.x))) solids.splice(i, 1);
+    }
+  }
+
   /** The stop's town, built where its side road leaves the highway. */
   private ensureTown(stop: Stop): TownWorld {
     const have = this.towns.get(stop.id);
@@ -2284,6 +2346,14 @@ export class DriveScene implements GameScene {
     if (this.shadows) castShadows(world.group, true);
     this.scene.add(world.group);
     this.towns.set(stop.id, world);
+    // Hide roadside scenery already built on the town's ground (chunks built later check it themselves).
+    world.group.updateMatrixWorld(true);
+    const toTown = world.group.matrixWorld.clone().invert();
+    const covers = townCovers(world.layout, TOWN_MARGIN);
+    const v = new THREE.Vector3();
+    const area = (x: number, z: number) => covers(v.set(x, 0, z).applyMatrix4(toTown).x, -v.z);
+    this.townAreas.set(stop.id, area);
+    for (const [k, g] of this.chunks) this.hideRoadside(g, k, area);
     return world;
   }
 
