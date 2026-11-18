@@ -48,8 +48,10 @@ export interface TownSpot {
   shell: THREE.Object3D;
   /** The room inside, shown while you're inside. */
   room: THREE.Group;
-  /** Car path into the lot, from Main Street to the parking spot. */
+  /** Car path into the lot, from Main Street to the parking spot, coming up the street. */
   park: THREE.Vector3[];
+  /** The same, coming down the street (toward the highway): the mirror image, parked facing the other way. */
+  parkDown: THREE.Vector3[];
   /** Front door: where you stand outside it, the doorstep, and just inside. */
   door: THREE.Vector3;
   threshold: THREE.Vector3;
@@ -361,6 +363,7 @@ export function buildTownWorld(layout: TownLayout, mats: TownMaterials, seed: nu
     sign.rotation.y = Math.atan2(-fwd.x, -fwd.z) + s * -0.6;
     g.add(sign);
     let park: THREE.Vector3[];
+    let parkDown: THREE.Vector3[];
     let pump: THREE.Vector3 | undefined;
     if (lot.place === 'pumps') {
       // A big red canopy over a pump island: you drive under it, alongside the pump.
@@ -405,10 +408,14 @@ export function buildTownWorld(layout: TownLayout, mats: TownMaterials, seed: nu
       pump = at(co + 0.2, 2.2);
       // In from the street, curve under the canopy and stop beside the pump facing up the street.
       park = [at(STREET_HALF - 1.2, -18), at(LOT_NEAR + 3, -11), at(co - 1.6, -4), at(co - 1.6, 1.5)];
+      // Coming down the street: the mirror image, stopping in the same spot beside the pump, facing down.
+      parkDown = [at(STREET_HALF - 1.2, 18), at(LOT_NEAR + 3, 11), at(co - 1.6, 6.5), at(co - 1.6, 1.5)];
     } else {
       park = [at(STREET_HALF - 1.2, -14), at(LOT_NEAR + 2, -5), at(front - 6.5, -3.5)];
       // Face the building: the last step points at the door.
       park.push(at(front - 5, -3.5));
+      // Coming down the street: in from the other side, into the free stall next to it (-0.5; the painted stalls run -14 to 1).
+      parkDown = [at(STREET_HALF - 1.2, 14), at(LOT_NEAR + 2, 4.5), at(front - 6.5, -0.5), at(front - 5, -0.5)];
     }
     // A farm has a dirt yard and a junkyard a gravel one: no painted stalls there.
     if (lot.place === 'barn' || lot.place === 'junkyard') pave.material = mat({ color: lot.place === 'barn' ? 0x9a7a52 : 0x8a8478, roughness: 1 });
@@ -455,6 +462,7 @@ export function buildTownWorld(layout: TownLayout, mats: TownMaterials, seed: nu
       shell,
       room,
       park,
+      parkDown,
       door,
       threshold,
       doorway,
