@@ -1086,7 +1086,7 @@ function inventoryLine(s: GameState): HTMLElement {
     h('span', { title: 'Scrap' }, `🔩 ${Math.floor(i.scrap)}`),
     h('span', { title: 'Bullets' }, `🔫 ${i.bullets}`),
     h('span', { title: 'Shotgun shells' }, `💥 ${i.shells}`),
-    h('span', { title: 'Catnip bombs' }, `🌿 ${i.catnip}`),
+    h('span', { title: 'Yarn bombs' }, `🧶 ${i.catnip}`),
     ...s.crew.map((c) => h('span', { title: `${CREW[c].name}: ${CREW[c].perk}` }, CREW[c].icon)),
   );
 }
@@ -1102,7 +1102,7 @@ function kidSupplies(s: GameState): HTMLElement {
     item('💵', 'Cash', i.cash, 200),
     item('🔫', 'Bullets', i.bullets, 60),
     item('💥', 'Shotgun shells', i.shells, 12),
-    item('🌿', 'Catnip bombs', i.catnip, 3),
+    item('🧶', 'Yarn bombs', i.catnip, 3),
     item('🔩', 'Scrap', i.scrap, 40),
     ...s.crew.map((c) => h('span', { class: 'kid-item', title: CREW[c].name }, CREW[c].icon)),
   );
@@ -1981,7 +1981,7 @@ function showBossIntro(boss: BossKind): void {
         h('h2', {}, ENEMY_STATS[boss].name),
         boss === 'mothership' && s.karenBeaten && h('p', { class: 'story' }, KAREN_STORY.queen),
         h('p', {}, info.intro),
-        h('p', { class: 'muted' }, `No running from this one. Ammo: ${s.inv.bullets} bullets, ${s.inv.shells} shells, ${s.inv.catnip} catnip.`),
+        h('p', { class: 'muted' }, `No running from this one. Ammo: ${s.inv.bullets} bullets, ${s.inv.shells} shells, ${s.inv.catnip} yarn bombs.`),
         h('button', { class: 'btn primary', onclick: () => startCombat(false, undefined, boss) }, 'Bring it on'),
       ),
     ),
@@ -2083,7 +2083,8 @@ function fightControls(c: CombatState): { banner: HTMLElement; pad: HTMLElement;
   );
   setTimeout(() => banner.classList.add('gone'), c.boss ? 6000 : 4000);
   const weapons: WeaponKind[] = ['bullets', 'shells', 'catnip'];
-  const wbtns = weapons.map((w) => h('button', { class: 'btn weapon', onclick: () => ((c.weapon = w), sync()) }, h('b', {}, WEAPONS[w].name), h('span', {}, '')));
+  const weaponIcon: Record<string, string> = { bullets: '🔫', shells: '💥', catnip: '🧶' };
+  const wbtns = weapons.map((w) => h('button', { class: 'btn weapon', onclick: () => ((c.weapon = w), sync()) }, h('b', {}, `${weaponIcon[w]} ${WEAPONS[w].name}`), h('span', {}, '')));
   const lane = (dir: -1 | 1, label: string) => {
     const b = h('button', { class: 'btn steer', title: dir < 0 ? 'Dodge left' : 'Dodge right' }, label);
     b.addEventListener('pointerdown', (e) => {

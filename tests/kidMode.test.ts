@@ -17,7 +17,7 @@ describe('kid mode', () => {
 
   it('gives each choice a picture', () => {
     expect(choiceIcon('Shoot at it')).toBe('🔫');
-    expect(choiceIcon('Throw catnip')).toBe('🌿');
+    expect(choiceIcon('Throw yarn')).toBe('🧶');
     expect(choiceIcon('Keep driving')).toBe('🚗');
     expect(choiceIcon('Give her some fuel')).toBe('⛽');
     expect(choiceIcon('Something new')).toBe('👉');

@@ -278,7 +278,7 @@ export class CombatScene implements GameScene {
         case 'shot': {
           const from = new THREE.Vector3(c.carX, 2, 0);
           const to = new THREE.Vector3(ev.x, ev.y + 1, ev.z);
-          const color = ev.weapon === 'catnip' ? 0x7dff6a : ev.weapon === 'shells' ? 0xffa040 : ev.weapon === 'rocks' ? 0xaaaaaa : 0xffee88;
+          const color = ev.weapon === 'catnip' ? 0xff6fb5 : ev.weapon === 'shells' ? 0xffa040 : ev.weapon === 'rocks' ? 0xaaaaaa : 0xffee88;
           this.addLine(from, to, color, 0.08);
           if (ev.weapon === 'catnip' || ev.weapon === 'shells') this.addBurst(to, color, ev.weapon === 'catnip' ? 18 : 8);
           break;

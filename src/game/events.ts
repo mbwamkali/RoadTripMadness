@@ -146,14 +146,14 @@ const MAKERS: Record<string, Maker> = {
         },
       },
       {
-        label: 'Buy shells and catnip',
-        hint: `$${priceOf(s, 30)} → 4 shells, 1 catnip`,
+        label: 'Buy shells and yarn bombs',
+        hint: `$${priceOf(s, 30)} → 4 shells, 1 yarn bomb`,
         enabled: s.inv.cash >= priceOf(s, 30),
         apply: () => {
           add(s, 'cash', -priceOf(s, 30));
           add(s, 'shells', 4);
           add(s, 'catnip', 1);
-          return { ok: true, message: 'You load up 4 shells and a catnip bomb.' };
+          return { ok: true, message: 'You load up 4 shells and a yarn bomb.' };
         },
       },
       {
@@ -201,14 +201,14 @@ const MAKERS: Record<string, Maker> = {
     text: 'A purple light locks onto the car. Your hair stands up. Somewhere above, a cat is purring.',
     choices: [
       {
-        label: 'Throw catnip',
-        hint: '1 catnip bomb',
+        label: 'Throw yarn',
+        hint: '1 yarn bomb',
         enabled: s.inv.catnip >= 1,
         apply: () => {
           add(s, 'catnip', -1);
           const scrap = rangeInt(rng, 6, 14);
           add(s, 'scrap', scrap);
-          return { ok: true, message: `The saucer wobbles off, very happy. It drops ${scrap} scrap of alien metal.` };
+          return { ok: true, message: `The saucer wobbles off, tangled up and very happy. It drops ${scrap} scrap of alien metal.` };
         },
       },
       {

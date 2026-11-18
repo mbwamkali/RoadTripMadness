@@ -186,7 +186,7 @@ export const BOSS_INFO: Record<BossKind, { title: string; intro: string; minion:
   },
   mothership: {
     title: 'BOSS: The Cat Queen',
-    intro: 'The sky goes purple. A mothership the size of a stadium descends over your destination. Dodge the red beam. Catnip hurts her a lot.',
+    intro: 'The sky goes purple. A mothership the size of a stadium descends over your destination. Dodge the red beam. Yarn bombs hurt her a lot.',
     minion: 'catship',
     slamDamage: 18,
     icon: '🐱',
@@ -231,7 +231,7 @@ export const BOSS_INFO: Record<BossKind, { title: string; intro: string; minion:
 export const WEAPONS: Record<WeaponKind, { name: string; dmg: number; cooldown: number; splash: number; ammo?: AmmoKind }> = {
   bullets: { name: 'Machine gun', dmg: 1, cooldown: 0.12, splash: 0, ammo: 'bullets' },
   shells: { name: 'Shotgun', dmg: 3, cooldown: 0.55, splash: 3, ammo: 'shells' },
-  catnip: { name: 'Catnip bomb', dmg: 3, cooldown: 1, splash: 6, ammo: 'catnip' },
+  catnip: { name: 'Yarn bomb', dmg: 3, cooldown: 1, splash: 6, ammo: 'catnip' },
   rocks: { name: 'Rocks', dmg: 0.5, cooldown: 0.35, splash: 0 },
 };
 
@@ -639,7 +639,7 @@ function kill(c: CombatState, e: Enemy, byPlayer: boolean): void {
   // The pizza driver's pizzas are yours: a meal on the road fixes you up.
   if (e.type === 'pizza') c.heal += 30;
   if (e.type === 'sweeper') {
-    // The cats bail out and run off, dropping some catnip.
+    // The cats bail out and run off, dropping some yarn bombs.
     c.events.push({ kind: 'bail', x: e.x, z: e.z, cats: 4 });
     add('catnip', 2);
   }
