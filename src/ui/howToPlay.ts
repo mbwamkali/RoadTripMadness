@@ -33,7 +33,7 @@ const BOSS_LINES: Record<BossKind, string> = {
   sweeper: 'Angry cats drive it and spray trash bags across two lanes.',
   karen: 'Throws her cats at you. Beat her to learn her secret.',
   drones: 'A swarm of paper-plane drones. Shoot the big one to send them home.',
-  mothership: 'The Cat Queen. She waits at the end of every trip. Catnip hurts her a lot.',
+  mothership: 'The Cat Queen. She waits at the end of every trip. Yarn bombs hurt her a lot.',
 };
 
 const HALFWAY_ORDER: BossKind[] = ['brute', 'warrig', 'hermit', 'pizza', 'sweeper', 'karen', 'drones', 'mothership'];
@@ -96,7 +96,7 @@ export const SECTIONS: Section[] = [
     title: 'Fights',
     tips: [
       { icon: '👆', title: 'Shoot', text: 'Fights happen right on the road. Tap or hold on a bad guy to shoot it.' },
-      { icon: '🔫', title: 'Pick a weapon', text: 'Machine gun for fast shots, shotgun for a group, catnip bomb for alien cats.' },
+      { icon: '🔫', title: 'Pick a weapon', text: 'Machine gun for fast shots, shotgun for a group, yarn bomb for alien cats.' },
       { icon: '🟡', title: 'Yellow blink', text: 'A bad guy blinks before it attacks. Move out of the way!' },
       { icon: '🟥', title: 'Red lane', text: 'A red lane means a big hit is coming there. Change lanes!' },
       { icon: '↔️', title: 'Dodge', text: 'Swipe sideways or use the arrows to jump to the other lane.' },
@@ -113,7 +113,7 @@ export const SECTIONS: Section[] = [
       { icon: '🧟', title: 'Zombies', text: 'Some throw junk, and some grab the car. Steer hard to shake them off.' },
       { icon: '🧟‍♂️', title: 'Zombie horde', text: 'Lots of zombies at once! Each one falls with one hit.' },
       { icon: '🏍️', title: 'Outlaw bikers', text: 'They ride next to you and shoot. Boost to leave them behind.' },
-      { icon: '🛸', title: 'Alien cats', text: 'Flying saucers with laser beams. Catnip bombs hurt them most.' },
+      { icon: '🛸', title: 'Alien cats', text: 'Flying saucers with laser beams. Yarn bombs hurt them most.' },
     ],
   },
   {
