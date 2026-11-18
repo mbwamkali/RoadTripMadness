@@ -2596,7 +2596,8 @@ function mileMarker(mile: number): THREE.Group {
   const face = blankBack(new THREE.Mesh(new THREE.PlaneGeometry(0.6, 1.2), mat));
   face.position.y = 1.6;
   const stick = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.2, 0.08), STICK_MAT);
-  stick.position.y = 0.6;
+  // Behind the face, never across the number.
+  stick.position.set(0, 0.6, -0.06);
   post.add(face, stick);
   return post;
 }

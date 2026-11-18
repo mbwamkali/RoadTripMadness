@@ -660,7 +660,7 @@ function buildStateSign(l: Landmark): THREE.Object3D {
   g.add(mesh(new THREE.BoxGeometry(0.25, 4.4, 0.25), post, -3, 2.2, 0));
   g.add(mesh(new THREE.BoxGeometry(0.25, 4.4, 0.25), post, 3, 2.2, 0));
   const tex = signTexture(['WELCOME TO', ...wrap(l.name.toUpperCase(), 16)], '#1d4fa8', '#ffffff');
-  g.add(mesh(new THREE.PlaneGeometry(7.2, 3.8), basic(0xffffff, { map: tex, side: THREE.DoubleSide }), 0, 5.2, 0.15));
+  g.add(blankBack(mesh(new THREE.PlaneGeometry(7.2, 3.8), basic(0xffffff, { map: tex }), 0, 5.2, 0.15)));
   return g;
 }
 
@@ -767,7 +767,7 @@ function buildRoadSign(l: Landmark): THREE.Object3D {
   const post = mat(0x8a8f96);
   g.add(mesh(new THREE.BoxGeometry(0.3, 5.5, 0.3), post, -3, 2.75, 0));
   g.add(mesh(new THREE.BoxGeometry(0.3, 5.5, 0.3), post, 3, 2.75, 0));
-  g.add(mesh(new THREE.PlaneGeometry(7.2, 3.6), basic(0xffffff, { map: roadSignTexture(l), side: THREE.DoubleSide }), 0, 5.4, 0.18));
+  g.add(blankBack(mesh(new THREE.PlaneGeometry(7.2, 3.6), basic(0xffffff, { map: roadSignTexture(l) }), 0, 5.4, 0.18)));
   g.scale.setScalar(1.4);
   return g;
 }

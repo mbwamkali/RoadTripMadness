@@ -3,7 +3,8 @@ import type { PlaceKind } from '../game/stops';
 import { lit } from '../scenes/materials';
 import { doorSkin, placeBuilding, placeDoor, fitted, HD_HOUSES, PLACE_BUILDINGS } from '../scenes/hdBuildings';
 import { modelMesh, type ModelName } from '../scenes/models';
-import { makeTrafficVehicle, textSprite } from '../scenes/common';
+import { makeTrafficVehicle } from '../scenes/common';
+import { boardSign, faceDownRoad } from '../scenes/roadside';
 import { modelsWanted } from '../scenes/models';
 import { makeRng } from '../game/rng';
 import { pointAlong, type TownLayout, type TownLot } from './layout';
@@ -289,9 +290,10 @@ export function buildTownWorld(layout: TownLayout, mats: TownMaterials, seed: nu
       { x: p.x + rx * CROSS_ARM, y: p.y + ry * CROSS_ARM },
     ];
     group.add(strip(cross, -CROSS_HALF, CROSS_HALF, 0.09, mats.asphalt));
-    const blade = textSprite(c.name, '', '#1f6b3a');
-    blade.scale.set(4.2, 1.6, 1);
-    blade.position.copy(v3(p.x + rx * (STREET_HALF + 1.5) - dir.x * 5, p.y + ry * (STREET_HALF + 1.5) - dir.y * 5, 3.6));
+    // A street-name board on posts, facing traffic coming up Main Street (posts behind it).
+    const blade = boardSign(c.name, '', '#1f6b3a', 4.2, 1.6, 2.8);
+    blade.position.copy(v3(p.x + rx * (STREET_HALF + 1.5) - dir.x * 5, p.y + ry * (STREET_HALF + 1.5) - dir.y * 5, 0));
+    faceDownRoad(blade, dir);
     group.add(blade);
   }
 

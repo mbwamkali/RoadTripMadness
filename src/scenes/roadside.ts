@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { lit } from './materials';
+import { blankBack, lit } from './materials';
 import { signTexture } from './common';
 import type { Path } from '../geo/geo';
 
@@ -124,17 +124,19 @@ POST_MAT.userData.shared = true;
 function signOnPosts(tex: THREE.Texture, w: number, h: number, height: number, owned: boolean, posts = true, cutout = false): THREE.Group {
   const g = new THREE.Group();
   // A cut-out face drops the transparent rounded corners of a signTexture picture.
-  const mat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide, ...(cutout ? { alphaTest: 0.5 } : {}) });
+  // One-sided with a plain metal back: the words only read from the front.
+  const mat = new THREE.MeshBasicMaterial({ map: tex, ...(cutout ? { alphaTest: 0.5 } : {}) });
   // The material goes with the chunk; a shared texture (speed limits) stays (see disposeRoadside).
   mat.userData.chunkOwned = true;
   if (!owned) tex.userData.chunkOwned = false;
-  const face = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+  const face = blankBack(new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat));
   face.position.y = height + h / 2;
   g.add(face);
   if (!posts) return g;
   for (const x of w > 3 ? [-w / 3, w / 3] : [0]) {
     const post = new THREE.Mesh(new THREE.BoxGeometry(0.14, height + h * 0.8, 0.14), POST_MAT);
-    post.position.set(x, (height + h * 0.8) / 2, -0.06);
+    // Wholly behind the face (posts are 0.14 thick), so from the road only the legs below it show.
+    post.position.set(x, (height + h * 0.8) / 2, -0.12);
     g.add(post);
   }
   return g;
