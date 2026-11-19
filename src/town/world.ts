@@ -452,7 +452,7 @@ export function buildTownWorld(layout: TownLayout, mats: TownMaterials, seed: nu
     }
     // The room inside, built now but hidden until you walk in.
     const room = new THREE.Group();
-    room.visible = !!store;
+    room.visible = false; // a code-built building's room shows while you're at it (TownPlay.update)
     room.position.copy(at(back, 0));
     room.rotation.y = yawToStreet;
     furnish(room, lot.place, size, mat, dk.x, !!store);
@@ -897,6 +897,13 @@ function container(kind: ContainerKind, mat: Mat): THREE.Group {
   return g;
 }
 
+/** A place's furnished room for a code-built building of `size` (for the shops check page, shops.html). */
+export function shopRoom(place: PlaceKind, size: THREE.Vector3, doorX: number): THREE.Group {
+  const g = new THREE.Group();
+  furnish(g, place, size, (p) => lit(p), doorX, true);
+  return g;
+}
+
 /** A floor you can tell apart: tiles in shops, concrete in the garage, planks in the motel and barn. */
 function floorTexture(place: PlaceKind, w: number, d: number): THREE.CanvasTexture {
   const look: Record<PlaceKind, [string, string, 'tile' | 'concrete' | 'planks']> = {
@@ -1097,7 +1104,8 @@ function furnish(g: THREE.Group, place: PlaceKind, size: THREE.Vector3, mat: Mat
   // a clock on the back wall, and a potted plant in the front corner away from the door.
   const glass = mat({ color: 0xcfe8ff, emissive: 0x9fd0ff, emissiveIntensity: 0.55, roughness: 0.2 });
   const sill = mat({ color: 0xf4f1ea });
-  for (const sx of [-1, 1]) {
+  // (A code-built building has real windows in its walls instead.)
+  for (const sx of shellWalls ? [] : [-1, 1]) {
     const x = sx * (w / 2 - 0.16);
     add(box(0.04, 1.0, 1.6, glass), x, 1.55, 0.3);
     add(box(0.1, 0.08, 1.8, sill), x, 1.02, 0.3);

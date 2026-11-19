@@ -11,6 +11,9 @@ adjusted so the biome colour still sets the hue.
 | gravel.jpg | Gravel Road: https://polyhaven.com/a/gravel_road |
 | walls/red_brick_03.jpg (+ _n) | Red Brick 03: https://polyhaven.com/a/red_brick_03 |
 | walls/painted_plaster_wall.jpg (+ _n) | Painted Plaster Wall: https://polyhaven.com/a/painted_plaster_wall |
+| walls/white_planks_clean.jpg (+ _n) | White Planks Clean: https://polyhaven.com/a/white_planks_clean |
+| walls/corrugated_iron.jpg (+ _n) | Corrugated Iron: https://polyhaven.com/a/corrugated_iron |
+| walls/weathered_brown_planks.jpg (+ _n) | Weathered Brown Planks: https://polyhaven.com/a/weathered_brown_planks |
 
 Wall photos (in `walls/`) are resized to 512 px with their own normal maps, in full colour, for the code-built shops. Textures live in `public/textures/`; the originals are fetched into `data-src/tex/`, which is not committed.
 

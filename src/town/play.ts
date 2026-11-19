@@ -991,6 +991,9 @@ export class TownPlay {
     dt = Math.min(dt, 0.05);
     this.time += dt;
     this.updateDoor(dt);
+    // A code-built building shows its room through the windows, but only the one you're at
+    // (each room is dozens of small parts, too many for a phone to draw for every shop at once).
+    for (const sp of this.world.spots) if (sp.real) sp.room.visible = sp === this.at;
     const car = this.host.car;
     if (this.move) {
       const m = this.move;

@@ -1,4 +1,4 @@
-// Screenshots of the town grocery: pulling in, a still front view by day and night,
+// Screenshots of a town shop (PLACE=grocery by default): pulling in, a still front view by day and night,
 // walking up, the door opening, and inside. For comparing the code-built storefront
 // (scenes/storefront.ts) with the generated model (?shops=old).
 //   npm run build && node scripts/storefront-shots.mjs outDir [new|old] [quality] [scale]
@@ -18,6 +18,7 @@ if (!BASE) {
   BASE = `http://localhost:${PORT}/`;
   for (let i = 0; i < 60; i++) { try { if ((await fetch(BASE)).ok) break; } catch {} await new Promise((r) => setTimeout(r, 500)); }
 }
+const PLACE = process.env.PLACE ?? 'grocery';
 const URL = BASE + (SHOPS === 'old' ? '?shops=old' : '');
 const stop = () => { try { if (server) process.kill(-server.pid, 'SIGTERM'); } catch {} };
 const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--no-sandbox'] });
@@ -25,7 +26,7 @@ const page = await browser.newPage({ viewport: { width: 390, height: 844 }, devi
 page.on('pageerror', (e) => console.error('pageerror', e.message));
 page.on('console', (m) => { if (m.type() === 'error') console.error('console', m.text()); });
 const shot = async (name) => {
-  await page.screenshot({ path: `${OUT}/${SHOPS}-${name}.png`, timeout: 240000 });
+  await page.screenshot({ path: `${OUT}/${SHOPS}-${PLACE}-${name}.png`, timeout: 240000 });
   console.log(name, await page.evaluate(() => window.rtm.town?.phase ?? 'road'));
 };
 const until = async (phase, ms = 60000) => {
@@ -38,11 +39,11 @@ const until = async (phase, ms = 60000) => {
   return false;
 };
 const setHour = (h) => page.evaluate((h) => { const s = window.rtm.state; s.hoursSpent = (s.hoursSpent || 0) + ((h - window.rtm.hour() + 48) % 24); }, h);
-/** Holds the camera still, looking at the grocery from the street (`side` metres off centre). */
+/** Holds the camera still, looking at the shop from the street (`side` metres off centre). */
 const still = (dist, height, side) =>
-  page.evaluate(([dist, height, side]) => {
+  page.evaluate(([dist, height, side, place]) => {
     const t = window.rtm.town;
-    const sp = t.world.spots.find((s) => s.lot.place === 'grocery');
+    const sp = t.world.spots.find((s) => s.lot.place === place);
     const c = sp.shell.getWorldPosition(new t.walker.position.constructor());
     const f = sp.facing.clone().setY(0).normalize();
     const right = new t.walker.position.constructor(-f.z, 0, f.x);
@@ -51,7 +52,7 @@ const still = (dist, height, side) =>
       cam.position.copy(c).addScaledVector(f, sp.size.z / 2 + dist).addScaledVector(right, side).setY(height);
       cam.lookAt(c.x + f.x * sp.size.z * 0.3, 2.6, c.z + f.z * sp.size.z * 0.3);
     };
-  }, [dist, height, side]);
+  }, [dist, height, side, PLACE]);
 const freeCamera = () => page.evaluate(() => { delete window.rtm.town.updateCamera; });
 try {
   await page.goto(URL);
@@ -62,18 +63,18 @@ try {
   await page.waitForTimeout(800);
   await page.evaluate(() => { const s = window.rtm.state; s.nextEncounterAt = 1e9; s.nextEventAt = 1e9; s.inv.fuel = 40; s.inv.cash = 60; });
   await page.waitForTimeout(Number(process.env.LOAD_MS ?? 25000));
-  const st = await page.evaluate(() => {
+  const st = await page.evaluate((place) => {
     const s = window.rtm.state;
-    const i = s.stops.findIndex((x) => x.places.includes('grocery') && x.kind !== 'shortcut');
+    const i = s.stops.findIndex((x) => x.places.includes(place) && x.kind !== 'shortcut');
     const at = window.rtm.stop(i >= 0 ? i : undefined);
     return { i, kind: at.kind, places: at.places, name: at.name };
-  });
+  }, PLACE);
   console.log(JSON.stringify(st));
   await setHour(15);
   await until('street');
   await page.waitForTimeout(1000);
-  const ok = await page.evaluate(() => window.rtm.visit('grocery'));
-  if (!ok) throw new Error('no grocery in this town');
+  const ok = await page.evaluate((p) => window.rtm.visit(p), PLACE);
+  if (!ok) throw new Error(`no ${PLACE} in this town`);
   await until('parked', 120000);
   await page.waitForTimeout(2500);
   await shot('1-parked');
