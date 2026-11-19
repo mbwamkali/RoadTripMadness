@@ -554,24 +554,22 @@ export class TownPlay {
     if (panel) panel.rotation.y = -1.75 * (1 - (1 - k) * (1 - k));
     if (a.t < 1) return;
     this.doorAnim = null;
-    if (!a.open) a.sp.doorway.visible = false;
+    if (!a.open && !a.sp.real) a.sp.doorway.visible = false;
     a.then();
   }
 
   private enterRoom(sp: TownSpot): void {
     {
       this.entering = null;
-      sp.doorway.visible = false;
+      // A real building's door stays open behind you; the stand-in door goes away.
+      if (!sp.real) sp.doorway.visible = false;
       this.at = sp;
       this.phase = 'inside';
-      sp.shell.visible = false;
-      sp.room.visible = true;
+      showInside(sp, true);
       // Inside, the walker is drawn a bit bigger so a small screen still shows who you are, and the
       // parked car (out front, under the buttons) steps out of the picture.
       this.walker.scale.setScalar(INSIDE_SCALE);
       this.host.car.visible = false;
-      // The gas canopy would hide the dollhouse from above.
-      showRoofs(sp, false);
       this.roomLight(sp);
       this.search = startScavenge(this.hooks.state, this.storeKey(), sp.lot.place, sp.crates.length);
       for (const c of sp.crates) resetCrate(c);
@@ -588,9 +586,7 @@ export class TownPlay {
     this.dig = null;
     this.walker.scale.setScalar(1);
     this.host.car.visible = true;
-    sp.shell.visible = true;
-    sp.room.visible = false;
-    showRoofs(sp, true);
+    showInside(sp, false);
     this.search = null;
     this.phase = 'walking';
     // Out through the open door facing the street (so the camera sees what's coming); it shuts behind you.
@@ -1467,11 +1463,7 @@ export class TownPlay {
     this.host.car.visible = true;
     const rider = this.host.car.getObjectByName('rider');
     if (rider) rider.visible = true;
-    for (const sp of this.world.spots) {
-      sp.shell.visible = true;
-      sp.room.visible = false;
-      showRoofs(sp, true);
-    }
+    for (const sp of this.world.spots) showInside(sp, false);
   }
 }
 
@@ -1481,6 +1473,25 @@ export const LOOT_ICONS: Record<keyof Inventory, string> = { fuel: '⛽', cash: 
 
 function placeWord(sp: TownSpot): string {
   return { pumps: 'Gas', motel: 'Motel', grocery: 'Food', garage: 'Garage', hardware: 'Tools', pharmacy: 'Medicine', police: 'Police', gunshop: 'Ammo', junkyard: 'Junkyard', barn: 'Farm' }[sp.lot.place];
+}
+
+/**
+ * The dollhouse view on or off: the building's outside comes off (a code-built building loses only
+ * its roof, upper walls, awning and sign; its room is always there) and the room's light comes on.
+ * The gas canopy would hide the dollhouse from above, so roofs go too.
+ */
+function showInside(sp: TownSpot, on: boolean): void {
+  if (sp.real) {
+    sp.shell.traverse((o) => {
+      if (o.name === 'cutaway') o.visible = !on;
+    });
+    const lamp = sp.room.getObjectByName('roomLight');
+    if (lamp) lamp.visible = on;
+  } else {
+    sp.shell.visible = !on;
+    sp.room.visible = on;
+  }
+  showRoofs(sp, !on);
 }
 
 function showRoofs(sp: TownSpot, on: boolean): void {

@@ -3,6 +3,7 @@ import { blankBack } from './materials';
 import { modelsWanted } from './models';
 import type { PlaceKind } from '../game/stops';
 import { loadStats } from '../game/loadStats';
+import { setStorefrontNight } from './storefront';
 
 /**
  * The generated town buildings and landmarks (public/models/hd/b/, about 6k
@@ -294,6 +295,7 @@ export function setBuildingsNight(night: number): void {
   const n = Math.round(night * 20) / 20;
   if (n === nightLevel) return;
   nightLevel = n;
+  setStorefrontNight(n);
   const mats = new Set<THREE.MeshStandardMaterial>();
   for (const g of loaded.values()) g.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) mats.add(m.material as THREE.MeshStandardMaterial); });
   for (const r of roadside.values()) mats.add(r.material as THREE.MeshStandardMaterial);

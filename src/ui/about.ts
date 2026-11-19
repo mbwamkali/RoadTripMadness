@@ -57,7 +57,7 @@ export const CREDITS: Credit[] = [
   {
     icon: '🧱',
     name: 'Poly Haven',
-    what: 'Asphalt, ground and gravel textures (and the bump maps made from them).',
+    what: 'Asphalt, ground, gravel and shop wall textures (and the bump maps made from them).',
     licence: 'CC0 (public domain).',
     links: [['polyhaven.com', 'https://polyhaven.com']],
   },
