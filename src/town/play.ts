@@ -1472,7 +1472,7 @@ export class TownPlay {
 
 // ------------------------------------------------------------------ small parts
 
-export const LOOT_ICONS: Record<keyof Inventory, string> = { fuel: '⛽', cash: '💵', scrap: '🔩', bullets: '🔫', shells: '💥', catnip: '🌿' };
+export const LOOT_ICONS: Record<keyof Inventory, string> = { fuel: '⛽', cash: '💵', scrap: '🔩', bullets: '🔫', shells: '💥', catnip: '🧶' };
 
 function placeWord(sp: TownSpot): string {
   return { pumps: 'Gas', motel: 'Motel', grocery: 'Food', garage: 'Garage', hardware: 'Tools', pharmacy: 'Medicine', police: 'Police', gunshop: 'Ammo', junkyard: 'Junkyard', barn: 'Farm' }[sp.lot.place];

@@ -41,7 +41,7 @@ export function oneLine(text: string): string {
 const ICONS: [RegExp, string][] = [
   [/shoot|fight|gun/i, '🔫'],
   [/ram|floor it|drive through/i, '💥'],
-  [/catnip/i, '🌿'],
+  [/yarn/i, '🧶'],
   [/fuel|gas/i, '⛽'],
   [/shell/i, '💥'],
   [/bullet|scrap for/i, '🔩'],
