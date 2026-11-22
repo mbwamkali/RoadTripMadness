@@ -65,21 +65,37 @@ export interface TownHooks {
 /** The walker is drawn this much bigger inside buildings. */
 const INSIDE_SCALE = 1.3;
 
-/** Town driving speed (units a second, about 22 mph). */
-export const TOWN_SPEED = 10;
+/** Town driving (m/s): cruising speed (about 40 mph), and the most it speeds up to on a long way round (about 100 mph). */
+export const TOWN_SPEED = 18;
+const TOWN_TOP = 45;
+/** Speeding up and slowing down (m/s each second). */
+const TOWN_ACCEL = 30;
+/** The most sideways pull on a bend (m/s²): the car slows for tight turns to keep under it. */
+const TOWN_GRIP = 15;
+/** On a long way round, bends are taken faster, up to this (m/s²), to keep inside MOVE_GOAL. */
+const TOWN_GRIP_MAX = 40;
+/** Backing up: the most speed (m/s). */
+const REVERSE_TOP = 12;
+/** A drive takes no longer than this (seconds), going faster than TOWN_SPEED when it has to, up to TOWN_TOP. */
+const MOVE_GOAL = 2.6;
 export const WALK_SPEED = 4.2;
 /** The town cyclist's speed (m/s, about 9 mph). */
 const CYCLE_SPEED = 4;
 export const RUN_SPEED = 7.5;
-/** Back to Main Street: the U-turn's radius (m), how far below the stop its middle sits (m), its speed (x TOWN_SPEED). */
-const U_TURN_RADIUS = 3.4;
+/** U-turns: the radius (m) and the metres the car takes to drift between a lane and the curb, either side of the turn. */
+const U_TURN_RADIUS = 4;
+const U_TURN_EASE = 5;
+/** How far below the arrival spot the U-turn back into it sits (m; MAIN_STREET_HOME only). */
 const U_TURN_BACK = 10;
-/** Back to Main Street: metres the car takes to drift between a lane and the curb, either side of the U-turn. */
-const U_TURN_EASE = 6;
-const U_TURN_SPEED = 0.6;
-/** Backing out of a lot: the radius (m) the tail swings round, and the speed (x the usual reverse speed). */
+/** The lanes sit this far either side of the street's middle (m). */
+const LANE = 2.2;
+/** Backing out of a lot: the radius (m) the tail swings round. */
 const BACK_OUT_RADIUS = 4;
-const BACK_OUT_SPEED = 1.3;
+/**
+ * The Main Street button: false stops in the street right outside the lot (quick; the Main Street
+ * camera shows every sign wherever the car is); true drives back to the arrival spot (issue #4).
+ */
+const MAIN_STREET_HOME = false;
 /** Zombies on the street at once (kid mode fewer). */
 export const TOWN_ZOMBIES = 7;
 export const TOWN_ZOMBIES_KID = 4;
@@ -100,17 +116,20 @@ interface Zombie {
 
 interface CarMove {
   curve: THREE.CatmullRomCurve3;
-  t: number;
   len: number;
+  /** Metres along the curve so far. */
+  s: number;
   reverse: boolean;
   then: () => void;
-  /** Times the usual town speed. */
-  speed: number;
-  /** Ease into this speed from the last one instead of jumping to it. */
-  ease: boolean;
+  /** The planned speed (m/s) at a distance along the curve. */
+  speedAt: (s: number) => number;
+  /** How long the plan says the move takes (seconds). */
+  secs: number;
 }
 
 const UP = new THREE.Vector3(0, 1, 0);
+/** Towns whose spots are already in world space. */
+const placed = new WeakSet<TownWorld>();
 
 export class TownPlay {
   phase: TownPhase = 'arrive';
@@ -161,8 +180,13 @@ export class TownPlay {
     const W = (v: THREE.Vector3) => world.group.localToWorld(v.clone());
     this.laneIn = world.laneIn.map(W);
     this.laneOut = world.laneOut.map(W);
-    for (const sp of world.spots) {
+    this.laneRunLen = this.laneIn.map(() => 0);
+    for (let i = 1; i < this.laneIn.length; i++) this.laneRunLen[i] = this.laneRunLen[i - 1] + this.laneIn[i].distanceTo(this.laneIn[i - 1]);
+    // The spots are moved into world space once per town: entering the same town again (a test jump,
+    // say) must not move them a second time, or the car drives off into the fields.
+    for (const sp of placed.has(world) ? [] : world.spots) {
       sp.park = sp.park.map(W);
+      sp.parkDown = sp.parkDown.map(W);
       sp.door = W(sp.door);
       sp.inside = W(sp.inside);
       sp.threshold = W(sp.threshold);
@@ -170,6 +194,7 @@ export class TownPlay {
       if (sp.pump) sp.pump = W(sp.pump);
       sp.facing = sp.facing.clone().transformDirection(world.group.matrixWorld);
     }
+    placed.add(world);
     this.walkerRig = person('player_walker');
     // Off the motorcycle you keep its red helmet on, so it's clearly the same rider.
     if (host.car.getObjectByName('rider')) this.walkerRig?.addHelmet();
@@ -529,24 +554,22 @@ export class TownPlay {
     if (panel) panel.rotation.y = -1.75 * (1 - (1 - k) * (1 - k));
     if (a.t < 1) return;
     this.doorAnim = null;
-    if (!a.open) a.sp.doorway.visible = false;
+    if (!a.open && !a.sp.real) a.sp.doorway.visible = false;
     a.then();
   }
 
   private enterRoom(sp: TownSpot): void {
     {
       this.entering = null;
-      sp.doorway.visible = false;
+      // A real building's door stays open behind you; the stand-in door goes away.
+      if (!sp.real) sp.doorway.visible = false;
       this.at = sp;
       this.phase = 'inside';
-      sp.shell.visible = false;
-      sp.room.visible = true;
+      showInside(sp, true);
       // Inside, the walker is drawn a bit bigger so a small screen still shows who you are, and the
       // parked car (out front, under the buttons) steps out of the picture.
       this.walker.scale.setScalar(INSIDE_SCALE);
       this.host.car.visible = false;
-      // The gas canopy would hide the dollhouse from above.
-      showRoofs(sp, false);
       this.roomLight(sp);
       this.search = startScavenge(this.hooks.state, this.storeKey(), sp.lot.place, sp.crates.length);
       for (const c of sp.crates) resetCrate(c);
@@ -563,9 +586,7 @@ export class TownPlay {
     this.dig = null;
     this.walker.scale.setScalar(1);
     this.host.car.visible = true;
-    sp.shell.visible = true;
-    sp.room.visible = false;
-    showRoofs(sp, true);
+    showInside(sp, false);
     this.search = null;
     this.phase = 'walking';
     // Out through the open door facing the street (so the camera sees what's coming); it shuts behind you.
@@ -682,76 +703,86 @@ export class TownPlay {
     this.hooks.changed();
   }
 
-  /** Pull into a lot: out of the one you're in first (backing out), along Main Street, and in. */
+  /**
+   * Pull into a lot, by the most direct way that stays on the road: out of the lot you're in
+   * (backing out with the nose already pointing the way you're going), along the lane for that
+   * direction, and straight in. Lots up the street are come at from below, lots down the street
+   * from above (their mirror-image way in), so the car never drives past and turns round.
+   */
   driveTo(sp: TownSpot): void {
     if (this.move) return;
-    const go = () => {
-      const now = this.host.car.position.clone();
-      const target = sp.park[0];
-      const ahead = this.alongIdx(this.laneIn, target) >= this.alongIdx(this.laneIn, now);
-      const pts = [now];
-      if (ahead) {
-        const i0 = this.alongIdx(this.laneIn, now) + 1;
-        const i1 = this.alongIdx(this.laneIn, target) - 1;
-        for (let i = i0; i <= i1; i += 2) pts.push(this.laneIn[i]);
-      } else {
-        // Back toward the highway in the other lane, swing round and come in the right way.
-        const i0 = this.alongIdx(this.laneOut, now) - 1;
-        const i1 = Math.max(1, this.alongIdx(this.laneOut, target) - 4);
-        for (let i = i0; i >= i1; i -= 2) pts.push(this.laneOut[i]);
-        const turn = Math.max(0, i1 - 3);
-        pts.push(this.world.group.localToWorld(this.world.street[turn].clone()), this.laneIn[Math.max(0, turn - 1)], this.laneIn[turn + 1]);
-      }
-      pts.push(...sp.park);
+    const car = this.host.car.position.clone();
+    const a0 = this.alongOf(car);
+    const stall = sp.park[sp.park.length - 1];
+    // Up the street unless the lot is clearly behind you (a lot across the street counts as up).
+    const dir: 1 | -1 = this.alongOf(stall) >= a0 - 6 || this.phase !== 'parked' ? 1 : -1;
+    this.exitLot(dir, (lead) => {
+      const from = lead[lead.length - 1];
+      const aFrom = this.alongOf(from);
+      // The way in for this direction, starting with the first point still ahead of you.
+      const entry = (dir === 1 ? sp.park : sp.parkDown).slice();
+      while (entry.length > 2 && (this.alongOf(entry[0]) - aFrom) * dir < 4) entry.shift();
+      const lane = dir === 1 ? this.laneIn : this.laneOut;
+      const mid = this.laneRun(lane, aFrom + dir * 8, this.alongOf(entry[0]) - dir * 6, dir);
       this.at = null;
       this.phase = 'driving';
       this.hooks.changed();
-      this.driveCurve(dedupe(pts), false, () => {
+      this.driveCurve(dedupe([...lead, ...mid, ...entry]), false, () => {
         this.at = sp;
         this.phase = 'parked';
         this.hooks.say(this.hooks.kid ? `${placeWord(sp)}!` : `You pull into ${sp.lot.name ?? `the ${placeName(sp)}`}.`);
         this.hooks.changed();
       });
-    };
-    this.backOut(go);
-  }
-
-  /**
-   * Out of the lot and back to where you first stopped on Main Street, facing up the street the
-   * same way, so the street looks just as it did on arrival: out of the lot nose-down the street,
-   * back down the other lane, a U-turn in the middle of the road, and up into the stop.
-   */
-  toStreet(): void {
-    if (this.move || this.phase !== 'parked') return;
-    this.exitLot((from) => {
-      this.at = null;
-      this.phase = 'driving';
-      this.hooks.changed();
-      this.driveHome(from, () => {
-        this.phase = 'street';
-        this.view = 0;
-        this.hooks.say(this.hooks.kid ? 'Tap a sign!' : 'Back on Main Street.', false);
-        this.hooks.changed();
-      });
     });
   }
 
-  /** Down the out lane from `from`, a U-turn just short of the arrival spot, and up into it. */
-  private driveHome(from: THREE.Vector3, then: () => void): void {
+  /**
+   * Back on Main Street from a lot. Pulls out into the in lane, nose up the street (at the pumps,
+   * whichever way the car already faces), and stops right there: the Main Street camera is a fixed view of every sign, so it looks the same wherever the
+   * car waits. (With MAIN_STREET_HOME it drives back down to the arrival spot and U-turns into it.)
+   */
+  toStreet(): void {
+    if (this.move || this.phase !== 'parked') return;
+    const back = () => {
+      this.phase = 'street';
+      this.view = 0;
+      this.hooks.say(this.hooks.kid ? 'Tap a sign!' : 'Back on Main Street.', false);
+      this.hooks.changed();
+    };
+    if (MAIN_STREET_HOME) {
+      this.exitLot(-1, (lead) => {
+        this.at = null;
+        this.phase = 'driving';
+        this.hooks.changed();
+        this.driveHome(lead, back);
+      });
+      return;
+    }
+    // At the pumps, out the way the car is already facing (no loop under the canopy); from a building, up the street.
+    const car = this.host.car.position;
+    const fwd = new THREE.Vector3(Math.sin(this.carYaw), 0, Math.cos(this.carYaw));
+    const dir: 1 | -1 = this.at?.pump && fwd.dot(this.upAt(this.alongOf(car))) < 0 ? -1 : 1;
+    this.exitLot(dir, (lead) => {
+      this.at = null;
+      this.phase = 'driving';
+      this.hooks.changed();
+      const from = lead[lead.length - 1];
+      const a = this.alongOf(from);
+      // A few metres on along the lane, so the car ends square to it.
+      const stop = this.laneRun(dir === 1 ? this.laneIn : this.laneOut, a + dir * 8, a + dir * 18, dir);
+      if (!stop.length) stop.push(from.clone().addScaledVector(this.upAt(a), 6 * dir));
+      this.driveCurve(dedupe([...lead, ...stop.slice(-2)]), false, back);
+    });
+  }
+
+  /** Down the out lane from the end of `lead`, a U-turn just short of the arrival spot, and up into it. */
+  private driveHome(lead: THREE.Vector3[], then: () => void): void {
     const { home, up, n, centre } = this.homeFrame();
-    // Down the out lane, stopping the list a lane point short of the U-turn.
-    const down = [from];
-    const k = this.alongIdx(this.laneOut, from);
-    const last = Math.min(this.home + 1, this.laneOut.length - 1);
-    for (let i = k; i > last; i -= 2) if (this.laneOut[i].clone().sub(from).dot(up) < -3) down.push(this.laneOut[i]);
-    if (this.laneOut[last].clone().sub(from).dot(up) < -3) down.push(this.laneOut[last]);
-    // The U-turn: swing out to the curb, round the middle of the road, and in behind the stop.
+    const from = lead[lead.length - 1];
     const u = this.uTurn(home, up, n, centre);
-    // Close-set points on purpose: no dedupe here, or the curve loses the turn's shape.
-    const turn = [down[down.length - 1], ...u.filter((p, i) => i > 0 || p.distanceTo(down[down.length - 1]) > 1.2)];
-    const go = () => this.driveCurve(turn, false, then, U_TURN_SPEED, true);
-    if (down.length > 1) this.driveCurve(dedupe(down), false, go);
-    else go();
+    const down = this.laneRun(this.laneOut, this.alongOf(from) - 8, this.alongOf(u[0]) + 6, -1);
+    // Close-set U-turn points on purpose: dedupe only the run down the street, or the turn loses its shape.
+    this.driveCurve([...dedupe([...lead, ...down]), ...u.filter((p, i) => i > 0 || p.distanceTo(down[down.length - 1] ?? from) > 1.2)], false, then);
   }
 
   /**
@@ -769,9 +800,9 @@ export class TownPlay {
   }
 
   /**
-   * The U-turn, as close-set points (so the curve through them keeps its shape): ease out from the
-   * out lane to the curb, round a half circle across the street, ease back into the in lane, and
-   * straight on up to `home`. Its far side sits a little short of where the street starts.
+   * The U-turn back into the arrival spot, as close-set points (so the curve through them keeps its
+   * shape): ease out from the out lane to the curb, round a half circle across the street, ease back
+   * into the in lane, and straight on up to `home`. Its far side sits a little short of where the street starts.
    */
   private uTurn(home: THREE.Vector3, up: THREE.Vector3, n: THREE.Vector3, centre: THREE.Vector3): THREE.Vector3[] {
     const R = U_TURN_RADIUS;
@@ -781,102 +812,178 @@ export class TownPlay {
     const back = Math.max(R + 1, Math.min(U_TURN_BACK, room - R - 1));
     const ease = Math.min(U_TURN_EASE, back - 1);
     const at = (along: number, across: number) => centre.clone().addScaledVector(up, along).addScaledVector(n, across);
-    const blend = (a: number, b: number, k: number) => a + ((b - a) * (1 - Math.cos(Math.PI * k))) / 2;
-    const pts: THREE.Vector3[] = [];
-    const step = 0.8;
-    // Out lane to the curb, flat at both ends so it meets the lane and the circle without a kink.
-    for (let d = 0; d < ease; d += step) pts.push(at(-back + ease - d, blend(-lane, -R, d / ease)));
-    // Round the half circle.
-    const arcSteps = Math.ceil((Math.PI * R) / step);
-    for (let i = 0; i <= arcSteps; i++) {
-      const t = (Math.PI * i) / arcSteps;
-      pts.push(at(-back - R * Math.sin(t), -R * Math.cos(t)));
-    }
-    // Back in from the far curb to the in lane.
-    for (let d = step; d <= ease; d += step) pts.push(at(-back + d, blend(R, lane, d / ease)));
+    const pts = this.uTurnPts(at, -back, -1, lane, R, ease);
     pts.push(home.clone());
     return pts;
   }
 
   /**
-   * Out of the lot, into the out lane, pointing back down the street. Parked at a building you back
-   * straight out toward the street and swing the tail up it; at the pumps you pull forward and loop
-   * round through the lot. `then` gets the point in the out lane where you end up.
+   * A U-turn in the street as close-set points, in a frame `at(along, across)` whose across is
+   * positive on the in lane's side: from the lane on side `-dir` at along `a + dir * ease`, easing out
+   * to the curb, round a half circle of radius R whose middle is at along `a`, and easing back into
+   * the lane on the other side. `dir` 1 turns from the in lane (heading up) into the out lane; -1 the other way.
    */
-  private exitLot(then: (from: THREE.Vector3) => void): void {
+  private uTurnPts(at: (along: number, across: number) => THREE.Vector3, a: number, dir: 1 | -1, lane: number, R: number, ease: number): THREE.Vector3[] {
+    const blend = (x: number, y: number, k: number) => x + ((y - x) * (1 - Math.cos(Math.PI * k))) / 2;
+    const pts: THREE.Vector3[] = [];
+    const step = 0.8;
+    const s = dir; // the side you start on: +1 the in lane
+    // Lane to the curb, flat at both ends so it meets the lane and the circle without a kink.
+    for (let d = 0; d < ease; d += step) pts.push(at(a - dir * (ease - d), s * blend(lane, R, d / ease)));
+    const arcSteps = Math.ceil((Math.PI * R) / step);
+    for (let i = 0; i <= arcSteps; i++) {
+      const t = (Math.PI * i) / arcSteps;
+      pts.push(at(a + dir * R * Math.sin(t), s * R * Math.cos(t)));
+    }
+    for (let d = step; d <= ease; d += step) pts.push(at(a - dir * d, -s * blend(R, lane, d / ease)));
+    return pts;
+  }
+
+  /**
+   * Out of the lot, pointing the way you're going next (`dir` 1 up the street, -1 down it), and hands
+   * `then` the forward path so far (it starts where the car is once any backing out is done; the
+   * rest of the trip is added to it as one smooth drive). Parked at a building you back straight out
+   * toward the street, the tail swinging the other way, into the lane for that direction. At the
+   * pumps you drive straight on out, or loop round under the canopy if you're facing the wrong way.
+   * On the street nothing happens, unless you're facing the wrong way: then a U-turn where you are.
+   */
+  private exitLot(dir: 1 | -1, then: (lead: THREE.Vector3[]) => void): void {
     const sp = this.at;
     const p = this.host.car.position.clone();
+    const fwd = new THREE.Vector3(Math.sin(this.carYaw), 0, Math.cos(this.carYaw));
+    const a = this.alongOf(p);
+    const up = this.upAt(a);
+    const u = up.clone().multiplyScalar(dir);
     if (this.phase !== 'parked' || !sp) {
-      then(p);
+      if (fwd.dot(u) >= 0) then([p]);
+      else {
+        // Facing the wrong way on the street: turn round right here, in the middle of the road.
+        const c = this.streetFrame(a);
+        const turn = -dir as 1 | -1;
+        then([p, ...this.uTurnPts(c.at, a + turn * U_TURN_EASE, turn, LANE, U_TURN_RADIUS, U_TURN_EASE)]);
+      }
       return;
     }
-    const k = this.alongIdx(this.laneOut, p);
-    const lane = this.laneOut;
-    const up = lane[Math.min(lane.length - 1, k + 1)].clone().sub(lane[Math.max(0, k - 1)]).setY(0).normalize();
+    const lane = dir === 1 ? this.laneIn : this.laneOut;
     const toStreet = sp.facing.clone().setY(0).normalize();
-    // How far it is, toward the street, to the out lane.
-    const w = lane[k].clone().sub(p).setY(0).dot(toStreet);
+    // How far it is, toward the street, to the lane you want.
+    const w = this.laneRun(lane, a - 6, a + 6)[0]?.clone().sub(p).setY(0).dot(toStreet) ?? 8;
     if (sp.pump) {
-      // Forward from the pump, then a wide loop toward the street that ends heading down it.
+      if (fwd.dot(u) > 0) {
+        // Facing the right way: straight on out from under the canopy.
+        then([p, p.clone().addScaledVector(fwd, 5)]);
+        return;
+      }
+      // Facing the wrong way: forward a little, then a wide loop toward the street that ends heading the other way.
       const R = Math.max(3, w / 2);
-      const start = p.clone().addScaledVector(up, 2);
+      const start = p.clone().addScaledVector(fwd, 2);
       const c = start.clone().addScaledVector(toStreet, R);
       const pts = [p];
       for (const deg of [0, 45, 90, 135, 180]) {
         const t = (deg * Math.PI) / 180;
-        pts.push(c.clone().addScaledVector(toStreet, -R * Math.cos(t)).addScaledVector(up, R * Math.sin(t)));
+        pts.push(c.clone().addScaledVector(toStreet, -R * Math.cos(t)).addScaledVector(fwd, R * Math.sin(t)));
       }
-      const end = pts[pts.length - 1];
-      pts.push(end.clone().addScaledVector(up, -4));
-      this.driveCurve(dedupe(pts), false, () => then(pts[pts.length - 1].clone()));
+      then(pts);
       return;
     }
-    // Straight back toward the street, then the tail swings up it so the nose points down it.
+    // Back out of the stall, the tail swinging the other way so the nose points along `u`, then
+    // drive on out across the lot: a short reverse, and the rest goes at driving speed.
     const R = BACK_OUT_RADIUS;
-    const s = p.clone().addScaledVector(toStreet, Math.max(1.5, w - R));
-    const c = s.clone().addScaledVector(up, R);
-    const pts = [p, p.clone().addScaledVector(toStreet, 1.2)];
+    const s = p.clone().addScaledVector(toStreet, 1.2);
+    const c = s.clone().addScaledVector(u, -R);
+    const pts = [p];
     for (const deg of [0, 30, 60, 90]) {
       const t = (deg * Math.PI) / 180;
-      pts.push(c.clone().addScaledVector(up, -R * Math.cos(t)).addScaledVector(toStreet, R * Math.sin(t)));
+      pts.push(c.clone().addScaledVector(u, R * Math.cos(t)).addScaledVector(toStreet, R * Math.sin(t)));
     }
-    // A little further straight up the lane, so the car ends square to it (no snap when it pulls away).
-    pts.push(pts[pts.length - 1].clone().addScaledVector(up, 2.5));
     const end = pts[pts.length - 1].clone();
-    this.driveCurve(dedupe(pts), true, () => then(end), BACK_OUT_SPEED);
+    this.driveCurve(dedupe(pts), true, () => then([end, end.clone().addScaledVector(u, 3).addScaledVector(toStreet, 1)]));
   }
 
-  /** Back on the highway: out of the lot, down Main Street, and onto the road. */
+  /** Back on the highway: out of the lot, down Main Street (turning round first if you're facing up it), and onto the road. */
   leave(): void {
     if (this.move) return;
     if (this.phase === 'walking' || this.phase === 'inside') {
       this.backToCar(this.nearZombies() > 0);
       return;
     }
-    this.exitLot((now) => {
-      const pts = [now];
-      const i0 = this.alongIdx(this.laneOut, now) - 1;
-      for (let i = i0; i >= 0; i -= 2) if (this.laneOut[i].clone().sub(now).dot(this.laneOut[0].clone().sub(now)) > 0) pts.push(this.laneOut[i]);
+    this.exitLot(-1, (lead) => {
+      const from = lead[lead.length - 1];
       const e = this.host.exit;
-      pts.push(e.pos.clone().addScaledVector(e.fwd, -10), e.pos.clone(), e.pos.clone().addScaledVector(e.fwd, 4));
+      const exitIn = e.pos.clone().addScaledVector(e.fwd, -10);
+      const down = this.laneRun(this.laneOut, this.alongOf(from) - 8, -Infinity, -1).filter((q) => q.distanceTo(exitIn) > 8);
       this.phase = 'leaving';
       this.at = null;
       this.hooks.changed();
-      this.driveCurve(dedupe(pts), false, () => {
+      // Rolls out onto the highway still moving, at town speed.
+      this.driveCurve([...lead, ...dedupe([...down, exitIn, e.pos.clone(), e.pos.clone().addScaledVector(e.fwd, 4)])], false, () => {
         this.phase = 'done';
         this.hooks.done();
-      });
+      }, TOWN_SPEED);
     });
   }
 
-  private backOut(then: () => void): void {
-    if (this.phase === 'parked' && this.at && !this.at.pump) {
-      const p = this.host.car.position.clone();
-      const fwd = new THREE.Vector3(Math.sin(this.carYaw), 0, Math.cos(this.carYaw));
-      const side = new THREE.Vector3(fwd.z, 0, -fwd.x);
-      this.driveCurve([p, p.clone().addScaledVector(fwd, -3), p.clone().addScaledVector(fwd, -7).addScaledVector(side, 2)], true, then);
-    } else then();
+  // ---------------------------------------------------------------- the street's frame
+
+  /** How far up Main Street a point is (metres along the in lane, from the highway end). */
+  private alongOf(p: THREE.Vector3): number {
+    const lane = this.laneIn;
+    const run = this.laneRunLen;
+    let best = 0;
+    let bestD = Infinity;
+    for (let i = 0; i + 1 < lane.length; i++) {
+      const a = lane[i];
+      const ab = lane[i + 1].clone().sub(a).setY(0);
+      const l2 = ab.lengthSq() || 1;
+      const k = Math.max(0, Math.min(1, p.clone().sub(a).setY(0).dot(ab) / l2));
+      const d = a.clone().addScaledVector(ab, k).setY(p.y).distanceToSquared(p);
+      if (d < bestD) {
+        bestD = d;
+        best = run[i] + k * Math.sqrt(l2);
+      }
+    }
+    // Past either end the street carries on straight.
+    const first = lane[1].clone().sub(lane[0]).setY(0).normalize();
+    const before = p.clone().sub(lane[0]).setY(0).dot(first);
+    if (before < 0) return before;
+    const n = lane.length - 1;
+    const last = lane[n].clone().sub(lane[n - 1]).setY(0).normalize();
+    const after = p.clone().sub(lane[n]).setY(0).dot(last);
+    return after > 0 ? run[n] + after : best;
   }
+
+  /** The way up the street at a distance along it. */
+  private upAt(a: number): THREE.Vector3 {
+    const lane = this.laneIn;
+    const i = Math.max(1, Math.min(lane.length - 1, this.laneRunLen.findIndex((r) => r >= a)));
+    return lane[i].clone().sub(lane[i - 1]).setY(0).normalize();
+  }
+
+  /** The street around a distance along it: `at(along, across)`, across positive on the in lane's side. */
+  private streetFrame(a: number): { at: (along: number, across: number) => THREE.Vector3 } {
+    const up = this.upAt(a);
+    const i = Math.max(0, Math.min(this.laneIn.length - 1, this.laneRunLen.findIndex((r) => r >= a)));
+    const mid = this.laneIn[i].clone().lerp(this.laneOut[i], 0.5);
+    const n = this.laneIn[i].clone().sub(this.laneOut[i]).setY(0).normalize();
+    const a0 = this.laneRunLen[i];
+    return { at: (along, across) => mid.clone().addScaledVector(up, along - a0).addScaledVector(n, across) };
+  }
+
+  /**
+   * A lane's points strictly between two distances along the street, in the order you'd drive them
+   * going `dir` (1 up the street, -1 down it); none if `to` isn't on that side of `from`.
+   */
+  private laneRun(lane: THREE.Vector3[], from: number, to: number, dir: 1 | -1 = to >= from ? 1 : -1): THREE.Vector3[] {
+    if ((to - from) * dir <= 0) return [];
+    const run = this.laneRunLen;
+    const lo = Math.min(from, to);
+    const hi = Math.max(from, to);
+    const pts = lane.filter((_, i) => run[i] > lo && run[i] < hi);
+    return to >= from ? pts : pts.reverse();
+  }
+
+  /** Distance along the in lane at each of its points (the out lane's points sit beside them). */
+  private laneRunLen: number[] = [];
 
   // ---------------------------------------------------------------- frame
 
@@ -884,21 +991,24 @@ export class TownPlay {
     dt = Math.min(dt, 0.05);
     this.time += dt;
     this.updateDoor(dt);
+    // A code-built building shows its room through the windows, but only the one you're at
+    // (each room is dozens of small parts, too many for a phone to draw for every shop at once).
+    for (const sp of this.world.spots) if (sp.real) sp.room.visible = sp === this.at;
     const car = this.host.car;
     if (this.move) {
       const m = this.move;
-      const want = (this.phase === 'leaving' ? TOWN_SPEED * 2 : TOWN_SPEED) * (m.reverse ? 0.5 : 1) * m.speed;
-      this.carSpeed = m.ease ? this.carSpeed + (want - this.carSpeed) * Math.min(1, dt * 3) : want;
-      const speed = this.carSpeed;
-      m.t = Math.min(1, m.t + (dt * speed) / m.len);
-      const p = m.curve.getPointAt(m.t);
-      const tan = m.curve.getTangentAt(m.t);
+      const speed = (this.carSpeed = m.speedAt(m.s));
+      // Never quite stalls at the start or end of a move, where the plan is at a standstill.
+      m.s = Math.min(m.len, m.s + dt * Math.max(speed, 1.5));
+      const t = m.s / m.len;
+      const p = m.curve.getPointAt(t);
+      const tan = m.curve.getTangentAt(t);
       car.position.copy(p);
       this.carYaw = Math.atan2(tan.x, tan.z) + (m.reverse ? Math.PI : 0);
       for (const c of car.children) if (c.name === 'wheel') c.rotation.x += (dt * speed) / 0.42;
       // Zombies in the road get knocked flying, like on the highway.
       for (const z of [...this.zombies]) if (z.obj.position.distanceTo(p) < 2.4) this.pop(z, true);
-      if (m.t >= 1) {
+      if (m.s >= m.len) {
         this.move = null;
         m.then();
       }
@@ -1164,9 +1274,19 @@ export class TownPlay {
     this.walk = { pts: pts.map((p) => p.clone().setY(this.host.car.position.y)), speed, then };
   }
 
-  private driveCurve(pts: THREE.Vector3[], reverse: boolean, then: () => void, speed = 1, ease = false): void {
+  /**
+   * Drives the car along a smooth curve through `pts` (backwards if `reverse`), from a standstill to
+   * `endSpeed`. Speed follows a plan worked out up front: speed up and slow down at TOWN_ACCEL, slow
+   * for bends so the sideways pull stays under TOWN_GRIP, and cruise at TOWN_SPEED, or faster (up
+   * to TOWN_TOP) when that's what it takes to finish inside MOVE_GOAL seconds. Backing up keeps to
+   * REVERSE_TOP.
+   */
+  private driveCurve(pts: THREE.Vector3[], reverse: boolean, then: () => void, endSpeed = 0): void {
+    if (pts.length < 2) pts = [pts[0], pts[0].clone().add(new THREE.Vector3(0.01, 0, 0))];
     const curve = new THREE.CatmullRomCurve3(pts.map((p) => p.clone().setY(this.host.car.position.y)), false, 'centripetal');
-    this.move = { curve, t: 0, len: Math.max(1, curve.getLength()), reverse, then, speed, ease };
+    const len = Math.max(0.5, curve.getLength());
+    const plan = speedPlan(curve, len, reverse ? { cruise: REVERSE_TOP, top: REVERSE_TOP } : { cruise: TOWN_SPEED, top: TOWN_TOP }, endSpeed);
+    this.move = { curve, len, s: 0, reverse, then, speedAt: plan.speedAt, secs: plan.secs };
   }
 
   private alongIdx(lane: THREE.Vector3[], p: THREE.Vector3): number {
@@ -1245,9 +1365,20 @@ export class TownPlay {
     }
     // Keep under the gas station's canopy while you're at the pumps.
     if (this.at?.pump && (this.phase === 'walking' || this.phase === 'parked') && wantPos.distanceTo(this.at.pump) < 14) wantPos.y = Math.min(wantPos.y, car.y + 4.2);
-    const k = Math.min(1, dt * 3);
+    // Driving in, out or round under it too, so the chase camera doesn't go through the roof.
+    const underRoof = (v: THREE.Vector3) => this.world.spots.some((sp) => sp.pump && Math.hypot(v.x - sp.pump.x, v.z - sp.pump.z) < 11.5);
+    if (this.move && (underRoof(wantPos) || underRoof(car))) wantPos.y = Math.min(wantPos.y, car.y + 4.2);
+    // Glides at rate 3 a second; quicker while the car is going fast, so the chase camera keeps up.
+    const k = Math.min(1, dt * (3 + (this.move ? this.carSpeed / 6 : 0)));
     this.camPos.lerp(wantPos, k);
     this.camLook.lerp(wantLook, k);
+    if (this.move) {
+      // A quick turn swings the chase point round the car; never let the glide cut in close over it.
+      const off = this.camPos.clone().sub(car).setY(0);
+      const d = off.length();
+      if (d < 7 && d > 0.01) this.camPos.addScaledVector(off, (7 - d) / d);
+      if (underRoof(this.camPos) || underRoof(car)) this.camPos.y = Math.min(this.camPos.y, car.y + 4.2);
+    }
     cam.position.copy(this.camPos);
     cam.lookAt(this.camLook);
   }
@@ -1335,11 +1466,7 @@ export class TownPlay {
     this.host.car.visible = true;
     const rider = this.host.car.getObjectByName('rider');
     if (rider) rider.visible = true;
-    for (const sp of this.world.spots) {
-      sp.shell.visible = true;
-      sp.room.visible = false;
-      showRoofs(sp, true);
-    }
+    for (const sp of this.world.spots) showInside(sp, false);
   }
 }
 
@@ -1349,6 +1476,25 @@ export const LOOT_ICONS: Record<keyof Inventory, string> = { fuel: '⛽', cash: 
 
 function placeWord(sp: TownSpot): string {
   return { pumps: 'Gas', motel: 'Motel', grocery: 'Food', garage: 'Garage', hardware: 'Tools', pharmacy: 'Medicine', police: 'Police', gunshop: 'Ammo', junkyard: 'Junkyard', barn: 'Farm' }[sp.lot.place];
+}
+
+/**
+ * The dollhouse view on or off: the building's outside comes off (a code-built building loses only
+ * its roof, upper walls, awning and sign; its room is always there) and the room's light comes on.
+ * The gas canopy would hide the dollhouse from above, so roofs go too.
+ */
+function showInside(sp: TownSpot, on: boolean): void {
+  if (sp.real) {
+    sp.shell.traverse((o) => {
+      if (o.name === 'cutaway') o.visible = !on;
+    });
+    const lamp = sp.room.getObjectByName('roomLight');
+    if (lamp) lamp.visible = on;
+  } else {
+    sp.shell.visible = !on;
+    sp.room.visible = on;
+  }
+  showRoofs(sp, !on);
 }
 
 function showRoofs(sp: TownSpot, on: boolean): void {
@@ -1575,4 +1721,62 @@ function beds(room: THREE.Object3D): THREE.Object3D[] {
     if (o.name === 'bed') out.push(o);
   });
   return out;
+}
+
+/**
+ * A speed plan for a drive along `curve`: from a standstill to `endSpeed`, speeding up and slowing
+ * down at TOWN_ACCEL, slowing for bends (sideways pull under TOWN_GRIP), at `cruise` or faster, up
+ * to `top`, if that's what it takes to finish inside MOVE_GOAL. Sampled every half metre or so.
+ */
+export function speedPlan(curve: THREE.Curve<THREE.Vector3>, len: number, speeds: { cruise: number; top: number }, endSpeed = 0): { speedAt: (s: number) => number; secs: number } {
+  const n = Math.max(2, Math.ceil(len / 0.5));
+  const step = len / n;
+  // The bend at each sample: how far the heading turns per metre, measured over about 4 m so tiny
+  // kinks where the curve meets a lane point don't count as hairpins.
+  const tans: THREE.Vector3[] = [];
+  for (let i = 0; i <= n; i++) tans.push(curve.getTangentAt(i / n).setY(0).normalize());
+  const w = Math.max(1, Math.round(2 / step));
+  const peak: number[] = [];
+  for (let i = 0; i <= n; i++) {
+    const i0 = Math.max(0, i - w);
+    const i1 = Math.min(n, i + w);
+    peak.push(i1 > i0 ? Math.acos(Math.max(-1, Math.min(1, tans[i0].dot(tans[i1])))) / (step * (i1 - i0)) : 0);
+  }
+  const build = (cruise: number, pull: number) => {
+    const v = peak.map((k) => Math.min(k > 1e-4 ? Math.sqrt(pull / k) : Infinity, cruise));
+    v[0] = 0;
+    v[n] = Math.min(v[n], endSpeed);
+    for (let i = 1; i <= n; i++) v[i] = Math.min(v[i], Math.sqrt(v[i - 1] * v[i - 1] + 2 * TOWN_ACCEL * step));
+    for (let i = n - 1; i >= 0; i--) v[i] = Math.min(v[i], Math.sqrt(v[i + 1] * v[i + 1] + 2 * TOWN_ACCEL * step));
+    let secs = 0;
+    for (let i = 0; i < n; i++) secs += step / Math.max(0.75, (v[i] + v[i + 1]) / 2);
+    return { v, secs };
+  };
+  /** The lowest value in lo..hi for which `make` finishes inside MOVE_GOAL (hi if none does). */
+  const lowest = (lo: number, hi: number, make: (x: number) => { v: number[]; secs: number }) => {
+    for (let k = 0; k < 12; k++) {
+      const mid = (lo + hi) / 2;
+      if (make(mid).secs > MOVE_GOAL) lo = mid;
+      else hi = mid;
+    }
+    return make(hi);
+  };
+  let plan = build(speeds.cruise, TOWN_GRIP);
+  if (plan.secs > MOVE_GOAL && speeds.top > speeds.cruise) {
+    // Too slow: cruise faster on the straights, up to the top speed...
+    plan = build(speeds.top, TOWN_GRIP);
+    if (plan.secs <= MOVE_GOAL) plan = lowest(speeds.cruise, speeds.top, (c) => build(c, TOWN_GRIP));
+    // ...and if that's still not enough, take the bends faster too (a game car, it grips).
+    else if (build(speeds.top, TOWN_GRIP_MAX).secs > MOVE_GOAL) plan = build(speeds.top, TOWN_GRIP_MAX);
+    else plan = lowest(TOWN_GRIP, TOWN_GRIP_MAX, (g) => build(speeds.top, g));
+  }
+  const v = plan.v;
+  return {
+    secs: plan.secs,
+    speedAt: (s: number) => {
+      const x = Math.max(0, Math.min(n, s / step));
+      const i = Math.min(n - 1, Math.floor(x));
+      return v[i] + (v[i + 1] - v[i]) * (x - i);
+    },
+  };
 }

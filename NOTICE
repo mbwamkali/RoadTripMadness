@@ -12,7 +12,7 @@ This product bundles third-party data and assets under their own terms:
   (ODbL 1.0): https://www.openstreetmap.org/copyright
   These data files are not covered by the Apache License.
 - Offline atlas and US state outlines from Natural Earth (public domain).
-- Ground, asphalt and gravel textures from Poly Haven (CC0, public domain).
+- Ground, asphalt, gravel and shop wall (brick, plaster, planks, tin) textures from Poly Haven (CC0, public domain).
 - Low-poly 3D models (cars, zombie, trees, plants, rocks, buildings)
   by Quaternius, https://quaternius.com (CC0, public domain).
 - Detailed 3D models in public/models/hd/ generated for this game from its own

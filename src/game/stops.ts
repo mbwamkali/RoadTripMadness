@@ -263,3 +263,21 @@ function pickKind(rng: Rng): StopKind {
   if (r < 0.9) return 'truckstop';
   return 'base';
 }
+
+/**
+ * The clear zone at a turn-off: on the turn's side, no roadside scenery at all
+ * (buildings, trees, rocks, crops, power poles, lamps, reflector and guardrail
+ * posts, guardrail) from `before` units ahead of it to `after` past it, so the
+ * car never clips anything turning in or coming back out. Signs stay.
+ */
+export const TURN_CLEAR = { town: { before: 120, after: 120 }, shortcut: { before: 50, after: 50 } };
+
+/** Whether d on this side (+1 right, -1 left) is inside a turn-off's clear zone. */
+export function inTurnClear(stops: readonly Stop[], d: number, side: number): boolean {
+  for (const s of stops) {
+    if ((s.side === 'right' ? 1 : -1) !== side) continue;
+    const z = TURN_CLEAR[s.kind === 'shortcut' ? 'shortcut' : 'town'];
+    if (d > s.at - z.before && d < s.at + z.after) return true;
+  }
+  return false;
+}

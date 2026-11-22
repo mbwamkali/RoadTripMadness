@@ -3,7 +3,9 @@ import type { PlaceKind } from '../game/stops';
 import { lit } from '../scenes/materials';
 import { doorSkin, placeBuilding, placeDoor, fitted, HD_HOUSES, PLACE_BUILDINGS } from '../scenes/hdBuildings';
 import { modelMesh, type ModelName } from '../scenes/models';
-import { makeTrafficVehicle, textSprite } from '../scenes/common';
+import { buildStorefront, storefrontFor } from '../scenes/storefront';
+import { makeTrafficVehicle } from '../scenes/common';
+import { boardSign, faceDownRoad } from '../scenes/roadside';
 import { modelsWanted } from '../scenes/models';
 import { makeRng } from '../game/rng';
 import { pointAlong, type TownLayout, type TownLot } from './layout';
@@ -48,8 +50,10 @@ export interface TownSpot {
   shell: THREE.Object3D;
   /** The room inside, shown while you're inside. */
   room: THREE.Group;
-  /** Car path into the lot, from Main Street to the parking spot. */
+  /** Car path into the lot, from Main Street to the parking spot, coming up the street. */
   park: THREE.Vector3[];
+  /** The same, coming down the street (toward the highway): the mirror image, parked facing the other way. */
+  parkDown: THREE.Vector3[];
   /** Front door: where you stand outside it, the doorstep, and just inside. */
   door: THREE.Vector3;
   threshold: THREE.Vector3;
@@ -66,6 +70,12 @@ export interface TownSpot {
   /** The direction the building faces (toward the street). */
   facing: THREE.Vector3;
   sign: THREE.Object3D;
+  /**
+   * A code-built building (scenes/storefront.ts): its walls are the room's walls and its door is
+   * part of it. Going in lifts off only its 'cutaway' parts (roof, upper walls, awning, sign), and
+   * the room stays in place, seen through the windows from outside.
+   */
+  real?: boolean;
 }
 
 export interface TownWorld {
@@ -80,6 +90,50 @@ export interface TownWorld {
   /** Ground the walker may stand on: the street, sidewalks and lots (rough). */
   bounds: THREE.Box3;
   dispose(): void;
+}
+
+/** Cross streets run this far either side of Main Street (metres). */
+export const CROSS_ARM = 60;
+const CROSS_HALF = 3.6;
+
+/**
+ * Whether a town point (x right, y out from the highway's edge, as in the
+ * layout) falls on the town: Main Street with its lots and houses either side
+ * (out to the back of the lots), the turning circle at the end, and the cross
+ * streets, all with `margin` to spare. Points on the highway's side of its edge
+ * (y below 0) never count: the turn-off itself is kept clear along the road
+ * instead (TURN_CLEAR in game/stops.ts). Roadside scenery that lands here is hidden.
+ */
+export function townCovers(layout: TownLayout, margin: number): (x: number, y: number) => boolean {
+  const line = layout.line;
+  const reach = LOT_NEAR + LOT_DEPTH + margin;
+  const cross = layout.crossings.map((c) => pointAlong(line, c.along));
+  return (x, y) => {
+    if (y < 0) return false;
+    for (let i = 1; i < line.length; i++) {
+      const a = line[i - 1];
+      const b = line[i];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const l2 = dx * dx + dy * dy || 1;
+      // Past the street's end only as far as the lots and turning circle reach.
+      const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / l2));
+      const px = a.x + dx * t - x;
+      const py = a.y + dy * t - y;
+      if (px * px + py * py <= reach * reach) {
+        if (i < line.length - 1 || t < 1) return true;
+        // At the far end: the last lot reaches half a lot past it, the circle 11.
+        const along = ((x - b.x) * dx + (y - b.y) * dy) / Math.sqrt(l2);
+        if (along <= LOT_ALONG / 2 + margin) return true;
+      }
+    }
+    for (const { p, dir } of cross) {
+      const ax = (x - p.x) * dir.x + (y - p.y) * dir.y; // along Main Street
+      const cx = (x - p.x) * dir.y - (y - p.y) * dir.x; // along the cross street
+      if (Math.abs(ax) <= CROSS_HALF + margin && Math.abs(cx) <= CROSS_ARM + margin) return true;
+    }
+    return false;
+  };
 }
 
 /** Town point (x right, y along Main Street) to the group's 3D frame. */
@@ -241,13 +295,14 @@ export function buildTownWorld(layout: TownLayout, mats: TownMaterials, seed: nu
     const rx = dir.y;
     const ry = -dir.x;
     const cross = [
-      { x: p.x - rx * 60, y: p.y - ry * 60 },
-      { x: p.x + rx * 60, y: p.y + ry * 60 },
+      { x: p.x - rx * CROSS_ARM, y: p.y - ry * CROSS_ARM },
+      { x: p.x + rx * CROSS_ARM, y: p.y + ry * CROSS_ARM },
     ];
-    group.add(strip(cross, -3.6, 3.6, 0.09, mats.asphalt));
-    const blade = textSprite(c.name, '', '#1f6b3a');
-    blade.scale.set(4.2, 1.6, 1);
-    blade.position.copy(v3(p.x + rx * (STREET_HALF + 1.5) - dir.x * 5, p.y + ry * (STREET_HALF + 1.5) - dir.y * 5, 3.6));
+    group.add(strip(cross, -CROSS_HALF, CROSS_HALF, 0.09, mats.asphalt));
+    // A street-name board on posts, facing traffic coming up Main Street (posts behind it).
+    const blade = boardSign(c.name, '', '#1f6b3a', 4.2, 1.6, 2.8);
+    blade.position.copy(v3(p.x + rx * (STREET_HALF + 1.5) - dir.x * 5, p.y + ry * (STREET_HALF + 1.5) - dir.y * 5, 0));
+    faceDownRoad(blade, dir);
     group.add(blade);
   }
 
@@ -278,10 +333,14 @@ export function buildTownWorld(layout: TownLayout, mats: TownMaterials, seed: nu
     // The building, facing the street, at the back of the lot.
     const yawToStreet = Math.atan2(-out.x, -out.z);
     const width = lot.place === 'junkyard' ? 18 : lot.place === 'motel' ? 16 : 14;
-    const hd = placeBuilding(lot.place, width, 13);
+    const store = storefrontFor(lot.place) ? buildStorefront(lot.place, width, 11) : null;
+    const hd = store ? null : placeBuilding(lot.place, width, 13);
     let shell: THREE.Object3D;
     let size: THREE.Vector3;
-    if (hd) {
+    if (store) {
+      shell = store.group;
+      size = store.size.clone();
+    } else if (hd) {
       shell = hd;
       size = (hd.userData.size as THREE.Vector3).clone();
     } else {
@@ -289,7 +348,7 @@ export function buildTownWorld(layout: TownLayout, mats: TownMaterials, seed: nu
       size = new THREE.Vector3(width, 5, 11);
     }
     // The building's own front door (its model's door, turned to face the street), found while it stands at the origin.
-    const dk = hd ? placeDoor(lot.place, hd) : { x: 0, z: size.z / 2, y: 0 };
+    const dk = store ? store.door : hd ? placeDoor(lot.place, hd) : { x: 0, z: size.z / 2, y: 0 };
     // Its door's own picture, for the leaf that swings open (sampled here too, before the building moves).
     const skin = hd ? doorSkin(hd, dk, DOOR_W, DOOR_H) : null;
     const back = LOT_NEAR + LOT_DEPTH - size.z / 2 - 1.5;
@@ -307,16 +366,20 @@ export function buildTownWorld(layout: TownLayout, mats: TownMaterials, seed: nu
     const threshold = local(dk.x, dk.z + 0.35);
     const inside = local(dk.x, Math.min(dk.z, size.z / 2) - 1.6);
     // The door you go in by: a dark opening and a door that swings out (hidden until you use it).
-    const doorway = doorwayAt(mat, skin);
-    doorway.position.copy(local(dk.x, dk.z + 0.04, dk.y));
-    doorway.rotation.y = yawToStreet;
-    g.add(doorway);
+    // (A code-built building has its own, in its front wall.)
+    const doorway = store ? store.doorway : doorwayAt(mat, skin);
+    if (!store) {
+      doorway.position.copy(local(dk.x, dk.z + 0.04, dk.y));
+      doorway.rotation.y = yawToStreet;
+      g.add(doorway);
+    }
     // The big picture sign at the corner of the lot, angled toward cars coming up the street.
     const sign = pictureSign(lot.place, lot.name);
     sign.position.copy(at(LOT_NEAR + 1.2, -LOT_ALONG / 2 + 2.5));
     sign.rotation.y = Math.atan2(-fwd.x, -fwd.z) + s * -0.6;
     g.add(sign);
     let park: THREE.Vector3[];
+    let parkDown: THREE.Vector3[];
     let pump: THREE.Vector3 | undefined;
     if (lot.place === 'pumps') {
       // A big red canopy over a pump island: you drive under it, alongside the pump.
@@ -361,10 +424,14 @@ export function buildTownWorld(layout: TownLayout, mats: TownMaterials, seed: nu
       pump = at(co + 0.2, 2.2);
       // In from the street, curve under the canopy and stop beside the pump facing up the street.
       park = [at(STREET_HALF - 1.2, -18), at(LOT_NEAR + 3, -11), at(co - 1.6, -4), at(co - 1.6, 1.5)];
+      // Coming down the street: the mirror image, stopping in the same spot beside the pump, facing down.
+      parkDown = [at(STREET_HALF - 1.2, 18), at(LOT_NEAR + 3, 11), at(co - 1.6, 6.5), at(co - 1.6, 1.5)];
     } else {
       park = [at(STREET_HALF - 1.2, -14), at(LOT_NEAR + 2, -5), at(front - 6.5, -3.5)];
       // Face the building: the last step points at the door.
       park.push(at(front - 5, -3.5));
+      // Coming down the street: in from the other side, into the free stall next to it (-0.5; the painted stalls run -14 to 1).
+      parkDown = [at(STREET_HALF - 1.2, 14), at(LOT_NEAR + 2, 4.5), at(front - 6.5, -0.5), at(front - 5, -0.5)];
     }
     // A farm has a dirt yard and a junkyard a gravel one: no painted stalls there.
     if (lot.place === 'barn' || lot.place === 'junkyard') pave.material = mat({ color: lot.place === 'barn' ? 0x9a7a52 : 0x8a8478, roughness: 1 });
@@ -385,10 +452,10 @@ export function buildTownWorld(layout: TownLayout, mats: TownMaterials, seed: nu
     }
     // The room inside, built now but hidden until you walk in.
     const room = new THREE.Group();
-    room.visible = false;
+    room.visible = false; // a code-built building's room shows while you're at it (TownPlay.update)
     room.position.copy(at(back, 0));
     room.rotation.y = yawToStreet;
-    furnish(room, lot.place, size, mat, dk.x);
+    furnish(room, lot.place, size, mat, dk.x, !!store);
     const crates: THREE.Group[] = [];
     const spotsIn: [number, number][] = [
       [-size.x / 2 + 2, -size.z / 2 + 1.8],
@@ -411,6 +478,7 @@ export function buildTownWorld(layout: TownLayout, mats: TownMaterials, seed: nu
       shell,
       room,
       park,
+      parkDown,
       door,
       threshold,
       doorway,
@@ -421,6 +489,7 @@ export function buildTownWorld(layout: TownLayout, mats: TownMaterials, seed: nu
       size,
       facing: out.clone().negate(),
       sign,
+      real: !!store,
     });
   }
 
@@ -828,6 +897,13 @@ function container(kind: ContainerKind, mat: Mat): THREE.Group {
   return g;
 }
 
+/** A place's furnished room for a code-built building of `size` (for the shops check page, shops.html). */
+export function shopRoom(place: PlaceKind, size: THREE.Vector3, doorX: number): THREE.Group {
+  const g = new THREE.Group();
+  furnish(g, place, size, (p) => lit(p), doorX, true);
+  return g;
+}
+
 /** A floor you can tell apart: tiles in shops, concrete in the garage, planks in the motel and barn. */
 function floorTexture(place: PlaceKind, w: number, d: number): THREE.CanvasTexture {
   const look: Record<PlaceKind, [string, string, 'tile' | 'concrete' | 'planks']> = {
@@ -867,7 +943,7 @@ function floorTexture(place: PlaceKind, w: number, d: number): THREE.CanvasTextu
 
 /** Furniture a 5-year-old can name, so every place has its own room: a car on a lift in the garage,
  * shelves of fruit and a till at the grocery, a bed in the motel, hay in the barn. */
-function furnish(g: THREE.Group, place: PlaceKind, size: THREE.Vector3, mat: Mat, doorX = 0): void {
+function furnish(g: THREE.Group, place: PlaceKind, size: THREE.Vector3, mat: Mat, doorX = 0, shellWalls = false): void {
   const w = size.x;
   const d = size.z;
   const add = (m: THREE.Object3D, x: number, y: number, z: number) => {
@@ -887,23 +963,26 @@ function furnish(g: THREE.Group, place: PlaceKind, size: THREE.Vector3, mat: Mat
   add(box(w, FLOOR_Y, d, mat({ color: 0xffffff, map: floorTexture(place, w, d), roughness: 0.8 })), 0, FLOOR_Y / 2, 0);
   const wall = mat({ color: wallC });
   const trim = mat({ color: trimC });
-  add(box(w, 2.4, 0.3, wall), 0, 1.2, -d / 2);
-  add(box(0.3, 2.4, d, wall), -w / 2, 1.2, 0);
-  add(box(0.3, 2.4, d, wall), w / 2, 1.2, 0);
-  // A stripe of the place's colour along the walls.
-  add(box(w, 0.35, 0.34, trim), 0, 2.25, -d / 2);
-  add(box(0.34, 0.35, d, trim), -w / 2, 2.25, 0);
-  add(box(0.34, 0.35, d, trim), w / 2, 2.25, 0);
-  // The front: low walls either side of the doorway, an open door and a mat, so you see where you came in.
-  // The doorway lines up with the building's own door, wherever it is along the front.
   const dx = Math.max(-w / 2 + 2, Math.min(w / 2 - 2, doorX));
-  const leftLen = dx - 1.4 + w / 2;
-  const rightLen = w / 2 - dx - 1.4;
-  add(box(leftLen, 0.9, 0.3, wall), -w / 2 + leftLen / 2, 0.45, d / 2);
-  add(box(rightLen, 0.9, 0.3, wall), w / 2 - rightLen / 2, 0.45, d / 2);
-  const frame = mat({ color: 0x5a3a22 });
-  for (const x of [-1.4, 1.4]) add(box(0.25, 2.6, 0.35, frame), dx + x, 1.3, d / 2);
-  add(box(3.05, 0.3, 0.4, trim), dx, 2.65, d / 2);
+  // A code-built building brings its own walls and door (the room is its inside).
+  if (!shellWalls) {
+    add(box(w, 2.4, 0.3, wall), 0, 1.2, -d / 2);
+    add(box(0.3, 2.4, d, wall), -w / 2, 1.2, 0);
+    add(box(0.3, 2.4, d, wall), w / 2, 1.2, 0);
+    // A stripe of the place's colour along the walls.
+    add(box(w, 0.35, 0.34, trim), 0, 2.25, -d / 2);
+    add(box(0.34, 0.35, d, trim), -w / 2, 2.25, 0);
+    add(box(0.34, 0.35, d, trim), w / 2, 2.25, 0);
+    // The front: low walls either side of the doorway, an open door and a mat, so you see where you came in.
+    // The doorway lines up with the building's own door, wherever it is along the front.
+    const leftLen = dx - 1.4 + w / 2;
+    const rightLen = w / 2 - dx - 1.4;
+    add(box(leftLen, 0.9, 0.3, wall), -w / 2 + leftLen / 2, 0.45, d / 2);
+    add(box(rightLen, 0.9, 0.3, wall), w / 2 - rightLen / 2, 0.45, d / 2);
+    const frame = mat({ color: 0x5a3a22 });
+    for (const x of [-1.4, 1.4]) add(box(0.25, 2.6, 0.35, frame), dx + x, 1.3, d / 2);
+    add(box(3.05, 0.3, 0.4, trim), dx, 2.65, d / 2);
+  }
   add(box(2.2, 0.03, 1.2, mat({ color: trimC, roughness: 0.95 })), dx, FLOOR_Y + 0.02, d / 2 - 0.9);
   // A big picture of the place on the back wall (the same as its sign out front).
   const poster = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.5), new THREE.MeshBasicMaterial({ map: signTexture(place), toneMapped: false }));
@@ -914,6 +993,8 @@ function furnish(g: THREE.Group, place: PlaceKind, size: THREE.Vector3, mat: Mat
   light.name = 'roomLight';
   light.userData.full = 22;
   light.position.set(0, 5, 0);
+  // Inside a code-built building the room is always there (seen through the windows); its light comes on when you go in.
+  light.visible = !shellWalls;
   g.add(light);
   const lamp = mat({ color: 0xfff2c0, emissive: 0xffe0a0, emissiveIntensity: 1.2 });
   for (const x of [-w / 2 + 1.2, w / 2 - 1.2]) add(box(0.5, 0.3, 0.2, lamp), x, 2.0, -d / 2 + 0.25);
@@ -1023,7 +1104,8 @@ function furnish(g: THREE.Group, place: PlaceKind, size: THREE.Vector3, mat: Mat
   // a clock on the back wall, and a potted plant in the front corner away from the door.
   const glass = mat({ color: 0xcfe8ff, emissive: 0x9fd0ff, emissiveIntensity: 0.55, roughness: 0.2 });
   const sill = mat({ color: 0xf4f1ea });
-  for (const sx of [-1, 1]) {
+  // (A code-built building has real windows in its walls instead.)
+  for (const sx of shellWalls ? [] : [-1, 1]) {
     const x = sx * (w / 2 - 0.16);
     add(box(0.04, 1.0, 1.6, glass), x, 1.55, 0.3);
     add(box(0.1, 0.08, 1.8, sill), x, 1.02, 0.3);
