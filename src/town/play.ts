@@ -21,6 +21,7 @@ import { CRATE_GLOW, type TownSpot, type TownWorld } from './world';
 import { daylight, hourOf } from '../game/time';
 import { hashString } from '../game/rng';
 import { testing } from '../game/testFlag';
+import { walkAround, type GroundBox } from './walkAround';
 
 /**
  * Playing a town: you turn off the highway onto Main Street in the road
@@ -1272,7 +1273,47 @@ export class TownPlay {
   }
 
   private walkTo(pts: THREE.Vector3[], speed: number, then: () => void): void {
-    this.walk = { pts: pts.map((p) => p.clone().setY(this.host.car.position.y)), speed, then };
+    // Round the parked ride, never through it.
+    const car = this.host.car;
+    const route: THREE.Vector3[] = [];
+    if (car.visible && this.walker.visible) {
+      const box = this.carBox();
+      let from = this.walker.position;
+      for (const p of pts) {
+        for (const c of walkAround({ x: from.x, z: from.z }, { x: p.x, z: p.z }, box)) route.push(new THREE.Vector3(c.x, 0, c.z));
+        route.push(p);
+        from = p;
+      }
+    } else route.push(...pts);
+    this.walk = { pts: route.map((p) => p.clone().setY(car.position.y)), speed, then };
+  }
+
+  private carSize: { halfW: number; halfL: number; dx: number; dz: number } | null = null;
+  /** The parked ride's footprint on the ground (measured once from its own shape, in its own frame). */
+  private carBox(): GroundBox {
+    const car = this.host.car;
+    car.updateMatrixWorld(true);
+    if (!this.carSize) {
+      const inv = new THREE.Matrix4().copy(car.matrixWorld).invert();
+      const box = new THREE.Box3();
+      const m = new THREE.Matrix4();
+      car.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (!mesh.isMesh || !mesh.visible || o.name === 'rider' || !mesh.geometry) return;
+        if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+        box.union(mesh.geometry.boundingBox!.clone().applyMatrix4(m.multiplyMatrices(inv, mesh.matrixWorld)));
+      });
+      const size = box.isEmpty() ? new THREE.Vector3(2, 1, 4.6) : box.getSize(new THREE.Vector3());
+      const mid = box.isEmpty() ? new THREE.Vector3() : box.getCenter(new THREE.Vector3());
+      const k = car.scale.x || 1;
+      this.carSize = { halfW: (size.x * k) / 2, halfL: (size.z * k) / 2, dx: mid.x * k, dz: mid.z * k };
+    }
+    const yaw = yawOf(car);
+    const sz = this.carSize;
+    // The shape's middle may sit off the car's origin.
+    const x = car.position.x + sz.dx * Math.cos(yaw) + sz.dz * Math.sin(yaw);
+    const z = car.position.z - sz.dx * Math.sin(yaw) + sz.dz * Math.cos(yaw);
+    return { x, z, yaw, halfW: sz.halfW, halfL: sz.halfL };
   }
 
   /**
