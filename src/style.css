@@ -2194,6 +2194,13 @@ body.kid .howto-tip b {
   .fight-pad .row:not(.weapons) {
     flex: 1;
   }
+  /* Weapon names carry an icon now; keep each on one line so the column stays short. */
+  .fight-pad .btn.weapon b {
+    white-space: nowrap;
+  }
+  body.kid .fight-pad .row.weapons {
+    width: 180px;
+  }
 }
 .fight-banner .boss-icon {
   display: block;
