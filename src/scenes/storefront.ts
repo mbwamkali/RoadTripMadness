@@ -573,7 +573,7 @@ export function buildStorefront(place: PlaceKind, w: number, d: number): Storefr
     [door.x1 + 0.05, DH / 2, 0.12, DH + 0.1],
     [(door.x0 + door.x1) / 2, DH + 0.06, door.x1 - door.x0 + 0.22, 0.12],
   ] as const)
-    add(box(pw, ph, 0.34, paint), x, y, d / 2 + 0.02, y > DH);
+    add(box(pw, ph, 0.34, paint), x, y, d / 2 + 0.02, true); // the frame comes off with the upper walls inside
   const doorway = new THREE.Group();
   doorway.name = 'doorway';
   doorway.position.set(doorX, 0, d / 2 + 0.1);

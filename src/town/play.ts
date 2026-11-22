@@ -561,8 +561,9 @@ export class TownPlay {
   private enterRoom(sp: TownSpot): void {
     {
       this.entering = null;
-      // A real building's door stays open behind you; the stand-in door goes away.
-      if (!sp.real) sp.doorway.visible = false;
+      // The door goes away in the dollhouse view (an open door would hang out over the doorstep);
+      // it's back, open, when you step out, and swings shut behind you.
+      sp.doorway.visible = false;
       this.at = sp;
       this.phase = 'inside';
       showInside(sp, true);
