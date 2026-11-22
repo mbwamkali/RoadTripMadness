@@ -64,8 +64,8 @@ export class Person {
   private actions = new Map<string, THREE.AnimationAction>();
   private current: THREE.AnimationAction | null = null;
 
-  /** Fixed turns laid on top of the moves each frame (bone, turn). */
-  private fixes: [THREE.Object3D, THREE.Quaternion][] = [];
+  /** Fixed turns laid on top of the moves each frame: the bone, the turn, its pose before and after the turn last frame. */
+  private fixes: { b: THREE.Object3D; q: THREE.Quaternion; base: THREE.Quaternion; applied: THREE.Quaternion }[] = [];
   private inner: THREE.Object3D;
 
   constructor(src: Loaded, height: number, clone: (o: THREE.Object3D) => THREE.Object3D, fix?: Record<string, [number, number, number]>) {
@@ -76,7 +76,7 @@ export class Person {
       for (const [bone, [x, y, z]] of Object.entries(fix)) {
         const b = inner.getObjectByName(bone);
         const everyClip = src.clips.every((c) => c.tracks.some((t) => t.name === `${bone}.quaternion`));
-        if (b && everyClip) this.fixes.push([b, new THREE.Quaternion().setFromEuler(new THREE.Euler(x * d, y * d, z * d))]);
+        if (b && everyClip) this.fixes.push({ b, q: new THREE.Quaternion().setFromEuler(new THREE.Euler(x * d, y * d, z * d)), base: b.quaternion.clone(), applied: new THREE.Quaternion(NaN, NaN, NaN, NaN) });
       }
     }
     const k = height / src.size.y;
@@ -127,7 +127,15 @@ export class Person {
 
   update(dt: number): void {
     this.mixer.update(dt);
-    for (const [b, q] of this.fixes) b.quaternion.premultiply(q);
+    // The mixer only writes a bone when its move's value changes, so on a frame where the move holds
+    // still (or dt is 0) the bone still carries last frame's turn. Turning it again would pile the
+    // turns up and spin the arms like a hummingbird's wings, so start from last frame's pose instead.
+    for (const f of this.fixes) {
+      if (f.b.quaternion.equals(f.applied)) f.b.quaternion.copy(f.base);
+      f.base.copy(f.b.quaternion);
+      f.b.quaternion.premultiply(f.q);
+      f.applied.copy(f.b.quaternion);
+    }
   }
 }
 
