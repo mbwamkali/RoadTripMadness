@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { blankBack, lit } from './materials';
 import { Path, type Vec2 } from '../geo/geo';
 import { CRUISE_SPEED, postedLimit, realKmAt } from '../geo/route';
-import { advance, damage, fuelPerUnit, upcomingStop, type GameState } from '../game/state';
+import { advance, damage, fuelPerUnit, HEART_REFILL_S, healWalker, HEARTS, heartsOf, upcomingStop, type GameState } from '../game/state';
 import { BOOST_MPH, brakeRange, CRUISE_MPH, crashScale, FREE_OVER, PROMPT_MIN, promptRange, SPEED_STEP, speedCap, speedFuelFactor, targetMph, topSpeed } from '../game/driving';
 import { structureAt, type Structure } from '../game/structures';
 import { buildStructurePart } from './structures';
@@ -1068,6 +1068,8 @@ export class DriveScene implements GameScene {
     const res = advance(s, this.realPath, step, this.fuelRate * speedFuelFactor(this.mph, limit), !!this.pendingTurn, overtime);
     this.spinWheels(step);
     coolRage(s, step);
+    // Sitting in the car on the highway, you get your breath back (your hearts on foot).
+    if (step > 0 && heartsOf(s) < HEARTS) healWalker(s, dt / HEART_REFILL_S);
     this.roadRage(dt, speed);
     this.checkCrash();
     this.roadsideHits();

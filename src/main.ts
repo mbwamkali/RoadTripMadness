@@ -39,6 +39,8 @@ import {
   type ActionResult,
   type GameState,
   fuelPerUnit,
+  HEARTS,
+  heartsOf,
 } from './game/state';
 import { STOP_TITLES, type PlaceKind, type Stop } from './game/stops';
 import { classAt, roadSegments } from './game/roads';
@@ -1726,8 +1728,30 @@ function showTown(stop: Stop): void {
   const kid = kidMode.on;
   const fuel = bar('fuel', '⛽');
   const hp = bar('hp', '🔧');
+  // You on foot: your own hearts, in the car bar's place while you're out of the car.
+  const hearts = h('div', { class: 'hearts', hidden: true, title: 'Your hearts' });
+  let heartsShown = -1;
+  const showHearts = () => {
+    const v = Math.round(heartsOf(s) * 2) / 2;
+    if (v === heartsShown) return;
+    const lost = heartsShown >= 0 && v < heartsShown;
+    heartsShown = v;
+    hearts.replaceChildren(
+      ...Array.from({ length: HEARTS }, (_, i) => {
+        const full = v >= i + 1;
+        const half = !full && v >= i + 0.5;
+        return h('span', { class: `heart ${full ? 'full' : half ? 'half' : 'empty'}` }, full ? '❤️' : '🤍');
+      }),
+    );
+    hearts.classList.toggle('low', v <= 2);
+    if (lost) {
+      hearts.classList.remove('shake');
+      void hearts.offsetWidth;
+      hearts.classList.add('shake');
+    }
+  };
   const invEl = h('div', {});
-  const meters = h('div', { class: 'stats' }, fuel.el, hp.el, invEl);
+  const meters = h('div', { class: 'stats' }, fuel.el, hp.el, hearts, invEl);
   const clock = () => `${isNight(hourOf(s)) ? '🌙' : '☀️'} ${clockText(hourOf(s))}`;
   const clockEl = h('small', {}, '');
   const menuBtn = h('button', { class: 'btn small round', title: 'Menu' }, '☰');
@@ -1769,6 +1793,10 @@ function showTown(stop: Stop): void {
     hp.set(s.health, maxHealth(s));
     invEl.replaceChildren(kid ? kidSupplies(s) : inventoryLine(s));
     clockEl.textContent = `${clock()} · ${STOP_TITLES[stop.kind]}`;
+    const onFoot = !!p && (p.phase === 'walking' || p.phase === 'inside');
+    hp.el.hidden = onFoot;
+    hearts.hidden = !onFoot;
+    showHearts();
     if (!p) return;
     const v = p.noise;
     (noise.querySelector('.fill') as HTMLElement).style.width = `${Math.round(v * 100)}%`;

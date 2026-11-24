@@ -3,6 +3,13 @@ import {
   buyFuel,
   foundCash,
   damage,
+  DIZZY_CASH,
+  healWalker,
+  HEARTS,
+  heartsOf,
+  hurtWalker,
+  SNACK_HEARTS,
+  WAKE_HEARTS,
   openCrate,
   repair,
   restAtMotel,
@@ -65,6 +72,14 @@ export interface TownHooks {
 
 /** The walker is drawn this much bigger inside buildings. */
 const INSIDE_SCALE = 1.3;
+/** Out of hearts: the stars spin this long (s) before you wake up in the car. */
+const DIZZY_TIME = 1.2;
+/** On waking, zombies within this of the car are knocked back this far. */
+const KNOCK_RANGE = 8;
+const KNOCK_BACK = 4;
+/** Boxes in these places sometimes hold a snack or a bandage (a heart back, if you're short). */
+const SNACK_PLACES: Partial<Record<string, string>> = { grocery: '🍎', pumps: '🍎', pharmacy: '🩹' };
+const SNACK_CHANCE = 0.5;
 
 /** Town driving (m/s): cruising speed (about 40 mph), and the most it speeds up to on a long way round (about 100 mph). */
 export const TOWN_SPEED = 18;
@@ -310,8 +325,11 @@ export class TownPlay {
   }
 
   get busy(): boolean {
-    return !!this.move || !!this.walk || !!this.dig || !!this.doorAnim || !!this.entering || this.resting;
+    return !!this.move || !!this.walk || !!this.dig || !!this.doorAnim || !!this.entering || this.resting || this.dizzy > 0;
   }
+
+  /** Out of hearts, seeing stars (seconds left before you wake up in the car). */
+  dizzy = 0;
 
   /** Asleep at the motel (the Zzz picture is up). */
   resting = false;
@@ -392,6 +410,7 @@ export class TownPlay {
 
   /** A tap or hold on the 3D view at normalised device coordinates. */
   tap(ndc: { x: number; y: number }): boolean {
+    if (this.dizzy > 0) return true;
     this.ray.setFromCamera(new THREE.Vector2(ndc.x, ndc.y), this.host.camera);
     if (this.phase !== 'inside') {
       const z = this.pickZombie();
@@ -468,7 +487,7 @@ export class TownPlay {
   /** At the pumps: get out (if you aren't), walk to the pump and fill up. */
   fillUp(): void {
     const sp = this.at;
-    if (!sp?.pump || this.filling > 0) return;
+    if (!sp?.pump || this.filling > 0 || this.dizzy > 0) return;
     if (this.phase === 'parked') this.getOut();
     this.walkTo([sp.pump], WALK_SPEED, () => {
       const r = buyFuel(this.hooks.state);
@@ -514,7 +533,7 @@ export class TownPlay {
       this.leaveBuilding(run, () => this.backToCar(run));
       return;
     }
-    if (this.phase !== 'walking' || this.entering) return;
+    if (this.phase !== 'walking' || this.entering || this.dizzy > 0) return;
     this.walkTo([this.besideCar(this.walker.position)], run ? RUN_SPEED : WALK_SPEED, () => {
       this.walker.visible = false;
       this.phase = 'parked';
@@ -524,7 +543,7 @@ export class TownPlay {
   }
 
   goIn(sp: TownSpot): void {
-    if (this.phase !== 'walking' || this.entering) return;
+    if (this.phase !== 'walking' || this.entering || this.dizzy > 0) return;
     // Up to the building's own door, it swings open, step through, and you're inside.
     this.entering = sp;
     this.hooks.changed();
@@ -693,6 +712,15 @@ export class TownPlay {
       for (const [k, v] of Object.entries(r.loot) as [keyof Inventory, number][]) {
         this.flyIcon(LOOT_ICONS[k], p, n++);
         words.push(`${v} ${k === 'cash' ? 'dollars' : k}`);
+      }
+      // Food or a bandage in the box: a heart back, right away, when you're short of one.
+      const snack = SNACK_PLACES[sp.lot.place];
+      const s = this.hooks.state;
+      if (snack && heartsOf(s) < HEARTS && Math.random() < SNACK_CHANCE) {
+        healWalker(s, SNACK_HEARTS);
+        this.flyIcon(snack, p, n++);
+        this.flyIcon('❤️', p, n++);
+        words.push(snack === '🩹' ? 'a bandage (+1 ❤️)' : 'a snack (+1 ❤️)');
       }
       if (!words.length) this.popIcon('💨', p);
       this.hooks.say(words.length ? (this.hooks.kid ? `${LOOT_ICONS[(Object.keys(r.loot)[0] as keyof Inventory)]}!` : `Found ${words.join(', ')}.`) : this.hooks.kid ? 'Empty!' : 'Empty.', false);
@@ -1098,6 +1126,12 @@ export class TownPlay {
   }
 
   private updateZombies(dt: number): void {
+    if (this.dizzy > 0) {
+      // Seeing stars: you spin on the spot and nobody grabs you, then you wake up in the car.
+      this.dizzy -= dt;
+      this.walker.rotation.y += dt * 9;
+      if (this.dizzy <= 0) this.wakeInCar();
+    }
     const target = this.focusPoint();
     this.zombies.forEach((z, i) => {
       z.phase += dt;
@@ -1114,7 +1148,9 @@ export class TownPlay {
       z.cool -= dt;
       if (dist < GRAB && z.cool <= 0) {
         z.cool = 1.3;
-        if (this.phase === 'walking') this.grabbed(z);
+        if (this.phase === 'walking') {
+          if (this.dizzy <= 0) this.grabbed(z);
+        }
         else if (this.phase === 'parked') {
           damage(this.hooks.state, 2);
           this.hooks.sfx.bad();
@@ -1126,22 +1162,63 @@ export class TownPlay {
 
   private grabbed(z: Zombie): void {
     const s = this.hooks.state;
+    const kid = this.hooks.kid;
     this.hooks.sfx.bad();
     document.body.classList.remove('hurt');
     void document.body.offsetWidth;
     document.body.classList.add('hurt');
-    // A grab costs a little of what you carry and shoves you away.
-    let what = '';
-    if (s.inv.cash >= 5) {
-      s.inv.cash -= 5;
-      what = '5 dollars';
-    } else if (s.inv.scrap >= 1) {
-      s.inv.scrap -= 1;
-      what = '1 scrap';
-    }
+    // A grab costs you a heart (yours, not the car's) and shoves you away.
+    const out = hurtWalker(s, kid);
     const away = this.walker.position.clone().sub(z.obj.position).setY(0).normalize();
     this.walker.position.addScaledVector(away, 1.2);
-    this.hooks.say(this.hooks.kid ? 'Ow! Run!' : what ? `A zombie grabbed ${what}!` : 'A zombie grabbed you!', false);
+    if (out) this.seeStars();
+    else this.hooks.say(kid ? 'Ow! Run!' : heartsOf(s) <= 2 ? 'Ouch! Get back to the car!' : 'A zombie grabbed you!', false);
+    this.hooks.changed();
+  }
+
+  /** Out of hearts: stars spin round your head, then you wake up safe in the car. */
+  private seeStars(): void {
+    this.dizzy = DIZZY_TIME;
+    this.walk = null;
+    this.entering = null;
+    if (this.doorAnim) {
+      // Halfway through a door: it shuts again.
+      const sp = this.doorAnim.sp;
+      const panel = sp.doorway.getObjectByName('doorPanel');
+      if (panel) panel.rotation.y = 0;
+      if (!sp.real) sp.doorway.visible = false;
+      this.doorAnim = null;
+    }
+    const head = this.walker.position.clone().setY(this.walker.position.y + 2.1);
+    this.popIcon('💫', head, 1.3, DIZZY_TIME);
+    this.popIcon('⭐', head.clone().add(new THREE.Vector3(0.5, 0.3, 0)), 0.8, DIZZY_TIME * 0.8);
+    this.popIcon('⭐', head.clone().add(new THREE.Vector3(-0.5, 0.1, 0)), 0.7, DIZZY_TIME * 0.7);
+    this.hooks.say('Too dizzy!');
+  }
+
+  private wakeInCar(): void {
+    const s = this.hooks.state;
+    const kid = this.hooks.kid;
+    this.dizzy = 0;
+    this.hooks.fade?.();
+    this.walker.visible = false;
+    this.walker.scale.setScalar(1);
+    this.phase = 'parked';
+    s.hearts = Math.max(heartsOf(s), WAKE_HEARTS);
+    const lost = kid ? 0 : Math.min(s.inv.cash, DIZZY_CASH);
+    s.inv.cash -= lost;
+    // The zombies by the car are knocked back a few steps, so you can drive off.
+    const car = this.host.car.position;
+    for (const z of this.zombies) {
+      const off = z.obj.position.clone().sub(car).setY(0);
+      if (off.length() > KNOCK_RANGE) continue;
+      if (off.lengthSq() < 0.01) off.set(1, 0, 0);
+      z.obj.position.addScaledVector(off.normalize(), KNOCK_BACK);
+      z.hurt = 0.22;
+      z.cool = 2;
+    }
+    this.hooks.say(kid ? 'Phew! Safe in the car!' : lost ? `You wake up in the car. You dropped $${lost}.` : 'You wake up in the car.');
+    this.hooks.save();
     this.hooks.changed();
   }
 

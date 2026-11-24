@@ -76,6 +76,7 @@ export const SECTIONS: Section[] = [
       { icon: '⏩', title: 'Or keep driving', text: 'Tap Keep driving to skip that town.' },
       { icon: '🏘️', title: 'In town', text: 'Tap a picture sign to pull in. Get gas, fix the car, or walk inside and tap the boxes.' },
       { icon: '🧟', title: 'Too much noise', text: 'Noisy searching brings zombies down the street. Tap them to shoot, or run back to the car!' },
+      { icon: '❤️', title: 'Your hearts', text: 'Out of the car you have hearts. A zombie grab takes one. Run out and you wake up safe in the car. Snacks, a motel nap and driving fill them back up.' },
     ],
   },
   {

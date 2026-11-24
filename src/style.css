@@ -1622,6 +1622,61 @@ body.kid .howto-tip b {
   animation: slideUp 0.25s ease-out;
 }
 
+.hearts {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 1px;
+  /* All ten in one row, even on the narrowest phone. */
+  font-size: clamp(13px, 4.1vw, 18px);
+  line-height: 1.2;
+}
+
+.hearts .heart {
+  position: relative;
+  display: inline-block;
+}
+
+.hearts .heart.empty {
+  opacity: 0.35;
+}
+
+/* Half a heart (kid mode grabs cost half): the red half laid over a dark heart. */
+.hearts .heart.half::before {
+  content: '❤️';
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 50%;
+  overflow: hidden;
+}
+
+.hearts.low .heart.full,
+.hearts.low .heart.half::before {
+  animation: heart-pulse 0.8s ease-in-out infinite;
+  display: inline-block;
+}
+
+.hearts.shake {
+  animation: heart-shake 0.4s ease-out;
+}
+
+@keyframes heart-pulse {
+  50% {
+    transform: scale(1.25);
+  }
+}
+
+@keyframes heart-shake {
+  20%,
+  60% {
+    transform: translateX(-4px);
+  }
+  40%,
+  80% {
+    transform: translateX(4px);
+  }
+}
+
 .town-hud .bump {
   animation: town-bump 0.35s ease-out;
 }

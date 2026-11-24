@@ -34,6 +34,8 @@ export interface GameState {
   /** Distance travelled along the game path. */
   distance: number;
   health: number;
+  /** You on foot (towns): hearts, out of HEARTS. Older saves have none: full. */
+  hearts?: number;
   inv: Inventory;
   upgrades: Upgrades;
   crew: CrewMember[];
@@ -76,6 +78,32 @@ export interface GameState {
 /** Base values before upgrades. */
 export const MAX_HEALTH = 100;
 export const TANK = 100;
+
+/** You on foot have your own hearts, apart from the car's health. */
+export const HEARTS = 10;
+/** A zombie grab costs this many hearts (half in kid mode). */
+export const GRAB_HEARTS = 1;
+export const GRAB_HEARTS_KID = 0.5;
+/** Knocked dizzy, you wake up in the car with this many, and (not in kid mode) drop up to this much cash. */
+export const WAKE_HEARTS = 4;
+export const DIZZY_CASH = 10;
+/** Driving the highway brings back a heart every this many seconds. */
+export const HEART_REFILL_S = 10;
+/** A snack or bandage found in a box brings back this many. */
+export const SNACK_HEARTS = 1;
+export const heartsOf = (s: GameState) => Math.max(0, Math.min(HEARTS, s.hearts ?? HEARTS));
+
+/** A zombie grabbed you on foot: loses hearts. True when you're out of hearts (knocked dizzy). */
+export function hurtWalker(s: GameState, kid: boolean): boolean {
+  if (testing.tough) return false;
+  s.hearts = Math.max(0, heartsOf(s) - (kid ? GRAB_HEARTS_KID : GRAB_HEARTS));
+  return s.hearts <= 0;
+}
+
+/** Hearts back (food, a bandage, a rest, the drive). */
+export function healWalker(s: GameState, n: number): void {
+  s.hearts = Math.min(HEARTS, heartsOf(s) + n);
+}
 
 export const maxHealth = (s: GameState) => Math.round(maxHealthFor(s.upgrades) * rideOf(s).health);
 export const tankSize = (s: GameState) => Math.round(tankFor(s.upgrades) * rideOf(s).tank);
@@ -373,6 +401,7 @@ export function restAtMotel(s: GameState, hour: number, roll: number): RestResul
   s.hoursSpent = (s.hoursSpent ?? 0) + hours;
   const healed = Math.max(0, Math.min(REST_HEAL, Math.floor(maxHealth(s) - s.health)));
   s.health += healed;
+  s.hearts = HEARTS;
   const ambush = roll < REST_AMBUSH;
   const wokeAtNight = wake === REST_WAKE_DAY;
   const when = wokeAtNight ? 'Night has fallen' : 'Good morning';
