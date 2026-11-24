@@ -21,7 +21,7 @@ import { CRATE_GLOW, type TownSpot, type TownWorld } from './world';
 import { daylight, hourOf } from '../game/time';
 import { hashString } from '../game/rng';
 import { testing } from '../game/testFlag';
-import { walkAround, type GroundBox } from './walkAround';
+import { offTheRide, walkAround, WALK_ROOM, type GroundBox } from './walkAround';
 
 /**
  * Playing a town: you turn off the highway onto Main Street in the road
@@ -495,8 +495,8 @@ export class TownPlay {
 
   getOut(): void {
     if (this.phase !== 'parked') return;
-    const left = new THREE.Vector3(Math.cos(this.carYaw), 0, -Math.sin(this.carYaw));
-    this.walker.position.copy(this.host.car.position).addScaledVector(left, 1.9).setY(this.host.car.position.y);
+    // Step out on the side facing the place, clear of the ride, so the walk there goes round it.
+    this.walker.position.copy(this.besideCar(this.at?.door));
     // Face the place you parked at, so the camera (behind you) shows it, not the highway.
     const sp = this.at;
     const toward = sp ? sp.door.clone().sub(this.walker.position).setY(0) : new THREE.Vector3();
@@ -515,8 +515,7 @@ export class TownPlay {
       return;
     }
     if (this.phase !== 'walking' || this.entering) return;
-    const left = new THREE.Vector3(Math.cos(this.carYaw), 0, -Math.sin(this.carYaw));
-    this.walkTo([this.host.car.position.clone().addScaledVector(left, 1.9)], run ? RUN_SPEED : WALK_SPEED, () => {
+    this.walkTo([this.besideCar(this.walker.position)], run ? RUN_SPEED : WALK_SPEED, () => {
       this.walker.visible = false;
       this.phase = 'parked';
       this.hooks.sfx.click();
@@ -1279,7 +1278,10 @@ export class TownPlay {
     if (car.visible && this.walker.visible) {
       const box = this.carBox();
       let from = this.walker.position;
-      for (const p of pts) {
+      for (const q of pts) {
+        // A step that would end on the ride (a shop door right by its nose) stops beside it instead.
+        const o = offTheRide({ x: q.x, z: q.z }, box);
+        const p = new THREE.Vector3(o.x, q.y, o.z);
         for (const c of walkAround({ x: from.x, z: from.z }, { x: p.x, z: p.z }, box)) route.push(new THREE.Vector3(c.x, 0, c.z));
         route.push(p);
         from = p;
@@ -1288,25 +1290,36 @@ export class TownPlay {
     this.walk = { pts: route.map((p) => p.clone().setY(car.position.y)), speed, then };
   }
 
-  private carSize: { halfW: number; halfL: number; dx: number; dz: number } | null = null;
+  /** A spot beside the parked ride, level with its middle, just outside the room kept round it: on the side nearer `toward` (the left if none). */
+  private besideCar(toward?: THREE.Vector3): THREE.Vector3 {
+    const b = this.carBox();
+    const left = new THREE.Vector3(Math.cos(b.yaw), 0, -Math.sin(b.yaw));
+    const mid = new THREE.Vector3(b.x, this.host.car.position.y, b.z);
+    const side = toward && toward.clone().sub(mid).dot(left) < 0 ? -1 : 1;
+    return mid.addScaledVector(left, side * (b.halfW + WALK_ROOM + 0.25));
+  }
+
+  private carSize: { halfW: number; halfL: number; dx: number; dz: number; of: THREE.Object3D } | null = null;
   /** The parked ride's footprint on the ground (measured once from its own shape, in its own frame). */
   private carBox(): GroundBox {
     const car = this.host.car;
     car.updateMatrixWorld(true);
-    if (!this.carSize) {
+    // Measured again if the garage swapped the ride's model.
+    if (this.carSize?.of !== car) {
       const inv = new THREE.Matrix4().copy(car.matrixWorld).invert();
       const box = new THREE.Box3();
       const m = new THREE.Matrix4();
       car.traverse((o) => {
         const mesh = o as THREE.Mesh;
-        if (!mesh.isMesh || !mesh.visible || o.name === 'rider' || !mesh.geometry) return;
+        // The blinker glows are wide flat cards, not part of the body.
+        if (!mesh.isMesh || !mesh.visible || o.name === 'rider' || o.name.startsWith('glow') || !mesh.geometry) return;
         if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
         box.union(mesh.geometry.boundingBox!.clone().applyMatrix4(m.multiplyMatrices(inv, mesh.matrixWorld)));
       });
       const size = box.isEmpty() ? new THREE.Vector3(2, 1, 4.6) : box.getSize(new THREE.Vector3());
       const mid = box.isEmpty() ? new THREE.Vector3() : box.getCenter(new THREE.Vector3());
       const k = car.scale.x || 1;
-      this.carSize = { halfW: (size.x * k) / 2, halfL: (size.z * k) / 2, dx: mid.x * k, dz: mid.z * k };
+      this.carSize = { halfW: (size.x * k) / 2, halfL: (size.z * k) / 2, dx: mid.x * k, dz: mid.z * k, of: car };
     }
     const yaw = yawOf(car);
     const sz = this.carSize;
