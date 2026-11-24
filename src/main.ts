@@ -357,7 +357,40 @@ function tapBubble(host: HTMLElement, x: number, y: number, what: Tapped): void 
   narrator.say(line.text);
 }
 
-/** The title's settings: narrator voice and installing the app. */
+/**
+ * The two big sound switches: 🎵 music and 🔊 game sounds, each on its own, so
+ * turning the music off never silences the sound effects. Saved on the phone.
+ */
+function soundSwitches(onChange?: () => void): HTMLElement {
+  const make = (emoji: string, word: string, isOn: () => boolean, set: (on: boolean) => void) => {
+    const b = h('button', { class: 'btn sound-switch' }, h('span', { class: 'emoji', 'aria-hidden': 'true' }, emoji), h('span', { class: 'word' }, ''));
+    const sync = () => {
+      const on = isOn();
+      b.classList.toggle('on', on);
+      b.classList.toggle('off', !on);
+      b.querySelector('.word')!.textContent = `${word} ${on ? 'on' : 'off'}`;
+      b.setAttribute('aria-label', `${word}: ${on ? 'on' : 'off'}`);
+      b.setAttribute('aria-pressed', String(on));
+    };
+    b.addEventListener('click', () => {
+      sound.unlock();
+      set(!isOn());
+      sync();
+      if (isOn()) sound.click();
+      onChange?.();
+    });
+    sync();
+    return b;
+  };
+  return h(
+    'div',
+    { class: 'sound-switches' },
+    make('🎵', 'Music', () => sound.settings.music && sound.station !== 'off', (on) => sound.setMusic(on)),
+    make('🔊', 'Sounds', () => sound.settings.sfx, (on) => sound.setSfx(on)),
+  );
+}
+
+/** The title's settings: sound switches, narrator voice and installing the app. */
 function showTitleSettings(): void {
   const close = () => overlay.remove();
   const overlay = h(
@@ -367,9 +400,10 @@ function showTitleSettings(): void {
       'div',
       { class: 'card title-settings' },
       h('h2', {}, '⚙️ Settings'),
+      soundSwitches(),
       voiceButton(),
       installButton(),
-      h('p', { class: 'muted' }, 'Graphics and sounds are in the pause menu during a trip.'),
+      h('p', { class: 'muted' }, 'Graphics are in the pause menu during a trip.'),
       h('div', { class: 'card-actions' }, h('button', { class: 'btn primary', onclick: close }, 'Done')),
     ),
   );
@@ -1131,12 +1165,15 @@ function showDriveHud(fight?: CombatState): void {
     showToast('🤖', 'Autopilot', drive!.autopilot ? 'On: faster, stays in its lane, slows for traffic' : 'Off: you are driving');
   });
   const menuBtn = h('button', { class: 'btn small round', title: 'Menu' }, '☰');
-  const stationName = () => ({ off: 'Radio off', road: 'Home Stretch', classical: 'Evening Drive', west: 'Desert Highway' })[sound.station];
-  const radioBtn = h('button', { class: `btn small round ${sound.station === 'off' ? 'off' : ''}`, title: stationName() }, '📻');
+  const stationName = () => ({ off: 'Radio off', road: 'Home Stretch', classical: 'Evening Drive', west: 'Desert Highway' })[sound.heard];
+  const radioBtn = h('button', { class: `btn small round ${sound.heard === 'off' ? 'off' : ''}`, title: stationName() }, '📻');
+  syncRadioBtn = () => {
+    radioBtn.classList.toggle('off', sound.heard === 'off');
+    radioBtn.title = stationName();
+  };
   radioBtn.addEventListener('click', () => {
     sound.nextStation();
-    radioBtn.classList.toggle('off', sound.station === 'off');
-    radioBtn.title = stationName();
+    syncRadioBtn?.();
     showToast('📻', sound.tuning ? 'Car radio · tuning in…' : 'Car radio', stationName());
   });
   const radioFailed = new Set<string>();
@@ -1406,6 +1443,9 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) pauseDriving();
 });
 
+/** Keeps the dashboard's 📻 button in step when the pause menu's 🎵 switch changes. */
+let syncRadioBtn: (() => void) | null = null;
+
 function showPauseMenu(): void {
   if (!drive) return;
   drive.paused = true;
@@ -1435,17 +1475,7 @@ function showPauseMenu(): void {
         sightsPassed(),
       ),
       h('button', { class: 'btn primary', onclick: close }, 'Keep driving'),
-      h(
-        'button',
-        {
-          class: 'btn',
-          onclick: (e: Event) => {
-            sound.setSfx(!sound.settings.sfx);
-            (e.currentTarget as HTMLElement).textContent = `Sound effects: ${sound.settings.sfx ? 'on' : 'off'}`;
-          },
-        },
-        `Sound effects: ${sound.settings.sfx ? 'on' : 'off'}`,
-      ),
+      soundSwitches(() => syncRadioBtn?.()),
       narrationButton(),
       voiceButton(),
       h(

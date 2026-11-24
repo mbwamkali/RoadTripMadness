@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { hurtFlash, muzzleFlash, tracer } from './shotFx';
 import { lit } from './materials';
 import { hdModel, hdZombie } from './hdModels';
 import {
@@ -297,13 +298,21 @@ export class CombatScene implements GameScene {
         case 'carHit':
           this.shake = Math.min(1.2, this.shake + ev.dmg * 0.08);
           this.hitFlash = 0.3;
+          // Shots and big hits flash the screen edge red; horde bumps would flash it non-stop.
+          if (!(c.horde && ev.from === 'zombie')) hurtFlash();
           break;
         case 'enemyShot': {
           const g = this.meshes.get(ev.enemy);
           const drone = g ? null : c.enemies.find((e) => e.id === ev.enemy);
           if (g || drone) {
             const muzzle = g ? g.position.clone().setY(1.6) : new THREE.Vector3(drone!.x, drone!.y - 0.3, drone!.z);
-            this.addLine(muzzle, new THREE.Vector3(c.carX + (ev.hit ? 0 : 3), 1, 0), 0xff5533, 0.22);
+            // A thick glowing tracer (a plain line is one pixel on a phone) and a muzzle flash.
+            const t = tracer(muzzle, new THREE.Vector3(c.carX + (ev.hit ? 0 : 3), ev.hit ? 1 : 2.2, ev.hit ? 0 : 4), 0xffb030, 0.24);
+            this.root.add(t);
+            this.fx.push({ obj: t, life: 0.22, max: 0.22 });
+            const flash = muzzleFlash(muzzle, 0.8);
+            this.root.add(flash);
+            this.fx.push({ obj: flash, life: 0.15, max: 0.15 });
             this.addBurst(muzzle, 0xffd040, 4);
           }
           break;
@@ -565,7 +574,7 @@ export class CombatScene implements GameScene {
         disposeTree(f.obj);
         continue;
       }
-      m.geometry.dispose();
+      if (!m.geometry.userData.shared) m.geometry.dispose();
       (m.material as THREE.Material).dispose();
     }
     this.fx = this.fx.filter((f) => f.life > 0);
@@ -1036,9 +1045,11 @@ function playEventSound(ev: CombatState['events'][number]): void {
       break;
     case 'carHit':
       sound.carHit();
+      if (ev.from === 'outlaw' || ev.from === 'drone') sound.bulletHit();
       break;
     case 'enemyShot':
       sound.enemyShot();
+      if (!ev.hit) sound.ricochet();
       break;
     case 'charge':
       sound.charge();

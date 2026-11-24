@@ -14,6 +14,8 @@ const MUSIC_VOLUME = 0.45;
 
 interface Settings {
   sfx: boolean;
+  /** The big 🎵 switch: off silences the radio without forgetting the station. */
+  music: boolean;
   station: Station;
 }
 
@@ -21,12 +23,12 @@ const KEY = 'rtm-audio';
 
 function loadSettings(): Settings {
   try {
-    const saved = { sfx: true, station: 'road', ...(JSON.parse(localStorage.getItem(KEY) || '{}') as Partial<Settings>) } as Settings;
+    const saved = { sfx: true, music: true, station: 'road', ...(JSON.parse(localStorage.getItem(KEY) || '{}') as Partial<Settings>) } as Settings;
     // The old stations (KTWG Country, Neon FM) are gone: anyone who had one on gets Home Stretch.
     if (!STATION_ORDER.includes(saved.station)) saved.station = 'road';
     return saved;
   } catch {
-    return { sfx: true, station: 'road' };
+    return { sfx: true, music: true, station: 'road' };
   }
 }
 
@@ -86,6 +88,15 @@ class Sound {
     if (this.ctx) this.sfxBus.gain.value = on ? 1 : 0;
   }
 
+  /** The 🎵 switch: turning it back on brings back the station you had. */
+  setMusic(on: boolean): void {
+    this.settings.music = on;
+    // Music on with the radio off would still be silent: tune in the first station.
+    if (on && this.settings.station === 'off') this.settings.station = STATION_ORDER[1];
+    this.save();
+    this.applyMusic();
+  }
+
   /** Tunes the radio to a station for this page load only (test trips: &radio=...). */
   tuneTo(st: Station): void {
     if (!STATION_ORDER.includes(st)) return;
@@ -95,6 +106,11 @@ class Sound {
 
   /** Cycles the car radio: off, then each station in turn. Returns the new station. */
   nextStation(): Station {
+    // With the 🎵 switch off the radio button first turns music back on, on the same station.
+    if (!this.settings.music) {
+      this.setMusic(true);
+      return this.settings.station;
+    }
     this.settings.station = STATION_ORDER[(STATION_ORDER.indexOf(this.settings.station) + 1) % STATION_ORDER.length];
     this.save();
     this.applyMusic();
@@ -251,9 +267,34 @@ class Sound {
     this.noise(0.12, 'highpass', 4000, 0.15, 1, this.t + 0.02);
   }
 
+  /** An enemy gun going off: a sharp crack with a low thump, louder than before so you notice it. */
   enemyShot(): void {
     if (!this.ready) return;
-    this.noise(0.12, 'bandpass', 1200, 0.25, 1);
+    this.noise(0.09, 'highpass', 2200, 0.5, 0.8);
+    this.noise(0.16, 'bandpass', 900, 0.45, 1.2);
+    this.tone('sine', 140, 0.12, 0.3, { to: 50 });
+  }
+
+  /** An enemy taking aim: a quick double click (gun cocking), so you hear a shot coming. */
+  aim(): void {
+    if (!this.ready) return;
+    this.noise(0.03, 'bandpass', 3000, 0.3, 4);
+    this.noise(0.04, 'bandpass', 2200, 0.3, 4, this.t + 0.09);
+  }
+
+  /** A bullet striking your car: a metal clang. */
+  bulletHit(): void {
+    if (!this.ready) return;
+    const at = this.t + 0.04;
+    this.tone('square', 1250, 0.18, 0.14, { to: 900, at });
+    this.tone('triangle', 2100, 0.25, 0.12, { at });
+    this.noise(0.07, 'highpass', 5000, 0.35, 1, at);
+  }
+
+  /** A miss whizzing past: a falling zing. */
+  ricochet(): void {
+    if (!this.ready) return;
+    this.tone('sine', 2600, 0.28, 0.12, { to: 700, at: this.t + 0.05 });
   }
 
   charge(): void {
@@ -379,11 +420,16 @@ class Sound {
   /** True when the chosen station still has to download before it can play. */
   get tuning(): boolean {
     const st = this.settings.station;
-    return st !== 'off' && !!this.radio && !this.radio.isLoaded(st);
+    return st !== 'off' && this.settings.music && !!this.radio && !this.radio.isLoaded(st);
   }
 
   get station(): Station {
     return this.settings.station;
+  }
+
+  /** What the radio is really playing: 'off' when the station or the 🎵 switch is off. */
+  get heard(): Station {
+    return this.settings.music ? this.settings.station : 'off';
   }
 
   private applyMusic(): void {
@@ -391,7 +437,7 @@ class Sound {
     if (!r || !this.ready) return;
     const station = this.settings.station;
     const mode = this.musicMode;
-    if (mode.kind === 'off' || station === 'off') return r.stop();
+    if (mode.kind === 'off' || station === 'off' || !this.settings.music) return r.stop();
     if (mode.kind === 'fight' && mode.boss === 'mothership') return void r.play('catqueen', MUSIC_VOLUME);
     const fight = mode.kind === 'fight';
     if (r.playing === station) r.setFight(fight);
