@@ -1386,6 +1386,10 @@ body.kid .shoot-row .btn.shoot {
   bottom: calc(80px + var(--prompt-lift, 0px));
   border-radius: 38px;
 }
+/* The horde's Stop button sits at the same height as kid mode's Shoot button. */
+body.kid .shoot-row .btn.brake {
+  bottom: calc(80px + var(--prompt-lift, 0px));
+}
 
 /* Story beats (Karen and the Cat Queen): a purple panel so they stand out from the rules text. */
 .card p.story {
@@ -2035,7 +2039,8 @@ body.kid .howto-tip b {
   }
 
   /* Kid shoot button: beside the dashboard, clear of the radio and menu buttons. */
-  body.kid .shoot-row .btn.shoot {
+  body.kid .shoot-row .btn.shoot,
+  body.kid .shoot-row .btn.brake {
     bottom: 4px;
   }
 
@@ -2214,7 +2219,8 @@ body.kid .howto-tip b {
 }
 @media (orientation: landscape) and (max-height: 500px) {
   /* Kid mode's big Shoot button sits above the dodge arrows in a fight, not on them. */
-  body.kid .hud.fighting .shoot-row .btn.shoot {
+  body.kid .hud.fighting .shoot-row .btn.shoot,
+  body.kid .hud.fighting .shoot-row .btn.brake {
     bottom: 72px;
   }
 }
