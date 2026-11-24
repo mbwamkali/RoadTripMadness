@@ -10,6 +10,7 @@ import { buildStructurePart } from './structures';
 import { crossingAt, planCrossings, type RoadCrossing } from '../game/crossings';
 import { buildCrossing, crossingFootprint, crossingHalfSpan, type CrossingFit } from './crossings';
 import { coolRage, HOSTILE_RANGE, HOSTILE_WINDUP, hostileShot, rageOf, rollHostile, shootVehicle } from '../game/rage';
+import { easeTimeScale, wantedTimeScale, zombieWindow } from '../game/zombieTime';
 import { FadingFx, hurtFlash, muzzleFlash, ShooterArrow, tracer } from './shotFx';
 import { ScreenIcons } from '../ui/screenIcons';
 import { clampLane, defaultLane, laneCenter, oncoming, Traffic, type Vehicle, type VehicleKind } from '../game/traffic';
@@ -71,6 +72,8 @@ const MOUTH_HALF = 10;
 const TOWN_EXIT = 14;
 
 export interface DriveCallbacks {
+  /** Zombie time started (true) or ended (false): a horde is ahead and the clock is slowed. */
+  onZombieTime?(on: boolean): void;
   onEncounter(): void;
   onArrive(): void;
   onOutOfFuel(): void;
@@ -210,8 +213,15 @@ export interface RoadFight {
   setPace(pace: number): void;
   /** Nitro is burning: the car really speeds up. */
   boosting(): boolean;
+  /** The nearest horde zombie still coming, for zombie time (game/zombieTime.ts). */
+  hordeAhead(): { dist: number; closing: number; age: number } | null;
+  /** How fast game time is running against real time (below 1 in zombie time). */
+  setTimeScale(scale: number): void;
   boss: boolean;
 }
+
+/** How quickly the 🛑 Brake button slows the car (mph per second); easing off is 30. */
+export const HARD_BRAKE_MPHS = 60;
 
 /** Road past the finish (straight on), for a last boss fight that's still going when you get there. */
 const OVERTIME = CHUNK * 14;
@@ -320,6 +330,12 @@ export class DriveScene implements GameScene {
   private turning: { stop: Stop; t: number; from: THREE.Vector3; mid: THREE.Vector3; to: THREE.Vector3 } | null = null;
   private stopping = false;
   private clock = 0;
+  /** Zombie time: how fast game time runs against real time (1 = normal). */
+  timeScale = 1;
+  private zombieTimeOn = false;
+  /** The 🛑 Brake button: stopping hard, and the speed choice to go back to on Go. */
+  private hardBrake = false;
+  private beforeBrake: number | null = null;
   /** Tracers and muzzle flashes from drivers shooting at you. */
   private shotFx: FadingFx;
   /** Badge on the screen edge pointing at a shooter you can't see. */
@@ -778,8 +794,47 @@ export class DriveScene implements GameScene {
     }
   }
 
+  /** Works out zombie time for this frame and returns the time scale (real dt in). */
+  private zombieClock(realDt: number): number {
+    if (this.paused) return this.timeScale;
+    const h = this.fight?.hordeAhead() ?? null;
+    const want = wantedTimeScale(h, zombieWindow(this.state.difficulty, kidMode.on));
+    this.timeScale = easeTimeScale(this.timeScale, want, realDt);
+    if (this.timeScale > 0.995 && want === 1) this.timeScale = 1;
+    this.fight?.setTimeScale(this.timeScale);
+    const on = this.timeScale < 0.95;
+    if (on !== this.zombieTimeOn) {
+      this.zombieTimeOn = on;
+      this.cb.onZombieTime?.(on);
+    }
+    return this.timeScale;
+  }
+
+  /** The 🛑 Brake button: stop hard (twice as quick as slowing down). Returns true while stopping or stopped. */
+  brake(): void {
+    if (this.hardBrake || this.targetMph === 0) return;
+    this.beforeBrake = this.over;
+    this.over = -this.speedLimit();
+    this.hardBrake = true;
+  }
+
+  /** ▶ Go after braking: back to the speed you had picked. */
+  go(): void {
+    const limit = this.speedLimit();
+    this.over = this.beforeBrake ?? 0;
+    if (limit + this.over < SPEED_STEP) this.over = 0;
+    this.beforeBrake = null;
+    this.hardBrake = false;
+  }
+
+  /** True when the car is braking hard or sitting stopped by the Brake button. */
+  get braking(): boolean {
+    return this.hardBrake || this.targetMph === 0;
+  }
+
   /** Speed up (1) or ease off (-1) by 5 mph, from a full stop up to the vehicle's top speed. */
   pedal(dir: -1 | 1): void {
+    if (dir > 0) this.hardBrake = false;
     const limit = this.speedLimit();
     const want = targetMph(limit, this.over, this.cap(limit)) + dir * SPEED_STEP;
     this.over = Math.max(0, Math.min(this.cap(limit), want)) - limit;
@@ -910,6 +965,12 @@ export class DriveScene implements GameScene {
   detachFight(): void {
     this.fight = null;
     endGlow();
+    // Time picks back up at once when a fight ends.
+    this.timeScale = 1;
+    if (this.zombieTimeOn) {
+      this.zombieTimeOn = false;
+      this.cb.onZombieTime?.(false);
+    }
   }
 
   get fighting(): boolean {
@@ -964,6 +1025,8 @@ export class DriveScene implements GameScene {
   }
 
   update(dt: number): void {
+    // Zombie time slows the whole world down, so stopping for a horde is a real choice.
+    dt *= this.zombieClock(dt);
     this.clock += dt;
     this.seatRider(dt);
     const sig = this.signalling;
@@ -1066,7 +1129,10 @@ export class DriveScene implements GameScene {
     const top = topSpeed(s);
     const want = targetMph(limit, this.over, this.cap(limit));
     // About 0 to 60 in four seconds; braking is quicker.
-    this.paceMph = want > this.paceMph ? Math.min(want, this.paceMph + 15 * dt) : Math.max(want, this.paceMph - 30 * dt);
+    // The Brake button stops twice as hard as easing off.
+    const slowing = this.hardBrake ? HARD_BRAKE_MPHS : 30;
+    this.paceMph = want > this.paceMph ? Math.min(want, this.paceMph + 15 * dt) : Math.max(want, this.paceMph - slowing * dt);
+    if (this.hardBrake && this.paceMph <= want) this.hardBrake = false;
     // A stop coming up doesn't slow you down: the speed is always yours. The Turn buttons show up
     // sooner when you're going fast instead (promptRange).
     let speed = this.paceMph * UNITS_PER_MPH * this.roadSpeed;

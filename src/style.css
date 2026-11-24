@@ -2682,3 +2682,43 @@ body.devp-on .screen.title > .title-bar {
     opacity: 0.35;
   }
 }
+
+/* Zombie horde: the big 🛑 Stop / ▶ Go button, on the left above the fight buttons. */
+.shoot-row .gap {
+  flex: 1;
+}
+.shoot-row .btn.brake {
+  position: relative;
+  bottom: calc(60px + var(--prompt-lift, 0px));
+  height: 56px;
+  min-width: 120px;
+  padding: 0 16px;
+  font-size: 20px;
+  font-weight: 800;
+  color: #fff;
+  background: rgba(200, 20, 20, 0.92);
+  border: 3px solid #fff;
+  border-radius: 16px;
+  pointer-events: auto;
+}
+.shoot-row .btn.brake.go {
+  background: rgba(40, 150, 60, 0.92);
+}
+body.zombie-time .shoot-row .btn.brake:not(.go) {
+  animation: brake-pulse 0.45s ease-in-out infinite alternate;
+}
+@keyframes brake-pulse {
+  to {
+    transform: scale(1.08);
+    box-shadow: 0 0 18px rgba(255, 60, 60, 0.9);
+  }
+}
+body.kid .shoot-row .btn.brake {
+  height: 76px;
+  min-width: 140px;
+  font-size: 24px;
+}
+/* Zombie time: the world slows, with a cold tint round the edges. */
+body.zombie-time #ui {
+  box-shadow: inset 0 0 90px 30px rgba(60, 120, 255, 0.35);
+}

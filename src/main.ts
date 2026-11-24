@@ -43,7 +43,7 @@ import {
 import { STOP_TITLES, type PlaceKind, type Stop } from './game/stops';
 import { classAt, roadSegments } from './game/roads';
 import { afterTrip, freshCareer, loadCareer, saveCareer, threatFor, threatScale } from './game/career';
-import { BOOST_FUEL, BOSS_INFO, boost, changeLane, createCombat, easeOff, ENEMY_STATS, fireAt, horn, nearestEnemy, useLanes, WEAPONS, type BossKind, type CombatState, type EnemyType, type WeaponKind } from './game/combat';
+import { BOOST_FUEL, BOSS_INFO, boost, changeLane, createCombat, easeOff, ENEMY_STATS, fireAt, horn, hordeAhead, nearestEnemy, useLanes, WEAPONS, type BossKind, type CombatState, type EnemyType, type WeaponKind } from './game/combat';
 import { DIFFICULTIES, DIFFICULTY_IDS, type Difficulty } from './game/difficulty';
 import { addScore, loadScores, scoreFor, type ScoreEntry } from './game/scores';
 import { CREW, rollEvent, type RoadEvent } from './game/events';
@@ -892,6 +892,11 @@ function startTripNow(s: GameState): void {
         drive.paused = true;
         setTimeout(showEnd, 900);
       }
+    },
+    onZombieTime: (on) => {
+      // The world slows while a horde is ahead: a cold tint, and the Brake button pulses.
+      document.body.classList.toggle('zombie-time', on);
+      if (on) narrator.say(kidMode.on ? 'Zombies! Stop the car!' : 'Zombies ahead! Brake, or plough through.');
     },
     onShotAt: (kind, dmg) => {
       if (dmg > 0) navigator.vibrate?.(60);
@@ -2083,6 +2088,8 @@ function startCombat(ambush: boolean, theme?: EnemyType, boss?: BossKind): void 
       changeLane: (dir) => changeLane(c, dir),
       setPace: (pace) => (c.pace = pace),
       boosting: () => c.boostTime > 0,
+      hordeAhead: () => hordeAhead(c),
+      setTimeScale: (k) => (c.timeScale = k),
       boss: !!c.boss,
     });
     drive!.resume();
@@ -2125,6 +2132,20 @@ function fightControls(c: CombatState): { banner: HTMLElement; pad: HTMLElement;
   };
   const hornBtn = h('button', { class: 'btn action', onclick: () => horn(c) }, '📯 Horn');
   const boostBtn = h('button', { class: 'btn action', onclick: () => boost(c, s.inv) }, `🔥 Boost (${BOOST_FUEL}⛽)`);
+  // A horde: a big 🛑 Brake button (twice as quick as slowing down), then ▶ Go to carry on.
+  const brakeBtn = h('button', { class: 'btn brake', title: 'Brake hard' }, '🛑 Stop');
+  brakeBtn.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    if (!drive) return;
+    if (drive.braking) drive.go();
+    else drive.brake();
+    syncBrake();
+  });
+  const syncBrake = () => {
+    const stopped = !!drive?.braking;
+    brakeBtn.textContent = stopped ? '▶ Go' : '🛑 Stop';
+    brakeBtn.classList.toggle('go', stopped);
+  };
   // Kid mode: one big button that fires at the nearest bad guy.
   const kidBtn = h('button', { class: 'btn pad shoot', title: 'Shoot the nearest bad guy' }, '🔫 Shoot!');
   kidBtn.addEventListener('pointerdown', (e) => {
@@ -2140,11 +2161,13 @@ function fightControls(c: CombatState): { banner: HTMLElement; pad: HTMLElement;
       b.classList.toggle('empty', s.inv[w] <= 0);
     });
     hornBtn.classList.toggle('cooling', c.hornCooldown > 0);
+    if (c.horde) syncBrake();
     boostBtn.classList.toggle('cooling', c.boostCooldown > 0 || s.inv.fuel < BOOST_FUEL + 1);
   };
   const pad = h('div', { class: 'fight-pad combat' }, h('div', { class: 'row weapons' }, ...wbtns), h('div', { class: 'row' }, lane(-1, '◀'), hornBtn, boostBtn, lane(1, '▶')));
   sync();
-  return { banner, pad, kidShoot: kidMode.on && h('div', { class: 'shoot-row show' }, kidBtn), sync };
+  const row = c.horde || kidMode.on ? h('div', { class: 'shoot-row show' }, c.horde && brakeBtn, h('span', { class: 'gap' }), kidMode.on && kidBtn) : false;
+  return { banner, pad, kidShoot: row, sync };
 }
 
 function showCombatHud(c: CombatState): void {
@@ -2308,7 +2331,12 @@ function fightSwipe(act: ReturnType<typeof swipeAction>): void {
 function endCombat(c: CombatState, outcome: 'cleared' | 'escaped' | 'wrecked'): void {
   const s = state!;
   const onRoad = !!drive?.fighting;
-  if (onRoad) drive!.detachFight();
+  if (onRoad) {
+    drive!.detachFight();
+    // Stopped for a horde with the Brake button: the fight's over, so drive on at the speed you had.
+    if (c.horde && drive!.braking) drive!.go();
+    document.body.classList.remove('zombie-time');
+  }
   if (outcome === 'wrecked') {
     showEnd();
     return;

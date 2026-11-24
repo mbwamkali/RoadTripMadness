@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { hurtFlash, muzzleFlash, tracer } from './shotFx';
+import { muzzleFlash, tracer } from './shotFx';
+import { makeWalk, tickZombieWalk } from './zombieWalk';
 import { lit } from './materials';
 import { hdModel, hdZombie } from './hdModels';
 import {
@@ -188,6 +189,7 @@ export class CombatScene implements GameScene {
   }
 
   update(dt: number): void {
+    tickZombieWalk(dt);
     if (this.done) {
       this.updateFx(dt);
       return;
@@ -298,8 +300,6 @@ export class CombatScene implements GameScene {
         case 'carHit':
           this.shake = Math.min(1.2, this.shake + ev.dmg * 0.08);
           this.hitFlash = 0.3;
-          // Shots and big hits flash the screen edge red; horde bumps would flash it non-stop.
-          if (!(c.horde && ev.from === 'zombie')) hurtFlash();
           break;
         case 'enemyShot': {
           const g = this.meshes.get(ev.enemy);
@@ -432,6 +432,7 @@ export class CombatScene implements GameScene {
       this.horde = new THREE.InstancedMesh(geo, mat, 48);
       this.horde.frustumCulled = false;
       this.horde.castShadow = this.shadows;
+      makeWalk(this.horde);
       this.root.add(this.horde);
     }
     const m = new THREE.Matrix4();
@@ -443,8 +444,9 @@ export class CombatScene implements GameScene {
     const n = Math.min(list.length, this.horde.count === 0 ? 48 : 48);
     for (let i = 0; i < n; i++) {
       const e = list[i];
-      const swing = Math.sin(t * 6 + e.id) * (e.stunned > 0 ? 0.05 : 0.5);
-      pos.set(e.x, e.y + Math.abs(swing) * 0.15, e.z);
+      // Feet on the road: only a small step bob (the legs walk in the shader).
+      const swing = Math.sin(t * 9.4 + e.id) * (e.stunned > 0 ? 0.05 : 0.5);
+      pos.set(e.x, e.y + Math.abs(swing) * 0.05, e.z);
       q.setFromEuler(euler.set(0, e.stunned > 0 ? Math.sin(t * 20) * 0.3 : 0, Math.sin(t * 3 + e.id) * 0.12));
       this.horde.setMatrixAt(i, m.compose(pos, q, scale));
     }
@@ -825,7 +827,10 @@ export function buildEnemy(type: EnemyType): THREE.Group {
     barY = 5.5;
   } else if (type === 'zombie' && (hdModel('zombie') || modelMesh('zombie'))) {
     // Detailed zombie once loaded, else the CC0 one (Medium and High), at the same 2.3 height.
-    body.add(hdZombie() ?? modelMesh('zombie')!);
+    const z = hdZombie() ?? modelMesh('zombie')!;
+    // Legs that walk (in the shader: the models have no skeleton).
+    makeWalk(z);
+    body.add(z);
   } else if (type === 'zombie' || type === 'brute') {
     box(0.8, 1.1, 0.5, 0x4a5d7a, 0, 1.3); // torn shirt
     box(0.6, 0.6, 0.6, 0x8fbf5a, 0, 2.15); // head
@@ -966,7 +971,7 @@ function animateEnemy(g: THREE.Group, e: Enemy, t: number): void {
     if (legL && legR) {
       legL.rotation.x = swing;
       legR.rotation.x = -swing;
-    } else body.position.y = Math.abs(swing) * 0.15;
+    } else body.position.y = Math.abs(swing) * (e.type === 'zombie' ? 0.05 : 0.15);
     body.rotation.z = Math.sin(t * 3 + e.id) * 0.12;
     body.rotation.y = e.stunned > 0 ? Math.sin(t * 20) * 0.3 : 0;
     if (e.type === 'brute') {
