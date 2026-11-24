@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { ScreenIcons } from '../ui/screenIcons';
 import {
   buyFuel,
   foundCash,
@@ -165,7 +166,11 @@ export class TownPlay {
   /** Digging into a box you walked over to: opens it when the time runs out. */
   private dig: { i: number; t: number } | null = null;
   /** Loot icons flying from a box up to your supplies. */
-  private fly: { obj: THREE.Sprite; from: THREE.Vector3; t: number }[] = [];
+  private fly: { el: HTMLElement; pos: THREE.Vector3; size: number; from: THREE.Vector3; t: number }[] = [];
+  /** Pictures that float up and fade (💨, 💵), drawn on the screen like the flying loot. */
+  private pops: { el: HTMLElement; pos: THREE.Vector3; size: number; life: number; max: number; vy: number }[] = [];
+  /** Loot and pop-up pictures are page elements over the 3D view, so the scene's light never darkens them. */
+  private icons = new ScreenIcons();
   private move: CarMove | null = null;
   private zombies: Zombie[] = [];
   private fx: { obj: THREE.Object3D; life: number; vy: number }[] = [];
@@ -1288,11 +1293,9 @@ export class TownPlay {
 
   /** A loot icon pops out of the box, then flies up to your supplies at the top of the screen. */
   private flyIcon(icon: string, p: THREE.Vector3, n: number): void {
-    const s = emojiSprite(icon, 1.4);
-    s.position.copy(p);
-    s.renderOrder = 10;
-    this.host.scene.add(s);
-    this.fly.push({ obj: s, from: p.clone().add(new THREE.Vector3((n - 1) * 0.7, 0, 0)), t: -n * 0.12 });
+    const el = this.icons.add(icon);
+    el.style.visibility = 'hidden';
+    this.fly.push({ el, pos: p.clone(), size: 1.4, from: p.clone().add(new THREE.Vector3((n - 1) * 0.7, 0, 0)), t: -n * 0.12 });
   }
 
   private updateFly(dt: number): void {
@@ -1301,22 +1304,33 @@ export class TownPlay {
     const to = new THREE.Vector3(-0.55, 0.78, 0.5).unproject(cam).sub(cam.position).normalize().multiplyScalar(4).add(cam.position);
     this.fly = this.fly.filter((f) => {
       f.t += dt;
-      const t = Math.max(0, f.t);
+      if (f.t < 0) return true;
+      const t = f.t;
       if (t < 0.45) {
         // Pop up out of the box first.
-        f.obj.position.copy(f.from).setY(f.from.y + Math.sin((t / 0.45) * Math.PI * 0.5) * 1.2);
+        f.pos.copy(f.from).setY(f.from.y + Math.sin((t / 0.45) * Math.PI * 0.5) * 1.2);
+        this.icons.place(f.el, f.pos, f.size, cam);
         return true;
       }
       const k = Math.min(1, (t - 0.45) / 0.55);
       const start = f.from.clone().setY(f.from.y + 1.2);
-      f.obj.position.lerpVectors(start, to, k * k);
-      const sc = 1.4 * (1 - k * 0.6);
-      f.obj.scale.set(sc, sc, 1);
+      f.pos.lerpVectors(start, to, k * k);
+      this.icons.place(f.el, f.pos, f.size * (1 - k * 0.6), cam);
       if (k < 1) return true;
-      this.host.scene.remove(f.obj);
-      disposeSprite(f.obj);
+      this.icons.remove(f.el);
       this.hooks.bump?.();
       return false;
+    });
+    this.pops = this.pops.filter((f) => {
+      f.life -= dt;
+      f.pos.y += f.vy * dt;
+      if (f.life <= 0) {
+        this.icons.remove(f.el);
+        return false;
+      }
+      // Fades out over its last quarter.
+      this.icons.place(f.el, f.pos, f.size, cam, Math.min(1, f.life / (f.max * 0.25)));
+      return true;
     });
   }
 
@@ -1342,10 +1356,9 @@ export class TownPlay {
   }
 
   private popIcon(icon: string, p: THREE.Vector3, size = 1.6, life = 1.2): void {
-    const s = emojiSprite(icon, size);
-    s.position.copy(p);
-    this.host.scene.add(s);
-    this.fx.push({ obj: s, life, vy: 1.6 });
+    const el = this.icons.add(icon);
+    this.pops.push({ el, pos: p.clone(), size, life, max: life, vy: 1.6 });
+    this.icons.place(el, p, size, this.host.camera);
   }
 
   private walkTo(pts: THREE.Vector3[], speed: number, then: () => void): void {
@@ -1590,10 +1603,9 @@ export class TownPlay {
     for (const l of this.locals) this.host.scene.remove(l.rig.obj);
     for (const z of this.zombies) this.host.scene.remove(z.obj);
     for (const f of this.fx) this.host.scene.remove(f.obj);
-    for (const f of this.fly) {
-      this.host.scene.remove(f.obj);
-      disposeSprite(f.obj);
-    }
+    this.fly = [];
+    this.pops = [];
+    this.icons.dispose();
     this.host.scene.remove(this.walker);
     this.host.car.visible = true;
     const rider = this.host.car.getObjectByName('rider');

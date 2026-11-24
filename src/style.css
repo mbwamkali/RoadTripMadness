@@ -2601,3 +2601,179 @@ body.devp-on .screen.title > .title-bar {
   0%, 100% { transform: translateY(0); opacity: 0.5; }
   50% { transform: translateY(-10px); opacity: 1; }
 }
+
+/* The 🎵 Music and 🔊 Sounds switches: two big pictures, green when on, grey and crossed out when off. */
+.sound-switches {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  grid-column: 1 / -1;
+}
+.btn.sound-switch {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 72px;
+  padding: 6px 4px;
+  border-radius: 18px;
+  border-width: 3px;
+}
+.btn.sound-switch .emoji {
+  font-size: 34px;
+  line-height: 1.1;
+}
+.btn.sound-switch .word {
+  font-size: 14px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.btn.sound-switch.on {
+  border-color: #6cd46c;
+  background: rgba(108, 212, 108, 0.2);
+}
+.btn.sound-switch.off {
+  border-color: #8a8a8a;
+  background: rgba(60, 60, 60, 0.45);
+}
+.btn.sound-switch.off .emoji {
+  filter: grayscale(1);
+  opacity: 0.55;
+}
+/* A red slash across the picture when it's off. */
+.btn.sound-switch.off::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 8px;
+  width: 6px;
+  height: 46px;
+  margin-left: -3px;
+  border-radius: 3px;
+  background: #e53935;
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+@media (orientation: landscape) and (max-height: 560px) {
+  .pause-card > .sound-switches {
+    grid-column: 2 / -1;
+  }
+  .btn.sound-switch {
+    min-height: 56px;
+    flex-direction: row;
+    gap: 8px;
+  }
+  .btn.sound-switch .emoji {
+    font-size: 28px;
+  }
+  .btn.sound-switch.off::after {
+    left: 30%;
+    top: 6px;
+    height: 40px;
+  }
+}
+
+/* Loot and other pictures that follow a 3D point, drawn over the game (src/ui/screenIcons.ts). */
+.screen-icons {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.screen-icon {
+  position: absolute;
+  left: 0;
+  top: 0;
+  line-height: 1;
+  font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
+  will-change: transform;
+}
+
+/* The badge on the screen edge pointing at a driver shooting at you from out of view (src/scenes/shotFx.ts). */
+.shot-arrow {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: rgba(200, 20, 20, 0.85);
+  border: 3px solid #fff;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  box-shadow: 0 0 12px rgba(255, 40, 40, 0.8);
+}
+.shot-arrow .gun {
+  font-size: 26px;
+  line-height: 1;
+}
+.shot-arrow .pointer {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  color: #ff3030;
+  font-size: 22px;
+  line-height: 1;
+  text-shadow: 0 0 3px #fff, 0 0 6px #000;
+}
+.shot-arrow.urgent {
+  animation: shot-pulse 0.2s ease-in-out infinite alternate;
+}
+@keyframes shot-pulse {
+  to {
+    background: rgba(255, 210, 40, 0.95);
+    box-shadow: 0 0 22px rgba(255, 220, 40, 1);
+  }
+}
+.screen-icon.warn {
+  filter: drop-shadow(0 0 4px #000);
+  animation: warn-blink 0.12s steps(2) infinite;
+}
+@keyframes warn-blink {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* Zombie horde: the big 🛑 Stop / ▶ Go button, on the left above the fight buttons. */
+.shoot-row .gap {
+  flex: 1;
+}
+.shoot-row .btn.brake {
+  position: relative;
+  bottom: calc(60px + var(--prompt-lift, 0px));
+  height: 56px;
+  min-width: 120px;
+  padding: 0 16px;
+  font-size: 20px;
+  font-weight: 800;
+  color: #fff;
+  background: rgba(200, 20, 20, 0.92);
+  border: 3px solid #fff;
+  border-radius: 16px;
+  pointer-events: auto;
+}
+.shoot-row .btn.brake.go {
+  background: rgba(40, 150, 60, 0.92);
+}
+body.zombie-time .shoot-row .btn.brake:not(.go) {
+  animation: brake-pulse 0.45s ease-in-out infinite alternate;
+}
+@keyframes brake-pulse {
+  to {
+    transform: scale(1.08);
+    box-shadow: 0 0 18px rgba(255, 60, 60, 0.9);
+  }
+}
+body.kid .shoot-row .btn.brake {
+  height: 76px;
+  min-width: 140px;
+  font-size: 24px;
+}
+/* Zombie time: the world slows, with a cold tint round the edges. */
+body.zombie-time #ui {
+  box-shadow: inset 0 0 90px 30px rgba(60, 120, 255, 0.35);
+}
