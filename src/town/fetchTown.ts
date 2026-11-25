@@ -42,7 +42,7 @@ export function lookupTown(p: LatLng): Promise<TownMapData | null> {
     job = (async () => {
       const saved = await readSaved(k);
       if (saved) return saved;
-      const json = await overpassJson(townQuery(p), TOWN_LOOKUP_MS);
+      const json = await overpassJson(townQuery(p), TOWN_LOOKUP_MS, 'town');
       if (!json) return null;
       const data = parseTownOsm(json, p);
       void save(k, data);

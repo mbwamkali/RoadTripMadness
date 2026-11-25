@@ -46,7 +46,7 @@ export function pickStreets(elements: OsmElement[], points: LatLng[], skip: stri
 export const overpassStreets: StreetSource = {
   async streetsNear(points, skip) {
     if (!points.length) return [];
-    const json = await overpassJson(buildStreetsQuery(points), 30000);
+    const json = await overpassJson(buildStreetsQuery(points), 30000, 'street names');
     return json ? pickStreets(json.elements ?? [], points, skip) : points.map(() => null);
   },
 };

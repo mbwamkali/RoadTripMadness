@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SERVERS, parseServers, setServers } from '../src/geo/servers';
 import { overpassQuery, overpassWaiting } from '../src/geo/overpass';
+import { clearMapLog, formatMapLog, mapLog } from '../src/geo/mapLog';
 import { cachedSearch, rememberSearch, searchPlaces } from '../src/geo/geocode';
 
 describe('server list', () => {
@@ -31,6 +32,41 @@ describe('Overpass line', () => {
     const json = await overpassQuery('q', { timeoutMs: 1000 });
     expect(json?.elements).toHaveLength(1);
     expect(asked).toEqual(['https://main.example/api', 'https://backup.example/api']);
+  });
+
+  it('gives each server its own time limit, then tries the next', async () => {
+    setServers({ overpass: ['https://main.example/api', 'https://backup.example/api'], nominatim: DEFAULT_SERVERS.nominatim });
+    clearMapLog();
+    globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).includes('backup')) return new Response('{"elements":[{"type":"node"}]}');
+      // The main server hangs until it's given up on.
+      return new Promise<Response>((_, reject) => init?.signal?.addEventListener('abort', () => reject(new Error('aborted'))));
+    }) as typeof fetch;
+    const tries: string[] = [];
+    const json = await overpassQuery('q', { timeoutMs: 2000, perServerMs: 50, label: 'local streets', onTry: (t) => tries.push(t) });
+    expect(json?.elements).toHaveLength(1);
+    expect(tries[0]).toMatch(/^main\.example too slow/);
+    expect(tries[1]).toMatch(/^backup\.example ok/);
+    const log = mapLog();
+    expect(log.at(-1)?.what).toBe('local streets');
+    expect(log.at(-1)?.result).toBe('found');
+    expect(formatMapLog()).toContain('main.example too slow');
+  });
+
+  it('moves on when a server answers that it ran out of time itself', async () => {
+    setServers({ overpass: ['https://main.example/api', 'https://backup.example/api'], nominatim: DEFAULT_SERVERS.nominatim });
+    clearMapLog();
+    globalThis.fetch = vi.fn(async (url: string | URL | Request) =>
+      String(url).includes('main')
+        ? new Response('{"elements":[],"remark":"runtime error: Query timed out in \\"query\\" at line 5 after 26 seconds."}')
+        : new Response('busy', { status: 429 }),
+    ) as typeof fetch;
+    const json = await overpassQuery('q', { timeoutMs: 1000 });
+    expect(json).toBeNull();
+    const e = mapLog().at(-1)!;
+    expect(e.result).toBe('failed');
+    expect(e.tries[0]).toMatch(/main\.example gave up/);
+    expect(e.tries[1]).toMatch(/backup\.example busy 429/);
   });
 
   it('runs two at a time and lets street lookups go first', async () => {

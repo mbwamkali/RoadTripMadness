@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { buildLocalStreetsQuery, localStreetsFile, parseSpeed, pyRound } from '../src/geo/localStreets';
+import { boxAround, buildLocalStreetsQuery, localStreetsFile, parseSpeed, pyRound } from '../src/geo/localStreets';
 import { RoadNet, type RoadFile } from '../src/offline/roadNet';
+import { streetsSummary } from '../src/offline/planner';
+import type { StreetStatus } from '../src/geo/localStreets';
 
 const Q = 100_000;
 const p = (lng: number, lat: number) => [Math.round(lng * Q), Math.round(lat * Q)];
@@ -46,9 +48,11 @@ const answer = {
 describe('local streets', () => {
   it('asks for side streets close by and bigger roads further out, with points inline', () => {
     const q = buildLocalStreetsQuery({ lat: 41.8, lng: -71.4 });
-    expect(q).toContain('around:2000,41.80000,-71.40000');
-    expect(q).toContain('around:4000');
-    expect(q).toContain('around:3000');
+    // Boxes, not circles (around: timed out on the server every time).
+    expect(q).not.toContain('around');
+    expect(q).toContain(`(${boxAround({ lat: 41.8, lng: -71.4 }, 2000)})`);
+    expect(q).toContain(`(${boxAround({ lat: 41.8, lng: -71.4 }, 4000)})`);
+    expect(q).toContain(`(${boxAround({ lat: 41.8, lng: -71.4 }, 3000)})`);
     expect(q).not.toMatch(/motorway/);
     expect(q).toContain('out geom qt');
   });
@@ -121,5 +125,28 @@ describe('local streets', () => {
     // From the south end of Oak Lane you can't drive up it; the trip links straight to a street instead.
     const raw = net.planTrip({ lat: 0.0899, lng: 0.21 }, { lat: 0.1001, lng: 0.2301 }, 'A', 'B');
     expect(raw.steps.some((s) => s.name === 'Oak Lane')).toBe(false);
+  });
+});
+
+describe('street box', () => {
+  it('reaches the same distance north-south and east-west', () => {
+    const [s, w, n, e] = boxAround({ lat: 40, lng: -100 }, 2000).split(',').map(Number);
+    expect((n - s) * 111_320).toBeCloseTo(4000, -1);
+    expect((e - w) * 111_320 * Math.cos((40 * Math.PI) / 180)).toBeCloseTo(4000, -1);
+  });
+});
+
+describe('street step summary', () => {
+  const st = (o: Partial<StreetStatus>): StreetStatus => ({ state: 'done', bytes: 0, started: 1000, ended: 10_000, server: '', tries: [], pieces: 0, plannerNote: '', ...o });
+  it('says how many pieces, from which server, how long', () => {
+    expect(streetsSummary([st({ pieces: 1000, server: 'overpass-api.de' }), st({ pieces: 240, server: 'overpass-api.de' })], 'done')).toBe(
+      '1,240 street pieces · overpass-api.de · 9 s',
+    );
+    expect(streetsSummary([st({ state: 'cached' }), st({ state: 'cached' })], 'done')).toBe('saved on the phone from last time');
+  });
+  it('names the slow servers when planning moves on', () => {
+    const s = streetsSummary([st({ state: 'waiting', ended: 0, tries: ['overpass-api.de too slow 12.0s'] })], 'late', 20_000);
+    expect(s).toContain('took over 20 s');
+    expect(s).toContain('overpass-api.de too slow 12.0s');
   });
 });

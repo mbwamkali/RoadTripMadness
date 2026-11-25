@@ -1,5 +1,6 @@
 import { haversineMeters, type LatLng } from './geo';
 import { overpassQuery, type OsmElement } from './overpass';
+import { addMapLog, saveMapLog, type MapLogEntry } from './mapLog';
 import { nodeKey, type RoadFile } from '../offline/roadNet';
 
 /**
@@ -33,6 +34,12 @@ const CLASS_OF: Record<string, number> = {
   living_street: 5,
 };
 
+/**
+ * Each class is fetched from a square box around the start or end, reaching
+ * this far north, south, east and west. A box is much quicker for the server
+ * than a circle (around:): measured 2026-11-25, the circle query timed out
+ * after 25-30 s every time while the box came back in 8-10 s.
+ */
 /** Side streets this close to the start or end are fetched. */
 export const MINOR_RADIUS_M = 2_000;
 /** Secondary and tertiary roads reach further, so the side streets connect to the highway map. */
@@ -46,22 +53,31 @@ export const MIDDLE_RADIUS_M = 4_000;
 export const MAJOR_RADIUS_M = 3_000;
 /** How long trip planning waits for the street lookup before going without it (the player can skip sooner). */
 export const LOCAL_TIMEOUT_MS = 20_000;
+/** How long one street server gets to start answering before the backup is tried. */
+export const LOCAL_PER_SERVER_MS = 12_000;
 
 const OPEN = '[access!~"^(private|no)$"][area!="yes"]';
 
+/** "south,west,north,east" for a square reaching `m` metres each way from `p`. */
+export function boxAround(p: LatLng, m: number): string {
+  const dLat = m / 111_320;
+  const dLng = m / (111_320 * Math.max(0.01, Math.cos((p.lat * Math.PI) / 180)));
+  const f = (v: number) => v.toFixed(5);
+  return `${f(p.lat - dLat)},${f(p.lng - dLng)},${f(p.lat + dLat)},${f(p.lng + dLng)}`;
+}
+
 /**
- * The Overpass query for the streets around one place. `out geom` puts each
- * way's points inline, which is about a third smaller than listing the
- * nodes separately; streets are matched to each other and to the highway
- * map by their coordinates, so node ids aren't needed.
+ * The Overpass query for the streets around one place, a box per road class.
+ * `out geom` puts each way's points inline, which is about a third smaller
+ * than listing the nodes separately; streets are matched to each other and to
+ * the highway map by their coordinates, so node ids aren't needed.
  */
 export function buildLocalStreetsQuery(p: LatLng): string {
-  const at = `${p.lat.toFixed(5)},${p.lng.toFixed(5)}`;
   return `[out:json][timeout:25];
 (
-way(around:${MINOR_RADIUS_M},${at})[highway~"^(unclassified|residential|living_street)$"]${OPEN};
-way(around:${MIDDLE_RADIUS_M},${at})[highway~"^(secondary|tertiary)(_link)?$"]${OPEN};
-way(around:${MAJOR_RADIUS_M},${at})[highway~"^(trunk|primary)(_link)?$"]${OPEN};
+way[highway~"^(unclassified|residential|living_street)$"]${OPEN}(${boxAround(p, MINOR_RADIUS_M)});
+way[highway~"^(secondary|tertiary)(_link)?$"]${OPEN}(${boxAround(p, MIDDLE_RADIUS_M)});
+way[highway~"^(trunk|primary)(_link)?$"]${OPEN}(${boxAround(p, MAJOR_RADIUS_M)});
 );
 out geom qt;`;
 }
@@ -238,6 +254,16 @@ export interface StreetStatus {
   bytes: number;
   /** When the request went out (ms since epoch). */
   started: number;
+  /** When it finished (ms since epoch), 0 while running. */
+  ended: number;
+  /** The server that answered. */
+  server: string;
+  /** One line per server tried ("overpass-api.de too slow 12.0s"). */
+  tries: string[];
+  /** Street pieces found. */
+  pieces: number;
+  /** Set by the trip planner when it moved on without this lookup ("moved on at 20 s", "skipped"). */
+  plannerNote: string;
 }
 
 export interface StreetLookup {
@@ -306,15 +332,31 @@ async function saveStreets(p: LatLng, file: RoadFile): Promise<void> {
 }
 
 /** Runs the Overpass query ahead of other lookups, reporting bytes as they arrive. Null on any failure. */
-function fetchStreets(p: LatLng, status: StreetStatus, signal: AbortSignal): Promise<{ elements?: OsmElement[] } | null> {
+function fetchStreets(
+  p: LatLng,
+  status: StreetStatus,
+  signal: AbortSignal,
+  report: { entry?: MapLogEntry },
+): Promise<{ elements?: OsmElement[] } | null> {
   return overpassQuery(buildLocalStreetsQuery(p), {
     timeoutMs: 60_000,
+    perServerMs: LOCAL_PER_SERVER_MS,
     priority: 'streets',
     signal,
-    onAnswer: () => (status.state = 'receiving'),
+    label: 'local streets',
+    near: roughPlace(p),
+    report,
+    onAnswer: (server) => {
+      status.state = 'receiving';
+      status.server = server;
+    },
+    onTry: (line) => status.tries.push(line),
     onBytes: (bytes) => (status.bytes = bytes),
   });
 }
+
+/** A place to about 1 km, for the lookup log. */
+const roughPlace = (p: LatLng) => `${p.lat.toFixed(2)},${p.lng.toFixed(2)}`;
 
 const lookups = new Map<string, StreetLookup>();
 
@@ -328,31 +370,48 @@ export function lookupStreets(p: LatLng, q: number, attribution: string): Street
   const id = `${p.lat.toFixed(4)},${p.lng.toFixed(4)}`;
   const running = lookups.get(id);
   if (running && running.status.state !== 'failed') return running;
-  const status: StreetStatus = { state: 'waiting', bytes: 0, started: Date.now() };
+  const status: StreetStatus = { state: 'waiting', bytes: 0, started: Date.now(), ended: 0, server: '', tries: [], pieces: 0, plannerNote: '' };
   const ctrl = new AbortController();
   const giveUp = setTimeout(() => ctrl.abort(), 90_000);
+  const finish = (state: StreetStatus['state']) => {
+    clearTimeout(giveUp);
+    status.state = state;
+    status.ended = Date.now();
+  };
   const file = (async () => {
     const saved = await savedStreets(p);
     if (saved) {
-      status.state = 'cached';
+      finish('cached');
+      status.pieces = saved.edges.length;
+      addMapLog({ at: status.started, what: 'local streets', near: roughPlace(p), result: 'saved', ms: status.ended - status.started, tries: [], note: `${saved.edges.length.toLocaleString('en-US')} street pieces saved on the phone` });
       return saved;
     }
     // Offline, only streets remembered on the device can help.
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-      clearTimeout(giveUp);
-      status.state = 'failed';
+      finish('failed');
+      addMapLog({ at: status.started, what: 'local streets', near: roughPlace(p), result: 'offline', ms: 0, tries: [], note: 'offline, none saved here' });
       return null;
     }
-    const json = await fetchStreets(p, status, ctrl.signal);
-    clearTimeout(giveUp);
-    if (!json) {
-      status.state = 'failed';
-      return null;
+    const report: { entry?: MapLogEntry } = {};
+    const json = await fetchStreets(p, status, ctrl.signal, report);
+    const notes: string[] = [];
+    let f: RoadFile | null = null;
+    if (json) {
+      f = localStreetsFile(json, q, attribution);
+      status.pieces = f.edges.length;
+      notes.push(`${f.edges.length.toLocaleString('en-US')} street pieces`);
+      if (f.edges.length) {
+        void saveStreets(p, f);
+        notes.push('saved for next time');
+      }
+      finish('done');
+    } else finish('failed');
+    if (status.plannerNote) notes.push(`planning ${status.plannerNote}`);
+    if (report.entry) {
+      report.entry.note = [...notes, report.entry.note].filter(Boolean).join(', ');
+      saveMapLog();
     }
-    const f = localStreetsFile(json, q, attribution);
-    status.state = 'done';
-    if (f.edges.length) void saveStreets(p, f);
-    return f.edges.length ? f : null;
+    return f?.edges.length ? f : null;
   })();
   const lookup = { status, file };
   lookups.set(id, lookup);
