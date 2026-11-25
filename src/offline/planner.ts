@@ -7,7 +7,7 @@ import type { RawRoute } from '../geo/route';
 import { loadAtlas } from './atlas';
 import { loadFeatureFiles, loadRouteFeatures } from './features';
 import { applyBakedCrossings } from './bakedCrossings';
-import { loadHighways, loadRoadIndex, nextFrame, type RoadFile } from './roadNet';
+import { loadHighways, loadRoadIndex, nextFrame, roadsUrl, type RoadFile } from './roadNet';
 import { tripCache } from './tripCache';
 
 /**
@@ -93,7 +93,7 @@ export async function addFeatures(raw: RawRoute, progress: (message: string) => 
  */
 export function prefetchStreets(p: LatLng): void {
   loadRoadIndex()
-    .then((index) => lookupStreets(p, index.q, index.attribution))
+    .then((index) => lookupStreets(p, index.q, index.attribution, index.streets, roadsUrl))
     .catch(() => {});
 }
 
@@ -171,7 +171,7 @@ export async function planTrip(
     const index = await loadRoadIndex();
     // The street lookups (often started when the places were picked) run while the highway map loads.
     // Offline they can still find streets remembered on the device.
-    const lookups = [from, to].map((p) => lookupStreets(p, index.q, index.attribution));
+    const lookups = [from, to].map((p) => lookupStreets(p, index.q, index.attribution, index.streets, roadsUrl));
     progress('Loading the highway map…', { id: 'map', state: 'active', detail: 'checking' });
     const highways = await loadHighways([from, to], (m) =>
       progress('Loading the highway map…', { id: 'map', state: 'active', detail: m.message, ...(m.total && m.received ? { fraction: m.received / m.total } : {}) }),

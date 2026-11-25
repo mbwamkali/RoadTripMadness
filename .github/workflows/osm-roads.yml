@@ -9,6 +9,7 @@ on:
     paths:
       - scripts/fetch-osm-roads.sh
       - scripts/build-osm-roads.py
+      - scripts/build-osm-streets.py
       - .github/workflows/osm-roads.yml
   schedule:
     - cron: '17 6 3 * *' # 06:17 UTC on the 3rd of every month
@@ -35,13 +36,14 @@ jobs:
         with:
           python-version: '3.12'
       - run: sudo apt-get update -q && sudo apt-get install -y -q osmium-tool
-      - run: pip install osmium
+      - run: pip install osmium numpy
       - name: Download and filter OpenStreetMap (lower 48 states and DC)
         run: sh scripts/fetch-osm-roads.sh "$RUNNER_TEMP/osm"
       - name: Build road files
         run: |
           python3 scripts/build-osm-roads.py "$RUNNER_TEMP"/osm/roads-*.osm.pbf osm-roads \
             --source "OpenStreetMap state extracts from osm.download.movisda.io, $(date -u +%Y-%m-%d)"
+          python3 scripts/build-osm-streets.py "$RUNNER_TEMP"/osm/streets-*.osm.pbf osm-roads/streets --index osm-roads/index.json
           tar -czf osm-roads.tar.gz -C osm-roads .
           ls -l osm-roads.tar.gz
       - name: Store on the release

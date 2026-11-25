@@ -1,6 +1,7 @@
 import { haversineMeters, type LatLng } from './geo';
 import { overpassQuery, type OsmElement } from './overpass';
-import { addMapLog, saveMapLog, type MapLogEntry } from './mapLog';
+import { addMapLog, saveMapLog, secs, type MapLogEntry } from './mapLog';
+import { streetsFromSquares, type StreetsInfo } from './streetTiles';
 import { nodeKey, type RoadFile } from '../offline/roadNet';
 
 /**
@@ -104,7 +105,8 @@ function parseLanes(v: string | undefined): number {
   return n > 0 && n < 20 ? n : 0;
 }
 
-interface Way {
+/** One street, as read from an Overpass answer or a street square (src/geo/streetTiles.ts). */
+export interface Way {
   cls: number;
   oneway: boolean;
   ref: string;
@@ -117,18 +119,8 @@ interface Way {
 
 type OverpassWay = OsmElement & { id: number; nodes?: number[] };
 
-/**
- * Turns an Overpass answer into a road file. Takes ways with inline
- * geometry (`out geom`) or ways followed by their nodes. Ways are split
- * where they meet, like the build script does. With `joinWith`, parts that
- * never reach one of its nodes are dropped (see keepJoined).
- */
-export function localStreetsFile(
-  json: { elements?: OsmElement[] },
-  q: number,
-  attribution: string,
-  joinWith: RoadFile[] | null = null,
-): RoadFile {
+/** The streets in an Overpass answer (ways with inline geometry, or ways followed by their nodes). */
+export function waysFromOverpass(json: { elements?: OsmElement[] }, q: number): Way[] {
   const where = new Map<number, [number, number]>();
   for (const e of (json.elements ?? []) as OverpassWay[])
     if (e.type === 'node' && e.lat !== undefined && e.lon !== undefined) where.set(e.id, [pyRound(e.lon * q), pyRound(e.lat * q)]);
@@ -158,7 +150,26 @@ export function localStreetsFile(
       }
     }
   }
+  return ways;
+}
 
+/**
+ * Turns an Overpass answer into a road file. Takes ways with inline
+ * geometry (`out geom`) or ways followed by their nodes. Ways are split
+ * where they meet, like the build script does. With `joinWith`, parts that
+ * never reach one of its nodes are dropped (see keepJoined).
+ */
+export function localStreetsFile(
+  json: { elements?: OsmElement[] },
+  q: number,
+  attribution: string,
+  joinWith: RoadFile[] | null = null,
+): RoadFile {
+  return roadFileFromWays(waysFromOverpass(json, q), q, attribution, joinWith);
+}
+
+/** Turns streets into a road file, split where they meet (see localStreetsFile). */
+export function roadFileFromWays(ways: Way[], q: number, attribution: string, joinWith: RoadFile[] | null = null): RoadFile {
   // A way is split at any point it shares with another way (or itself), and at its ends.
   const key = (p: [number, number]) => nodeKey(p[0], p[1]);
   const uses = new Map<number, number>();
@@ -366,7 +377,7 @@ const lookups = new Map<string, StreetLookup>();
  * often in by the time the player presses Plan. A place looked up before
  * (within 250 m, in the last 60 days) comes from the device instead.
  */
-export function lookupStreets(p: LatLng, q: number, attribution: string): StreetLookup {
+export function lookupStreets(p: LatLng, q: number, attribution: string, squares?: StreetsInfo, squareUrl?: (path: string) => string): StreetLookup {
   const id = `${p.lat.toFixed(4)},${p.lng.toFixed(4)}`;
   const running = lookups.get(id);
   if (running && running.status.state !== 'failed') return running;
@@ -386,10 +397,36 @@ export function lookupStreets(p: LatLng, q: number, attribution: string): Street
       addMapLog({ at: status.started, what: 'local streets', near: roughPlace(p), result: 'saved', ms: status.ended - status.started, tries: [], note: `${saved.edges.length.toLocaleString('en-US')} street pieces saved on the phone` });
       return saved;
     }
+    // The road build's own street squares: quick, and no public server involved.
+    if (squares && squareUrl) {
+      const t0 = Date.now();
+      const got = await streetsFromSquares(p, squares, squareUrl, { minorM: MINOR_RADIUS_M, middleM: MIDDLE_RADIUS_M, majorM: MAJOR_RADIUS_M }, ctrl.signal);
+      const line = got ? `street squares ok ${secs(Date.now() - t0)} (${got.squares} squares)` : `street squares failed ${secs(Date.now() - t0)}`;
+      status.tries.push(line);
+      if (got) {
+        status.server = 'street squares';
+        status.bytes = got.bytes;
+        const f = roadFileFromWays(got.ways, q, attribution);
+        status.pieces = f.edges.length;
+        finish('done');
+        addMapLog({
+          at: status.started,
+          what: 'local streets',
+          near: roughPlace(p),
+          result: f.edges.length ? 'found' : 'none',
+          ms: status.ended - status.started,
+          bytes: got.bytes,
+          tries: [line],
+          note: `${f.edges.length.toLocaleString('en-US')} street pieces`,
+        });
+        if (f.edges.length) void saveStreets(p, f);
+        return f.edges.length ? f : null;
+      }
+    }
     // Offline, only streets remembered on the device can help.
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
       finish('failed');
-      addMapLog({ at: status.started, what: 'local streets', near: roughPlace(p), result: 'offline', ms: 0, tries: [], note: 'offline, none saved here' });
+      addMapLog({ at: status.started, what: 'local streets', near: roughPlace(p), result: 'offline', ms: 0, tries: [...status.tries], note: 'offline, none saved here' });
       return null;
     }
     const report: { entry?: MapLogEntry } = {};
