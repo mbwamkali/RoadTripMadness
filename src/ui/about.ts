@@ -164,6 +164,7 @@ export function showAbout(back: () => void, buildLine: () => HTMLElement): void 
           '.',
         ),
       ),
+      h('section', { class: 'about-section' }, h('h3', {}, '🤖 Made with AI help'), h('p', {}, 'Code and content created with AI assistance.')),
       h('section', { class: 'about-section' }, h('h3', {}, '📍 Where you can drive'), h('p', {}, COVERAGE_NOTE)),
       h(
         'section',
