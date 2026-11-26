@@ -5,7 +5,8 @@ usage: python3 scripts/build-osm-streets.py <streets-XX.osm.pbf ...> <out_dir> [
 
 Input: state extracts cut down by scripts/fetch-osm-roads.sh to streets
 (trunk, primary, secondary, tertiary, unclassified, residential,
-living_street and their links; motorway links only to find junctions).
+living_street and their links; motorway links only to find junctions)
+and the places a town stop can have.
 Output: <out_dir>/<x>_<y>.bin, one file per TILE_DEG square
 (x = floor(lng / TILE_DEG), y = floor(lat / TILE_DEG)), gzip-compressed.
 With --index, the road build's index.json gets a "streets" entry so the
@@ -20,7 +21,7 @@ than DENSE_KM of side streets in a ~1 km cell) side streets are left out,
 so big cities keep their main roads and small towns keep every street.
 
 Square format (all integers are unsigned LEB128 varints; signed ones are
-zigzag-encoded), version 1, gzip on top:
+zigzag-encoded), version 2, gzip on top:
 
   magic 'RTS1'
   varint tileX + 1000, tileY + 1000, q / 1000
@@ -37,6 +38,10 @@ zigzag-encoded), version 1, gzip on top:
     points: the first point of each way relative to the previous way's
             first point (the square's corner for the first), then each
             point relative to the one before; x then y, zigzag.
+  version 2 adds the places a town stop can have (gas, garage, grocery,
+  hardware, gun shop, pharmacy, police, junkyard, barn, motel):
+  varint placeCount, then kind (index in PLACE_KINDS) for each, nameIndex + 1
+  for each, then each point relative to the one before (the corner first).
 
 The data is from OpenStreetMap and must stay under the ODbL; see
 https://www.openstreetmap.org/copyright.
@@ -57,15 +62,45 @@ import osmium
 
 Q = 100_000  # same as build-osm-roads.py, so shared points line up exactly
 TILE_DEG = 0.25
-SIMPLIFY_M = 15
+SIMPLIFY_M = 15  # side streets bend more often than highways; 15 m keeps their shape
 # Side streets are dropped from a DENSE_CELL x DENSE_CELL degree square (about 1 km) holding more than DENSE_KM of them.
 DENSE_CELL = 0.01
-DENSE_KM = 8.0  # side streets bend more often than highways; 15 m keeps their shape
+DENSE_KM = 8.0
 CLASS = {
     'trunk': 1, 'trunk_link': 1, 'primary': 2, 'primary_link': 2,
     'secondary': 3, 'secondary_link': 3, 'tertiary': 4, 'tertiary_link': 4,
     'unclassified': 5, 'residential': 5, 'living_street': 5,
 }
+# Places a town stop can have, in the game's order (src/game/stops.ts PlaceKind).
+PLACE_KINDS = ['pumps', 'garage', 'grocery', 'hardware', 'gunshop', 'pharmacy', 'police', 'junkyard', 'barn', 'motel']
+
+
+def place_kind(t):
+    """Which town place an OpenStreetMap object is (same rules as placeKindOf in src/town/layout.ts), or None."""
+    a, sh = t.get('amenity'), t.get('shop')
+    if a == 'fuel':
+        return 'pumps'
+    if a == 'police':
+        return 'police'
+    if a == 'pharmacy' or sh == 'chemist':
+        return 'pharmacy'
+    if sh in ('car_repair', 'tyres') or t.get('craft') == 'car_repair':
+        return 'garage'
+    if sh in ('hardware', 'doityourself'):
+        return 'hardware'
+    if sh in ('supermarket', 'convenience', 'grocery', 'general'):
+        return 'grocery'
+    if sh in ('hunting', 'outdoor', 'weapons'):
+        return 'gunshop'
+    if t.get('tourism') in ('motel', 'hotel', 'guest_house'):
+        return 'motel'
+    if t.get('industrial') == 'scrap_yard':
+        return 'junkyard'
+    if (t.get('landuse') == 'farmyard' and 'name' in t) or sh == 'farm':
+        return 'barn'
+    return None
+
+
 # Only counted, so their junctions with streets are kept; not written.
 COUNT_ONLY = {'motorway', 'motorway_link'}
 
@@ -153,10 +188,33 @@ class Ways(osmium.SimpleHandler):
         self.seen = seen
         self.count = 0
 
+    def place(self, kind, oid, name, lon, lat):
+        key = hash(('place', oid))
+        if key in self.seen:
+            return
+        self.seen.add(key)
+        # A place is stored like a way with one point and a negative kind (see encode).
+        self.recs.append((-1 - PLACE_KINDS.index(kind), name[:28], '', 0, 0, [(round(lon * Q), round(lat * Q))]))
+
+    def node(self, n):
+        kind = place_kind(n.tags)
+        if kind:
+            self.place(kind, ('n', n.id), n.tags.get('name') or n.tags.get('brand') or '', n.location.lon, n.location.lat)
+
     def way(self, w):
         t = w.tags
         c = CLASS.get(t.get('highway'))
-        if c is None or not usable(t):
+        if c is None:
+            kind = place_kind(t)
+            if kind:
+                try:
+                    pts = [(n.lon, n.lat) for n in w.nodes]
+                except osmium.InvalidLocationError:
+                    return
+                if pts:
+                    self.place(kind, ('w', w.id), t.get('name') or t.get('brand') or '', sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts))
+            return
+        if not usable(t):
             return
         try:
             nodes = [(n.ref, n.lon, n.lat) for n in w.nodes]
@@ -241,10 +299,12 @@ def zz(n: int) -> int:
 
 
 def encode(tx: int, ty: int, recs) -> bytes:
+    places = sorted((r for r in recs if r[0] < 0), key=lambda r: (r[5][0][1], r[5][0][0]))
+    recs = [r for r in recs if r[0] >= 0]
     # Ways in a sweep order, so each first point is near the last one.
     recs = sorted(recs, key=lambda r: (r[5][0][1] // 500, r[5][0][0] if (r[5][0][1] // 500) % 2 == 0 else -r[5][0][0]))
     use = Counter()
-    for r in recs:
+    for r in recs + places:
         if r[1]:
             use[r[1]] += 1
         if r[2]:
@@ -283,6 +343,18 @@ def encode(tx: int, ty: int, recs) -> bytes:
             uvarint(zz(p[0] - x), out)
             uvarint(zz(p[1] - y), out)
             x, y = p
+    # Version 2: the town places after the ways.
+    uvarint(len(places), out)
+    for r in places:
+        uvarint(-1 - r[0], out)
+    for r in places:
+        uvarint(six[r[1]] + 1 if r[1] else 0, out)
+    px, py = tx * span, ty * span
+    for r in places:
+        x, y = r[5][0]
+        uvarint(zz(x - px), out)
+        uvarint(zz(y - py), out)
+        px, py = x, y
     return gzip.compress(bytes(out), compresslevel=9, mtime=0)
 
 
@@ -351,7 +423,7 @@ def main():
     if args.index:
         with open(args.index) as fh:
             index = json.load(fh)
-        index['streets'] = {'dir': os.path.basename(os.path.normpath(out_dir)), 'tileDeg': TILE_DEG, 'version': 1, 'squares': len(sizes), 'bytes': total}
+        index['streets'] = {'dir': os.path.basename(os.path.normpath(out_dir)), 'tileDeg': TILE_DEG, 'version': 2, 'squares': len(sizes), 'bytes': total}
         with open(args.index, 'w') as fh:
             json.dump(index, fh, separators=(',', ':'))
 

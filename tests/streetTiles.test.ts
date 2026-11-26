@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { decodeStreetSquare, squaresAround, streetsFromSquares } from '../src/geo/streetTiles';
+import { decodeSquare, decodeStreetSquare, squaresAround, streetsFromSquares } from '../src/geo/streetTiles';
+import { pickStreetsFromWays } from '../src/geo/streets';
 import { roadFileFromWays } from '../src/geo/localStreets';
 
 // A real square from the road build (Texas, 31.25-31.5 N, 95.5-95.25 W; OpenStreetMap, ODbL).
@@ -22,6 +23,20 @@ describe('street squares', () => {
     expect(ways.some((w) => w.name)).toBe(true);
     // Streets meet at shared points, so the road file has more pieces than ways.
     expect(roadFileFromWays(ways, 1e5, 'x').edges.length).toBeGreaterThan(ways.length);
+  });
+
+  it('reads the town places in a version 2 square', () => {
+    const { places } = decodeSquare(gunzipSync(SQUARE));
+    expect(places.length).toBeGreaterThan(3);
+    expect(places.some((p) => p.kind === 'pumps')).toBe(true);
+    expect(places.some((p) => p.kind === 'grocery' && p.name)).toBe(true);
+  });
+
+  it('names the cross street at a turn-off from the squares', () => {
+    const ways = decodeStreetSquare(gunzipSync(SQUARE));
+    const [name] = pickStreetsFromWays(ways, [{ lat: 31.3182, lng: -95.4563 }], ['']);
+    expect(typeof name).toBe('string');
+    expect(pickStreetsFromWays(ways, [{ lat: 10, lng: 10 }], [''])).toEqual([null]);
   });
 
   it('finds the squares a box touches', () => {

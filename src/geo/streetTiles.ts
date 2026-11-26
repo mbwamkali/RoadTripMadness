@@ -1,5 +1,6 @@
 import type { LatLng } from './geo';
 import type { Way } from './localStreets';
+import type { PlaceKind } from '../game/stops';
 
 /**
  * Street squares made by the monthly road build (scripts/build-osm-streets.py):
@@ -17,8 +18,25 @@ export interface StreetsInfo {
   bytes: number;
 }
 
-/** Reads one square (already unzipped). Throws on a file it doesn't understand. */
+/** A place a town stop can have, from a version 2 square. */
+export interface SquarePlace {
+  kind: PlaceKind;
+  name: string;
+  /** In 1/q degrees. */
+  x: number;
+  y: number;
+}
+
+/** Place kinds in the build's order (scripts/build-osm-streets.py PLACE_KINDS). */
+const PLACE_KINDS: PlaceKind[] = ['pumps', 'garage', 'grocery', 'hardware', 'gunshop', 'pharmacy', 'police', 'junkyard', 'barn', 'motel'];
+
+/** Reads one square's streets (already unzipped). Throws on a file it doesn't understand. */
 export function decodeStreetSquare(buf: Uint8Array): Way[] {
+  return decodeSquare(buf).ways;
+}
+
+/** Reads one square: its streets, and its town places when the square has them (version 2). */
+export function decodeSquare(buf: Uint8Array): { ways: Way[]; places: SquarePlace[] } {
   let at = 0;
   const u = () => {
     let n = 0;
@@ -80,7 +98,21 @@ export function decodeStreetSquare(buf: Uint8Array): Way[] {
       pts,
     });
   }
-  return ways;
+  const places: SquarePlace[] = [];
+  if (at < buf.length) {
+    const m = u();
+    const kinds = Array.from({ length: m }, u);
+    const names = Array.from({ length: m }, u);
+    let x = tx * span;
+    let y = ty * span;
+    for (let i = 0; i < m; i++) {
+      x += z();
+      y += z();
+      const kind = PLACE_KINDS[kinds[i]];
+      if (kind) places.push({ kind, name: names[i] ? strings[names[i] - 1] : '', x, y });
+    }
+  }
+  return { ways, places };
 }
 
 /** Square size the decoder assumes; set from the road index before reading. */
@@ -131,26 +163,11 @@ export async function streetsFromSquares(
   radii: { minorM: number; middleM: number; majorM: number },
   signal?: AbortSignal,
 ): Promise<SquareResult | null> {
-  if (info.version !== 1 || typeof DecompressionStream === 'undefined') return null;
-  squareDeg = info.tileDeg;
+  if (info.version < 1 || info.version > 2 || typeof DecompressionStream === 'undefined') return null;
   const reach = Math.max(radii.minorM, radii.middleM, radii.majorM);
-  const squares = squaresAround(p, reach, info.tileDeg);
-  let bytes = 0;
-  const all: Way[] = [];
-  try {
-    await Promise.all(
-      squares.map(async ([x, y]) => {
-        const r = await fetch(url(`${info.dir}/${x}_${y}.bin`), { signal });
-        if (r.status === 404) return;
-        if (!r.ok) throw new Error(`street square ${r.status}`);
-        const data = await r.arrayBuffer();
-        bytes += data.byteLength;
-        all.push(...decodeStreetSquare(await gunzip(data)));
-      }),
-    );
-  } catch {
-    return null;
-  }
+  const got = await loadSquares([p], reach, info, url, signal);
+  if (!got) return null;
+  const { ways: all, bytes, squares } = got;
   // A street crossing a square's edge is in both squares.
   const seen = new Set<string>();
   const boxes = {
@@ -166,5 +183,60 @@ export async function streetsFromSquares(
     const q = 100_000;
     return w.pts.some(([x, y]) => y / q >= s && y / q <= n && x / q >= wst && x / q <= e);
   });
-  return { ways, bytes, squares: squares.length };
+  return { ways, bytes, squares };
+}
+
+const decoded = new Map<string, Promise<{ ways: Way[]; places: SquarePlace[]; bytes: number }>>();
+const KEEP_DECODED = 24;
+
+/**
+ * The squares within `reachM` of any of the points, read and kept in memory
+ * (the last KEEP_DECODED), so a trip's town stops and turn-off names don't
+ * download the same square twice. Null when a square can't be read.
+ */
+export async function loadSquares(
+  points: LatLng[],
+  reachM: number,
+  info: StreetsInfo,
+  url: (path: string) => string,
+  signal?: AbortSignal,
+): Promise<{ ways: Way[]; places: SquarePlace[]; bytes: number; squares: number } | null> {
+  if (info.version < 1 || info.version > 2 || typeof DecompressionStream === 'undefined') return null;
+  squareDeg = info.tileDeg;
+  const keys = new Set<string>();
+  for (const p of points) for (const [x, y] of squaresAround(p, reachM, info.tileDeg)) keys.add(`${x}_${y}`);
+  try {
+    const parts = await Promise.all(
+      [...keys].map((k) => {
+        const href = url(`${info.dir}/${k}.bin`);
+        let job = decoded.get(href);
+        if (!job) {
+          job = (async () => {
+            const r = await fetch(href, { signal });
+            if (r.status === 404) return { ways: [], places: [], bytes: 0 };
+            if (!r.ok) throw new Error(`street square ${r.status}`);
+            const data = await r.arrayBuffer();
+            return { ...decodeSquare(await gunzip(data)), bytes: data.byteLength };
+          })();
+          job.catch(() => decoded.delete(href));
+          decoded.set(href, job);
+          while (decoded.size > KEEP_DECODED) decoded.delete(decoded.keys().next().value!);
+        }
+        return job;
+      }),
+    );
+    return {
+      ways: parts.flatMap((x) => x.ways),
+      places: parts.flatMap((x) => x.places),
+      bytes: parts.reduce((n, x) => n + x.bytes, 0),
+      squares: keys.size,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Forgets the squares kept in memory (for tests). */
+export function forgetSquares(): void {
+  decoded.clear();
 }

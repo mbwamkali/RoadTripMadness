@@ -28,10 +28,12 @@ for s in $STATES; do
     n/tourism=attraction,viewpoint,theme_park \
     n/historic=monument,memorial,castle,fort,ruins,battlefield \
     n/man_made=tower,lighthouse,water_tower,windmill
-  # Local streets for the street squares (scripts/build-osm-streets.py); motorway
-  # links only so their junctions with streets are found.
+  # Local streets and town places for the street squares (scripts/build-osm-streets.py);
+  # motorway links only so their junctions with streets are found.
   osmium tags-filter --overwrite --no-progress -o "$DIR/streets-$s.osm.pbf" "$DIR/US-$s.osm.pbf" \
-    w/highway=motorway,motorway_link,trunk,trunk_link,primary,primary_link,secondary,secondary_link,tertiary,tertiary_link,unclassified,residential,living_street
+    w/highway=motorway,motorway_link,trunk,trunk_link,primary,primary_link,secondary,secondary_link,tertiary,tertiary_link,unclassified,residential,living_street \
+    nw/amenity=fuel,police,pharmacy nw/craft=car_repair nw/tourism=motel,hotel,guest_house nw/industrial=scrap_yard nw/landuse=farmyard \
+    nw/shop=supermarket,convenience,grocery,general,hardware,doityourself,car_repair,tyres,chemist,farm,hunting,outdoor,weapons
   rm -f "$DIR/US-$s.osm.pbf"
 done
 # The build reads the state files one by one. Merging them would keep only
