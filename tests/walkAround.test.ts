@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { walkAround, type GroundBox } from '../src/town/walkAround';
+import { offTheRide, walkAround, type GroundBox } from '../src/town/walkAround';
 
 const car: GroundBox = { x: 0, z: 0, yaw: 0, halfW: 1, halfL: 2.3 };
 /** Does the path from a through via to b stay out of the box (grown by `room`)? */
@@ -37,8 +37,24 @@ describe('walking round the parked ride', () => {
     expect(via.length).toBeGreaterThan(0);
     expect(clear(a, via, b, truck)).toBe(true);
   });
-  it('lets you get in and out (an end inside the box room)', () => {
-    expect(walkAround({ x: 1.4, z: 0 }, { x: 8, z: 0 }, car)).toEqual([]);
+  it('steps out from right beside the car, then goes round it to the far side', () => {
+    const a = { x: 1.4, z: 0 };
+    const b = { x: -8, z: 0 };
+    const via = walkAround(a, b, car);
+    expect(via[0].x).toBeGreaterThan(1.59);
+    expect(Math.abs(via[0].z)).toBeLessThan(0.01);
+    expect(clear(via[0], via.slice(1), b, car)).toBe(true);
+  });
+  it('walks up to the car door round it, ending beside it', () => {
+    const a = { x: -8, z: 0 };
+    const b = { x: 1.4, z: 0 };
+    const via = walkAround(a, b, car);
+    const last = via[via.length - 1];
+    expect(last.x).toBeGreaterThan(1.59);
+    expect(clear(a, via.slice(0, -1), last, car)).toBe(true);
+  });
+  it('leaves a walk alone when both ends are beside the car', () => {
+    expect(walkAround({ x: 1.4, z: 0 }, { x: 1.4, z: 1 }, car)).toEqual([]);
   });
   it('goes round a small motorcycle too', () => {
     const bike: GroundBox = { x: 0, z: 0, yaw: Math.PI / 2, halfW: 0.45, halfL: 1.1 };
@@ -46,5 +62,10 @@ describe('walking round the parked ride', () => {
     const b = { x: 0, z: 3 };
     const via = walkAround(a, b, bike);
     expect(clear(a, via, b, bike)).toBe(true);
+  });
+  it('moves a spot on the car to beside it, and leaves others alone', () => {
+    const o = offTheRide({ x: 0.3, z: 2.0 }, car);
+    expect(o.z).toBeGreaterThan(2.89);
+    expect(offTheRide({ x: 1.5, z: 0 }, car)).toEqual({ x: 1.5, z: 0 });
   });
 });

@@ -32,6 +32,8 @@ export interface Vehicle {
   hostile?: boolean;
   /** Seconds until a hostile driver's next shot. */
   fireIn?: number;
+  /** Taking aim: the next shot is less than HOSTILE_WINDUP seconds away (shown as a warning). */
+  windup?: boolean;
 }
 
 export const VEHICLE_LENGTH: Record<VehicleKind, number> = { car: 4.4, motorcycle: 2.4, pickup: 5, van: 5.2, truck: 14 };

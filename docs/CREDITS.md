@@ -1,5 +1,7 @@
 # Credits for bundled assets
 
+Code and content created with AI assistance. The AI tools used for the detailed 3D models and their concept pictures are listed under "Detailed models" below.
+
 Greyscale detail maps made from CC0 (public domain) photos on Poly Haven
 (https://polyhaven.com/license). They are resized and their contrast is
 adjusted so the biome colour still sets the hue.

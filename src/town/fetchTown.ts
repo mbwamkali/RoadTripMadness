@@ -1,6 +1,53 @@
 import type { LatLng } from '../geo/geo';
 import { overpassJson } from '../geo/overpass';
-import { parseTownOsm, townQuery, type TownMapData } from './layout';
+import { parseTownOsm, TOWN_RADIUS_M, townQuery, type TownMapData } from './layout';
+import { loadSquares } from '../geo/streetTiles';
+import { addMapLog, secs } from '../geo/mapLog';
+import { loadRoadIndex, roadsUrl } from '../offline/roadNet';
+
+/** Street-square classes as OpenStreetMap road types (side streets all count as residential). */
+const SQUARE_CLASS = ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'residential'];
+
+/**
+ * The town's streets and places from the road build's street squares
+ * (version 2 squares carry the places). Null when the build has no squares
+ * with places, or one can't be read, so the town falls back to Overpass.
+ */
+export async function townFromSquares(p: LatLng): Promise<TownMapData | null> {
+  const t0 = Date.now();
+  const index = await loadRoadIndex().catch(() => null);
+  const info = index?.streets;
+  if (!info || info.version < 2) return null;
+  const got = await loadSquares([p], TOWN_RADIUS_M, info, roadsUrl);
+  const line = `street squares ${got ? 'ok' : 'failed'} ${secs(Date.now() - t0)}`;
+  if (!got) {
+    addMapLog({ at: t0, what: 'town', result: 'failed', ms: Date.now() - t0, tries: [line] });
+    return null;
+  }
+  const q = index.q;
+  const kx = 111_320 * Math.cos((p.lat * Math.PI) / 180);
+  const ky = 110_540;
+  const local = (x: number, y: number) => ({ x: (x / q - p.lng) * kx, y: (y / q - p.lat) * ky });
+  const near = (v: { x: number; y: number }) => Math.hypot(v.x, v.y) <= TOWN_RADIUS_M;
+  const out: TownMapData = { streets: [], pois: [] };
+  const seen = new Set<string>();
+  for (const w of got.ways) {
+    // Same road types as the Overpass town query: primary down to side streets.
+    if (w.cls < 2) continue;
+    const pts = w.pts.map(([x, y]) => local(x, y));
+    if (!pts.some(near)) continue;
+    const key = `${w.pts[0]},${w.pts[w.pts.length - 1]},${w.pts.length}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.streets.push({ name: w.name, cls: SQUARE_CLASS[w.cls], pts });
+  }
+  for (const pl of got.places) {
+    const at = local(pl.x, pl.y);
+    if (near(at)) out.pois.push({ kind: pl.kind, name: pl.name, ...at });
+  }
+  addMapLog({ at: t0, what: 'town', near: `${p.lat.toFixed(2)},${p.lng.toFixed(2)}`, result: 'found', ms: Date.now() - t0, bytes: got.bytes, tries: [line], note: `${out.streets.length} streets, ${out.pois.length} places` });
+  return out;
+}
 
 /**
  * Looks up a town's real streets and shops (one small Overpass query per
@@ -42,7 +89,12 @@ export function lookupTown(p: LatLng): Promise<TownMapData | null> {
     job = (async () => {
       const saved = await readSaved(k);
       if (saved) return saved;
-      const json = await overpassJson(townQuery(p), TOWN_LOOKUP_MS);
+      const fromSquares = await townFromSquares(p);
+      if (fromSquares) {
+        void save(k, fromSquares);
+        return fromSquares;
+      }
+      const json = await overpassJson(townQuery(p), TOWN_LOOKUP_MS, 'town');
       if (!json) return null;
       const data = parseTownOsm(json, p);
       void save(k, data);

@@ -47,10 +47,13 @@ function crosses(a: P2, b: P2, hu: number, hv: number): boolean {
 /**
  * The corners to walk via (in order, world x/z) to get from `from` to `to`
  * without going through `box` grown by `room` on every side. Empty when the
- * straight line is already clear, or when either end is inside the grown box
- * (getting in or out of the car).
+ * straight line is already clear. An end inside the grown box (right beside
+ * the car) steps straight out to its nearest edge first; empty when both are.
  */
-export function walkAround(from: P2, to: P2, box: GroundBox, room = 0.6): P2[] {
+/** Room kept round the parked ride when walking past it (m). */
+export const WALK_ROOM = 0.6;
+
+export function walkAround(from: P2, to: P2, box: GroundBox, room = WALK_ROOM): P2[] {
   const s = Math.sin(box.yaw);
   const c = Math.cos(box.yaw);
   // Into the box's own frame: u across (its left), v along (its front).
@@ -62,12 +65,27 @@ export function walkAround(from: P2, to: P2, box: GroundBox, room = 0.6): P2[] {
   const world = (p: P2): P2 => ({ x: box.x + p.x * c + p.z * s, z: box.z - p.x * s + p.z * c });
   const hu = box.halfW + room;
   const hv = box.halfL + room;
-  const a = local(from);
-  const b = local(to);
+  let a = local(from);
+  let b = local(to);
   const inside = (p: P2) => Math.abs(p.x) < hu && Math.abs(p.z) < hv;
-  if (inside(a) || inside(b) || !crosses(a, b, hu, hv)) return [];
-  // Shortest path over start, end and the four corners (nudged out a touch so the legs between them clear).
   const k = 1.02;
+  // A spot too close to the ride (just got out, or the walk ends by its door)
+  // first steps straight out to the nearest edge of the room around it.
+  const out = (p: P2): P2 =>
+    hu - Math.abs(p.x) < hv - Math.abs(p.z) ? { x: (p.x < 0 ? -hu : hu) * k, z: p.z } : { x: p.x, z: (p.z < 0 ? -hv : hv) * k };
+  if (inside(a) && inside(b)) return [];
+  const before: P2[] = [];
+  const after: P2[] = [];
+  if (inside(a)) {
+    a = out(a);
+    before.push(world(a));
+  }
+  if (inside(b)) {
+    b = out(b);
+    after.push(world(b));
+  }
+  if (!crosses(a, b, hu, hv)) return [...before, ...after];
+  // Shortest path over start, end and the four corners (nudged out a touch so the legs between them clear).
   const nodes: P2[] = [a, b, { x: hu * k, z: hv * k }, { x: -hu * k, z: hv * k }, { x: -hu * k, z: -hv * k }, { x: hu * k, z: -hv * k }];
   const dist = nodes.map(() => Infinity);
   const prev = nodes.map(() => -1);
@@ -89,5 +107,24 @@ export function walkAround(from: P2, to: P2, box: GroundBox, room = 0.6): P2[] {
   }
   const via: P2[] = [];
   for (let j = prev[1]; j > 1; j = prev[j]) via.unshift(world(nodes[j]));
-  return via;
+  return [...before, ...via, ...after];
+}
+
+/**
+ * A spot that lands on the ride itself (within `margin` of its body), moved
+ * straight out to the nearest edge of the room kept round it; any other spot
+ * comes back as it is. Stops a walk ending inside the car's hood.
+ */
+export function offTheRide(p: P2, box: GroundBox, room = WALK_ROOM, margin = 0.2): P2 {
+  const s = Math.sin(box.yaw);
+  const c = Math.cos(box.yaw);
+  const dx = p.x - box.x;
+  const dz = p.z - box.z;
+  const u = dx * c - dz * s;
+  const v = dx * s + dz * c;
+  if (Math.abs(u) >= box.halfW + margin || Math.abs(v) >= box.halfL + margin) return p;
+  const hu = (box.halfW + room) * 1.02;
+  const hv = (box.halfL + room) * 1.02;
+  const [ou, ov] = hu - Math.abs(u) < hv - Math.abs(v) ? [u < 0 ? -hu : hu, v] : [u, v < 0 ? -hv : hv];
+  return { x: box.x + ou * c + ov * s, z: box.z - ou * s + ov * c };
 }

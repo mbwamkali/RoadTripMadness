@@ -3,13 +3,16 @@ import * as THREE from 'three';
 import { blankBack, lit } from './materials';
 import { Path, type Vec2 } from '../geo/geo';
 import { CRUISE_SPEED, postedLimit, realKmAt } from '../geo/route';
-import { advance, damage, fuelPerUnit, upcomingStop, type GameState } from '../game/state';
+import { advance, damage, fuelPerUnit, HEART_REFILL_S, healWalker, HEARTS, heartsOf, upcomingStop, type GameState } from '../game/state';
 import { BOOST_MPH, brakeRange, CRUISE_MPH, crashScale, FREE_OVER, PROMPT_MIN, promptRange, SPEED_STEP, speedCap, speedFuelFactor, targetMph, topSpeed } from '../game/driving';
 import { structureAt, type Structure } from '../game/structures';
 import { buildStructurePart } from './structures';
 import { crossingAt, planCrossings, type RoadCrossing } from '../game/crossings';
 import { buildCrossing, crossingFootprint, crossingHalfSpan, type CrossingFit } from './crossings';
-import { coolRage, HOSTILE_RANGE, hostileShot, rageOf, rollHostile, shootVehicle } from '../game/rage';
+import { coolRage, HOSTILE_RANGE, HOSTILE_WINDUP, hostileShot, rageOf, rollHostile, shootVehicle } from '../game/rage';
+import { easeTimeScale, wantedTimeScale, zombieWindow } from '../game/zombieTime';
+import { FadingFx, hurtFlash, muzzleFlash, ShooterArrow, tracer } from './shotFx';
+import { ScreenIcons } from '../ui/screenIcons';
 import { clampLane, defaultLane, laneCenter, oncoming, Traffic, type Vehicle, type VehicleKind } from '../game/traffic';
 import { Obstacles, ramObstacle, shootObstacle, SHOOT_RANGE, type Obstacle, type ObstacleKind } from '../game/obstacles';
 import { DIFFICULTIES } from '../game/difficulty';
@@ -69,6 +72,8 @@ const MOUTH_HALF = 10;
 const TOWN_EXIT = 14;
 
 export interface DriveCallbacks {
+  /** Zombie time started (true) or ended (false): a horde is ahead and the clock is slowed. */
+  onZombieTime?(on: boolean): void;
   onEncounter(): void;
   onArrive(): void;
   onOutOfFuel(): void;
@@ -208,8 +213,15 @@ export interface RoadFight {
   setPace(pace: number): void;
   /** Nitro is burning: the car really speeds up. */
   boosting(): boolean;
+  /** The nearest horde zombie still coming, for zombie time (game/zombieTime.ts). */
+  hordeAhead(): { dist: number; closing: number; age: number } | null;
+  /** How fast game time is running against real time (below 1 in zombie time). */
+  setTimeScale(scale: number): void;
   boss: boolean;
 }
+
+/** How quickly the 🛑 Brake button slows the car (mph per second); easing off is 30. */
+export const HARD_BRAKE_MPHS = 60;
 
 /** Road past the finish (straight on), for a last boss fight that's still going when you get there. */
 const OVERTIME = CHUNK * 14;
@@ -318,6 +330,24 @@ export class DriveScene implements GameScene {
   private turning: { stop: Stop; t: number; from: THREE.Vector3; mid: THREE.Vector3; to: THREE.Vector3 } | null = null;
   private stopping = false;
   private clock = 0;
+  /** Zombie time: how fast game time runs against real time (1 = normal). */
+  timeScale = 1;
+  private zombieTimeOn = false;
+  /** The 🛑 Brake button: stopping hard, and the speed choice to go back to on Go. */
+  private hardBrake = false;
+  private beforeBrake: number | null = null;
+  /** Tracers and muzzle flashes from drivers shooting at you. */
+  private shotFx: FadingFx;
+  /** Badge on the screen edge pointing at a shooter you can't see. */
+  private shooterArrow = new ShooterArrow();
+  /** "❗" pictures over drivers about to fire, by vehicle id. */
+  private warnIcons = new Map<number, HTMLElement>();
+  private screenIcons = new ScreenIcons();
+  /** Camera shake from being shot by road-rage drivers (fights have their own). */
+  private shotShake = 0;
+  /** A red glow round your car for a moment after a hit. */
+  private hitGlow: THREE.Mesh;
+  private hitGlowT = 0;
   /** Frames since the motorcycle last looked for the rigged rider. */
   private riderTries = 0;
   private rageRng: Rng;
@@ -347,6 +377,13 @@ export class DriveScene implements GameScene {
     this.finish = path.length;
     this.path = extendPath(path, OVERTIME);
     this.car = makeRide(state.ride ?? 'car', state.upgrades);
+    this.shotFx = new FadingFx(this.scene);
+    this.hitGlow = new THREE.Mesh(
+      new THREE.BoxGeometry(2.8, 2, 5),
+      new THREE.MeshBasicMaterial({ color: 0xff2020, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }),
+    );
+    this.hitGlow.visible = false;
+    this.scene.add(this.hitGlow);
     this.fuelRate = fuelPerUnit(state.route.scale);
     this.rageRng = makeRng(state.seed ^ 0x2a6e);
     // A river landmark already draws its own crossing, so skip a bridge right on top of one.
@@ -757,8 +794,47 @@ export class DriveScene implements GameScene {
     }
   }
 
+  /** Works out zombie time for this frame and returns the time scale (real dt in). */
+  private zombieClock(realDt: number): number {
+    if (this.paused) return this.timeScale;
+    const h = this.fight?.hordeAhead() ?? null;
+    const want = wantedTimeScale(h, zombieWindow(this.state.difficulty, kidMode.on));
+    this.timeScale = easeTimeScale(this.timeScale, want, realDt);
+    if (this.timeScale > 0.995 && want === 1) this.timeScale = 1;
+    this.fight?.setTimeScale(this.timeScale);
+    const on = this.timeScale < 0.95;
+    if (on !== this.zombieTimeOn) {
+      this.zombieTimeOn = on;
+      this.cb.onZombieTime?.(on);
+    }
+    return this.timeScale;
+  }
+
+  /** The 🛑 Brake button: stop hard (twice as quick as slowing down). Returns true while stopping or stopped. */
+  brake(): void {
+    if (this.hardBrake || this.targetMph === 0) return;
+    this.beforeBrake = this.over;
+    this.over = -this.speedLimit();
+    this.hardBrake = true;
+  }
+
+  /** ▶ Go after braking: back to the speed you had picked. */
+  go(): void {
+    const limit = this.speedLimit();
+    this.over = this.beforeBrake ?? 0;
+    if (limit + this.over < SPEED_STEP) this.over = 0;
+    this.beforeBrake = null;
+    this.hardBrake = false;
+  }
+
+  /** True when the car is braking hard or sitting stopped by the Brake button. */
+  get braking(): boolean {
+    return this.hardBrake || this.targetMph === 0;
+  }
+
   /** Speed up (1) or ease off (-1) by 5 mph, from a full stop up to the vehicle's top speed. */
   pedal(dir: -1 | 1): void {
+    if (dir > 0) this.hardBrake = false;
     const limit = this.speedLimit();
     const want = targetMph(limit, this.over, this.cap(limit)) + dir * SPEED_STEP;
     this.over = Math.max(0, Math.min(this.cap(limit), want)) - limit;
@@ -889,6 +965,12 @@ export class DriveScene implements GameScene {
   detachFight(): void {
     this.fight = null;
     endGlow();
+    // Time picks back up at once when a fight ends.
+    this.timeScale = 1;
+    if (this.zombieTimeOn) {
+      this.zombieTimeOn = false;
+      this.cb.onZombieTime?.(false);
+    }
   }
 
   get fighting(): boolean {
@@ -943,6 +1025,8 @@ export class DriveScene implements GameScene {
   }
 
   update(dt: number): void {
+    // Zombie time slows the whole world down, so stopping for a horde is a real choice.
+    dt *= this.zombieClock(dt);
     this.clock += dt;
     this.seatRider(dt);
     const sig = this.signalling;
@@ -1010,6 +1094,23 @@ export class DriveScene implements GameScene {
     this.placeTraffic();
     this.placeObstacles();
     this.placeAnimals();
+    this.updateShotFx(dt);
+  }
+
+  /** Fades tracers, the hit glow and the shake, and points the edge arrow at an unseen shooter. */
+  private updateShotFx(dt: number): void {
+    this.shotFx.update(dt);
+    this.shotShake = Math.max(0, this.shotShake - dt * 3);
+    this.hitGlowT = Math.max(0, this.hitGlowT - dt);
+    this.hitGlow.visible = this.hitGlowT > 0;
+    if (this.hitGlowT > 0) {
+      this.hitGlow.position.copy(this.car.position).setY(this.car.position.y + 0.9);
+      this.hitGlow.quaternion.copy(this.car.quaternion);
+      (this.hitGlow.material as THREE.MeshBasicMaterial).opacity = (this.hitGlowT / 0.35) * 0.55;
+    }
+    const v = this.paused ? null : this.shooter;
+    const m = v ? this.vehicleMeshes.get(v.id) : undefined;
+    this.shooterArrow.point(m ? m.position.clone().setY(1.5) : null, this.camera, !!v?.windup || ((m?.userData.flash as number) ?? 0) > 0);
   }
 
   private drive(dt: number): void {
@@ -1028,7 +1129,10 @@ export class DriveScene implements GameScene {
     const top = topSpeed(s);
     const want = targetMph(limit, this.over, this.cap(limit));
     // About 0 to 60 in four seconds; braking is quicker.
-    this.paceMph = want > this.paceMph ? Math.min(want, this.paceMph + 15 * dt) : Math.max(want, this.paceMph - 30 * dt);
+    // The Brake button stops twice as hard as easing off.
+    const slowing = this.hardBrake ? HARD_BRAKE_MPHS : 30;
+    this.paceMph = want > this.paceMph ? Math.min(want, this.paceMph + 15 * dt) : Math.max(want, this.paceMph - slowing * dt);
+    if (this.hardBrake && this.paceMph <= want) this.hardBrake = false;
     // A stop coming up doesn't slow you down: the speed is always yours. The Turn buttons show up
     // sooner when you're going fast instead (promptRange).
     let speed = this.paceMph * UNITS_PER_MPH * this.roadSpeed;
@@ -1068,6 +1172,8 @@ export class DriveScene implements GameScene {
     const res = advance(s, this.realPath, step, this.fuelRate * speedFuelFactor(this.mph, limit), !!this.pendingTurn, overtime);
     this.spinWheels(step);
     coolRage(s, step);
+    // Sitting in the car on the highway, you get your breath back (your hearts on foot).
+    if (step > 0 && heartsOf(s) < HEARTS) healWalker(s, dt / HEART_REFILL_S);
     this.roadRage(dt, speed);
     this.checkCrash();
     this.roadsideHits();
@@ -1238,6 +1344,7 @@ export class DriveScene implements GameScene {
   private roadRage(dt: number, playerSpeed: number): void {
     const s = this.state;
     const rage = rageOf(s);
+    let nearest: Vehicle | null = null;
     for (const v of this.traffic.vehicles) {
       const gap = v.d - s.distance;
       if (Math.abs(gap) < 300) rollHostile(v, rage, this.rageRng);
@@ -1245,13 +1352,48 @@ export class DriveScene implements GameScene {
       // Same-direction drivers hang alongside you; oncoming ones fire as they pass.
       if (!oncoming(v.lane) && Math.abs(gap) < 120) v.cruise = Math.max(1, playerSpeed * (gap > 6 ? 0.92 : 1.05));
       v.fireIn = (v.fireIn ?? 2) - dt;
-      if (v.fireIn > 0 || Math.abs(gap) > HOSTILE_RANGE || s.status !== 'driving') continue;
+      const inRange = Math.abs(gap) <= HOSTILE_RANGE && s.status === 'driving';
+      // Every shot is telegraphed: the roof light blinks yellow and a ❗ pops up first.
+      const aiming = inRange && v.fireIn > 0 && v.fireIn <= HOSTILE_WINDUP;
+      if (aiming && !v.windup) sound.aim();
+      v.windup = aiming;
+      if (inRange && (!nearest || Math.abs(gap) < Math.abs(nearest.d - s.distance))) nearest = v;
+      if (v.fireIn > 0 || !inRange) continue;
+      v.windup = false;
       const dmg = hostileShot(s, v, this.rageRng);
-      sound.enemyShot();
-      const m = this.vehicleMeshes.get(v.id);
-      if (m) m.userData.flash = 0.18;
+      this.shotEffects(v, dmg);
       this.cb.onShotAt?.(v.kind, dmg);
     }
+    this.shooter = nearest;
+  }
+
+  /** The nearest hostile driver in range, for the edge-of-screen arrow. */
+  private shooter: Vehicle | null = null;
+
+  /** What you see and hear when a hostile driver fires: flash, tracer, and on a hit a red flash, shake and clang. */
+  private shotEffects(v: Vehicle, dmg: number): void {
+    sound.enemyShot();
+    const m = this.vehicleMeshes.get(v.id);
+    if (!m) return;
+    m.userData.flash = 0.18;
+    const muzzle = m.getObjectByName('muzzle');
+    const from = muzzle ? muzzle.getWorldPosition(new THREE.Vector3()) : m.position.clone().setY(1.4);
+    const to = this.car.position.clone().setY(this.car.position.y + 1);
+    if (!dmg) {
+      // A miss streaks past you, over the roof or off to the side.
+      const side = new THREE.Vector3().subVectors(to, from).cross(new THREE.Vector3(0, 1, 0)).normalize();
+      to.addScaledVector(side, (this.rageRng() < 0.5 ? -1 : 1) * 2.6).setY(to.y + 1.2);
+      to.lerp(from, -0.6);
+    }
+    this.shotFx.add(tracer(from, to, 0xffc040, 0.24), 0.22);
+    this.shotFx.add(muzzleFlash(from, 0.85), 0.16, 4);
+    if (dmg > 0) {
+      sound.bulletHit();
+      this.shotFx.add(muzzleFlash(to, 0.6), 0.2, 3);
+      this.hitGlowT = 0.35;
+      this.shotShake = Math.min(1, this.shotShake + 0.5);
+      hurtFlash();
+    } else sound.ricochet();
   }
 
   private obstacleX(o: Obstacle): number {
@@ -1471,7 +1613,12 @@ export class DriveScene implements GameScene {
       m.position.set(p.x + f.y * x, 0, -p.y + f.x * x);
       const dir = oncoming(v.lane) ? -1 : 1;
       m.rotation.y = Math.atan2(f.x * dir, -f.y * dir);
-      if (v.hostile) this.markHostile(m);
+      if (v.hostile) this.markHostile(m, v);
+    }
+    for (const [id, icon] of this.warnIcons) {
+      if (alive.has(id)) continue;
+      icon.remove();
+      this.warnIcons.delete(id);
     }
     for (const [id, m] of this.vehicleMeshes) {
       if (alive.has(id)) continue;
@@ -1482,7 +1629,7 @@ export class DriveScene implements GameScene {
   }
 
   /** A hostile driver: a red light on the roof, and a muzzle flash when they fire. */
-  private markHostile(m: THREE.Group): void {
+  private markHostile(m: THREE.Group, v: Vehicle): void {
     let mark = m.getObjectByName('hostile') as THREE.Mesh | undefined;
     if (!mark) {
       const box = new THREE.Box3().setFromObject(m);
@@ -1496,10 +1643,26 @@ export class DriveScene implements GameScene {
       m.add(mark, flash);
     }
     mark.rotation.y = this.clock * 3;
-    mark.scale.setScalar(1 + Math.sin(this.clock * 8) * 0.15);
+    const warn = !!v.windup;
+    const blink = Math.floor(this.clock * 10) % 2 === 0;
+    (mark.material as THREE.MeshBasicMaterial).color.setHex(warn && blink ? 0xffd040 : 0xff2a2a);
+    mark.scale.setScalar((warn ? 1.7 : 1) + Math.sin(this.clock * (warn ? 20 : 8)) * 0.15);
     const flash = (m.userData.flash as number | undefined) ?? 0;
     m.userData.flash = Math.max(0, flash - 1 / 60);
     m.getObjectByName('muzzle')!.visible = flash > 0;
+    // A ❗ over the car while it takes aim.
+    let icon = this.warnIcons.get(v.id);
+    if (warn) {
+      if (!icon) {
+        icon = this.screenIcons.add('❗');
+        icon.classList.add('warn');
+        this.warnIcons.set(v.id, icon);
+      }
+      this.screenIcons.place(icon, mark.getWorldPosition(new THREE.Vector3()).setY(mark.position.y + m.position.y + 1.2), 2.2, this.camera);
+    } else if (icon) {
+      icon.remove();
+      this.warnIcons.delete(v.id);
+    }
   }
 
   private announceLandmarks(): void {
@@ -1628,7 +1791,7 @@ export class DriveScene implements GameScene {
     this.camPos.lerp(wantPos, ease);
     this.camLook.lerp(wantLook, ease);
     this.camera.position.copy(this.camPos);
-    const shake = this.fight?.shake() ?? 0;
+    const shake = (this.fight?.shake() ?? 0) + this.shotShake;
     if (shake > 0) this.camera.position.add(new THREE.Vector3((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake, 0));
     this.camera.lookAt(this.camLook);
   }
@@ -2444,6 +2607,9 @@ export class DriveScene implements GameScene {
   }
 
   dispose(): void {
+    this.shotFx.dispose();
+    this.shooterArrow.dispose();
+    this.screenIcons.dispose();
     this.atmosphere.dispose();
     this.backdrop.dispose();
     for (const m of this.animalMeshes.values()) disposeTree(m);

@@ -166,6 +166,7 @@ const STEPS = [
   ],
   ['boss', async (p) => (await p.evaluate(() => { document.querySelector('.modal')?.remove(); window.rtm.town?.leave(); }), p.evaluate(() => window.rtm.boss('karen')))],
   ['fight', async (p) => (await p.evaluate(() => document.querySelector('.modal')?.remove()), p.evaluate(() => window.rtm.fight('zombie', false)))],
+  ['horde', async (p) => (await p.evaluate(() => document.querySelector('.modal')?.remove()), p.evaluate(() => window.rtm.fight('zombie', true)))],
   ['end', async (p) => p.evaluate(() => window.rtm.end(true))],
 ];
 

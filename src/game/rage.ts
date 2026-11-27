@@ -18,6 +18,8 @@ export const RAGE_PER_HIT = 6;
 export const RAGE_PER_WRECK = 14;
 /** Rage lost per 1000 units driven (about a minute of driving at cruise). */
 export const RAGE_COOL = 30;
+/** Seconds a hostile driver takes aim (roof light blinks yellow, ❗) before each shot. */
+export const HOSTILE_WINDUP = 0.6;
 /** How close (units, along the road) a hostile driver must be to shoot. */
 export const HOSTILE_RANGE = 45;
 

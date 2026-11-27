@@ -1,4 +1,5 @@
 import { BUILD } from '../build';
+import { clearMapLog, formatMapLog, mapLog } from '../geo/mapLog';
 import { devClock, WEATHER_INFO, type Weather } from '../game/time';
 import { devGfx, quality } from '../scenes/quality';
 
@@ -38,6 +39,8 @@ export function mountDevPanel(applyGfx: () => void = () => undefined): void {
 .devp-btn{position:fixed;top:calc(env(safe-area-inset-top) + 34px);left:50%;transform:translateX(-50%);z-index:9999;font:600 14px system-ui;background:rgba(0,0,0,.7);color:#fff;border:1px solid #fff6;border-radius:18px;padding:4px 12px}
 .devp{position:fixed;left:8px;right:8px;top:calc(env(safe-area-inset-top) + 72px);z-index:9999;max-width:420px;margin:0 auto;background:rgba(20,16,12,.92);color:#fff;border-radius:12px;padding:10px 12px;font:14px system-ui;display:none}
 .devp.open{display:block}
+.devp{max-height:calc(100dvh - 90px);overflow:auto}
+.devp pre{margin:0 0 10px;max-height:180px;overflow:auto;background:#0006;border-radius:8px;padding:6px 8px;font:11px/1.35 ui-monospace,monospace;white-space:pre-wrap;word-break:break-word}
 .devp h4{margin:0 0 6px;font-size:13px;opacity:.8}
 .devp .row{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;align-items:center}
 .devp button{font:600 13px system-ui;background:#3a3028;color:#fff;border:1px solid #fff3;border-radius:8px;padding:6px 9px}
@@ -51,7 +54,10 @@ export function mountDevPanel(applyGfx: () => void = () => undefined): void {
   btn.textContent = `🛠 Test · build ${BUILD.number}`;
   const panel = document.createElement('div');
   panel.className = 'devp';
-  btn.onclick = () => panel.classList.toggle('open');
+  btn.onclick = () => {
+    panel.classList.toggle('open');
+    paintLog();
+  };
 
   const fmt = (h: number) => {
     const hh = Math.floor(h);
@@ -159,7 +165,65 @@ export function mountDevPanel(applyGfx: () => void = () => undefined): void {
     go('🐱 Cats', 'test=fight&enemy=cats'),
   );
 
-  panel.append(tHead, tRow, sRow, wHead, wRow, gHead, gRow, xHead, xRow);
+  // Map lookups (local streets, towns, street names): kept on the phone, newest first (src/geo/mapLog.ts).
+  const lHead = document.createElement('h4');
+  lHead.textContent = 'Map lookups (kept on this phone)';
+  const lRow = document.createElement('div');
+  lRow.className = 'row';
+  const logBox = document.createElement('pre');
+  const logText = () => formatMapLog(mapLog().reverse());
+  function paintLog() {
+    logBox.textContent = logText() || 'No lookups yet. Plan a trip from a real place.';
+  }
+  const lBtn = (label: string, act: () => void) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.onclick = act;
+    return b;
+  };
+  const flash = (b: HTMLButtonElement, text: string) => {
+    const was = b.textContent;
+    b.textContent = text;
+    setTimeout(() => (b.textContent = was), 1500);
+  };
+  const header = () => `Road Trip Madness build ${BUILD.number}, map lookup log, ${new Date().toString()}\n${navigator.userAgent}\n\n`;
+  const copyBtn = lBtn('📋 Copy', () => {
+    const text = header() + logText();
+    navigator.clipboard?.writeText(text).then(
+      () => flash(copyBtn, '✓ Copied'),
+      () => {
+        // No clipboard access: select the text so it can be copied by hand.
+        const r = document.createRange();
+        r.selectNodeContents(logBox);
+        getSelection()?.removeAllRanges();
+        getSelection()?.addRange(r);
+        flash(copyBtn, 'Selected');
+      },
+    ) ?? flash(copyBtn, 'No clipboard');
+  });
+  const saveBtn = lBtn('💾 Download', () => {
+    const url = URL.createObjectURL(new Blob([header() + logText() + '\n'], { type: 'text/plain' }));
+    const a = document.createElement('a');
+    const d = new Date();
+    a.href = url;
+    a.download = `rtm-map-log-${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}-${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}.txt`;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  });
+  lRow.append(
+    lBtn('🔄 Refresh', paintLog),
+    copyBtn,
+    saveBtn,
+    lBtn('🗑 Clear', () => {
+      clearMapLog();
+      paintLog();
+    }),
+  );
+  paintLog();
+
+  panel.append(tHead, tRow, sRow, wHead, wRow, gHead, gRow, xHead, xRow, lHead, lRow, logBox);
   document.body.append(btn, panel);
   document.body.classList.add('devp-on');
   // A test trip's &time= and &weather= are already set; show them.

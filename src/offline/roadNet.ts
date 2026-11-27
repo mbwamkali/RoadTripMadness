@@ -1,3 +1,4 @@
+import type { StreetsInfo } from '../geo/streetTiles';
 import { haversineMeters, type LatLng } from '../geo/geo';
 import type { RawRoute, RawStep } from '../geo/route';
 import { keepJoined } from '../geo/localStreets';
@@ -44,6 +45,8 @@ export interface RoadIndex {
   tiles: [number, number, number][];
   /** Landmark files (src/offline/features.ts) as [x, y, gzipBytes]; missing in builds made before they were added. */
   features?: [number, number, number][];
+  /** Street squares (src/geo/streetTiles.ts); missing in builds made before 2026-11-25. */
+  streets?: StreetsInfo;
 }
 
 export interface TownsFile {

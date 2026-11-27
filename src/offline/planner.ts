@@ -1,13 +1,13 @@
 import type { Place } from '../geo/geocode';
 import { searchPlaces } from '../geo/geocode';
 import type { LatLng } from '../geo/geo';
-import { LOCAL_TIMEOUT_MS, lookupStreets, type StreetLookup } from '../geo/localStreets';
+import { LOCAL_TIMEOUT_MS, lookupStreets, type StreetLookup, type StreetStatus } from '../geo/localStreets';
 import { fetchMapFeatures } from '../geo/overpass';
 import type { RawRoute } from '../geo/route';
 import { loadAtlas } from './atlas';
 import { loadFeatureFiles, loadRouteFeatures } from './features';
 import { applyBakedCrossings } from './bakedCrossings';
-import { loadHighways, loadRoadIndex, nextFrame, type RoadFile } from './roadNet';
+import { loadHighways, loadRoadIndex, nextFrame, roadsUrl, type RoadFile } from './roadNet';
 import { tripCache } from './tripCache';
 
 /**
@@ -93,35 +93,65 @@ export async function addFeatures(raw: RawRoute, progress: (message: string) => 
  */
 export function prefetchStreets(p: LatLng): void {
   loadRoadIndex()
-    .then((index) => lookupStreets(p, index.q, index.attribution))
+    .then((index) => lookupStreets(p, index.q, index.attribution, index.streets, roadsUrl))
     .catch(() => {});
 }
 
+/** "overpass-api.de", or "overpass-api.de + overpass.private.coffee" when the two ends used different servers. */
+const serversOf = (st: StreetStatus[]) => [...new Set(st.map((s) => s.server).filter(Boolean))].join(' + ');
+
+/** The street step's line once it's over: how it went, which server, how long. */
+export function streetsSummary(st: StreetStatus[], why: 'done' | 'skipped' | 'late', waitMs = LOCAL_TIMEOUT_MS): string {
+  const secsTaken = Math.round((Math.max(...st.map((s) => s.ended || Date.now())) - Math.min(...st.map((s) => s.started))) / 1000);
+  if (why === 'done') {
+    if (st.every((s) => s.state === 'cached')) return 'saved on the phone from last time';
+    const pieces = st.reduce((n, s) => n + s.pieces, 0);
+    const server = serversOf(st);
+    if (!pieces) {
+      const tried = st.flatMap((s) => s.tries);
+      return tried.length ? `no answer: ${tried.join('; ')}` : 'none found';
+    }
+    return `${pieces.toLocaleString('en-US')} street pieces${server ? ` · ${server}` : ''} · ${secsTaken} s`;
+  }
+  const tried = st.flatMap((s) => s.tries);
+  const head = why === 'skipped' ? 'skipped' : `the street server took over ${Math.round(waitMs / 1000)} s`;
+  return `${head}${tried.length ? ` (${tried.join('; ')})` : ''}; still looking, saved for next time if it arrives`;
+}
+
 /** Waits for the street lookups, showing what they're doing, until they finish, the player skips, or LOCAL_TIMEOUT_MS. */
-async function waitForStreets(lookups: StreetLookup[], progress: PlanProgress, skipHook?: ScoutHook, waitMs = LOCAL_TIMEOUT_MS): Promise<RoadFile[] | null> {
+async function waitForStreets(
+  lookups: StreetLookup[],
+  progress: PlanProgress,
+  skipHook?: ScoutHook,
+  waitMs = LOCAL_TIMEOUT_MS,
+): Promise<{ files: RoadFile[]; why: 'done' | 'skipped' | 'late' }> {
   const show = () => {
     const st = lookups.map((l) => l.status);
     const kb = Math.round(st.reduce((n, s) => n + s.bytes, 0) / 1000);
     const secs = Math.round((Date.now() - Math.min(...st.map((s) => s.started))) / 1000);
+    const tries = st.flatMap((s) => s.tries).filter((t) => !/ ok /.test(t));
     const detail = st.every((s) => s.state === 'cached')
       ? 'saved from last time'
       : st.some((s) => s.state === 'receiving')
-        ? `${kb} KB received`
+        ? `${kb} KB received from ${serversOf(st)}`
         : st.some((s) => s.state === 'waiting')
-          ? `waiting for the street server, ${secs} s`
+          ? `waiting for the street server, ${secs} s${tries.length ? ` (${tries.join('; ')})` : ''}`
           : 'reading';
     progress('Finding the local streets…', { id: 'streets', state: 'active', detail });
   };
   show();
   const tick = setInterval(show, 250);
   let skip = () => {};
-  const skipped = new Promise<null>((resolve) => (skip = () => resolve(null)));
+  const skipped = new Promise<'skipped'>((resolve) => (skip = () => resolve('skipped')));
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const late = new Promise<null>((resolve) => (timer = setTimeout(() => resolve(null), waitMs)));
+  const late = new Promise<'late'>((resolve) => (timer = setTimeout(() => resolve('late'), waitMs)));
   skipHook?.(skip);
   try {
-    const files = await Promise.race([Promise.all(lookups.map((l) => l.file)), skipped, late]);
-    return files ? files.filter((f): f is RoadFile => !!f) : null;
+    const got = await Promise.race([Promise.all(lookups.map((l) => l.file)), skipped, late]);
+    if (Array.isArray(got)) return { files: got.filter((f): f is RoadFile => !!f), why: 'done' };
+    // Still running: note it for the lookup log when it ends.
+    for (const l of lookups) if (!l.status.ended) l.status.plannerNote = got === 'skipped' ? 'skipped by the player' : `moved on at ${Math.round(waitMs / 1000)} s`;
+    return { files: [], why: got };
   } finally {
     clearInterval(tick);
     clearTimeout(timer);
@@ -141,7 +171,7 @@ export async function planTrip(
     const index = await loadRoadIndex();
     // The street lookups (often started when the places were picked) run while the highway map loads.
     // Offline they can still find streets remembered on the device.
-    const lookups = [from, to].map((p) => lookupStreets(p, index.q, index.attribution));
+    const lookups = [from, to].map((p) => lookupStreets(p, index.q, index.attribution, index.streets, roadsUrl));
     progress('Loading the highway map…', { id: 'map', state: 'active', detail: 'checking' });
     const highways = await loadHighways([from, to], (m) =>
       progress('Loading the highway map…', { id: 'map', state: 'active', detail: m.message, ...(m.total && m.received ? { fraction: m.received / m.total } : {}) }),
@@ -149,17 +179,12 @@ export async function planTrip(
     progress('Highway map ready', { id: 'map', state: 'done' });
     let streets: RoadFile[] = [];
     {
-      const got = await waitForStreets(lookups, progress, skipStreets);
-      if (got?.length) {
-        streets = got;
-        const n = got.reduce((k, f) => k + f.edges.length, 0);
-        progress('Local streets found', { id: 'streets', state: 'done', detail: `${n.toLocaleString()} street pieces` });
-      } else
-        progress('Going without local streets', {
-          id: 'streets',
-          state: 'skipped',
-          detail: isOffline() ? 'offline, and none saved for these places' : got ? 'none found' : 'skipped, or the server was too slow',
-        });
+      const { files, why } = await waitForStreets(lookups, progress, skipStreets);
+      const detail = isOffline() && !files.length ? 'offline, and none saved for these places' : streetsSummary(lookups.map((l) => l.status), why);
+      if (files.length) {
+        streets = files;
+        progress('Local streets found', { id: 'streets', state: 'done', detail });
+      } else progress('Going without local streets', { id: 'streets', state: 'skipped', detail });
     }
     progress('Building the road network…', { id: 'network', state: 'active' });
     await nextFrame();

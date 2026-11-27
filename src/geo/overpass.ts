@@ -1,3 +1,4 @@
+import { addMapLog, secs, serverName, type MapLogEntry } from './mapLog';
 import type { LatLng } from './geo';
 import type { MapFeature } from '../game/landmarks';
 import { servers } from './servers';
@@ -270,16 +271,32 @@ export const overpassWaiting = () => waiting.length;
 export interface OverpassOptions {
   /** Budget for the whole query once it is out of the line, across servers (ms). */
   timeoutMs: number;
+  /**
+   * How long one server gets to start answering before the query moves to the
+   * next server (ms). Once an answer is arriving it may finish within timeoutMs.
+   */
+  perServerMs?: number;
   priority?: OverpassPriority;
   /** Called as the answer arrives, with the bytes received so far. */
   onBytes?: (bytes: number) => void;
-  /** Called when a server starts answering. */
-  onAnswer?: () => void;
+  /** Called when a server starts answering, with its address. */
+  onAnswer?: (server: string) => void;
+  /** Called after each server tried, with a line like "overpass-api.de too slow 12.0s". */
+  onTry?: (line: string) => void;
   signal?: AbortSignal;
+  /** Name in the lookup log (src/geo/mapLog.ts); 'landmarks' when left out. */
+  label?: string;
+  /** Rough place for the log. */
+  near?: string;
+  /** Filled in with the log entry, so the caller can add a note (then call saveMapLog). */
+  report?: { entry?: MapLogEntry };
 }
 
-async function readBody(res: Response, onBytes?: (bytes: number) => void): Promise<unknown> {
-  if (!onBytes || !res.body) return res.json();
+async function readBody(res: Response, onBytes?: (bytes: number) => void): Promise<{ data: unknown; bytes: number }> {
+  if (!res.body) {
+    const text = await res.text();
+    return { data: JSON.parse(text), bytes: text.length };
+  }
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
   let got = 0;
@@ -288,7 +305,7 @@ async function readBody(res: Response, onBytes?: (bytes: number) => void): Promi
     if (done) break;
     chunks.push(value);
     got += value.length;
-    onBytes(got);
+    onBytes?.(got);
   }
   const all = new Uint8Array(got);
   let at = 0;
@@ -296,39 +313,108 @@ async function readBody(res: Response, onBytes?: (bytes: number) => void): Promi
     all.set(c, at);
     at += c.length;
   }
-  return JSON.parse(new TextDecoder().decode(all));
+  return { data: JSON.parse(new TextDecoder().decode(all)), bytes: got };
 }
 
-/** Runs an Overpass query through the line, trying each server in turn. Null on any failure. */
+/** "busy 429", "error 504" for a refused answer. */
+const refusal = (status: number) => (status === 429 ? 'busy 429' : `error ${status}`);
+
+/**
+ * Runs an Overpass query through the line, trying each server in turn. Null
+ * on any failure. Every query is written to the lookup log (src/geo/mapLog.ts).
+ */
 export function overpassQuery(query: string, opts: OverpassOptions): Promise<{ elements?: OsmElement[] } | null> {
+  const called = Date.now();
   return inLine(opts.priority ?? 'normal', async () => {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs);
     const stop = () => ctrl.abort();
     opts.signal?.addEventListener('abort', stop);
+    const tries: string[] = [];
+    const tried = (line: string) => {
+      tries.push(line);
+      opts.onTry?.(line);
+    };
+    const queued = Date.now() - called;
+    let result = 'failed';
+    let bytes = 0;
+    let note: string | undefined;
     try {
       for (const url of servers().overpass) {
-        if (ctrl.signal.aborted) return null;
+        if (ctrl.signal.aborted) break;
+        const name = serverName(url);
+        const t0 = Date.now();
+        // This server's own limit for starting to answer, inside the whole budget.
+        const one = new AbortController();
+        const onAbort = () => one.abort();
+        ctrl.signal.addEventListener('abort', onAbort);
+        let slow = false;
+        const slowTimer = opts.perServerMs
+          ? setTimeout(() => {
+              slow = true;
+              one.abort();
+            }, opts.perServerMs)
+          : undefined;
         try {
-          const res = await fetch(url, { method: 'POST', body: new URLSearchParams({ data: query }), signal: ctrl.signal });
-          // Busy, overloaded or broken: try the next server.
-          if (!res.ok) continue;
-          opts.onAnswer?.();
-          return (await readBody(res, opts.onBytes)) as { elements?: OsmElement[] };
+          const res = await fetch(url, { method: 'POST', body: new URLSearchParams({ data: query }), signal: one.signal });
+          if (!res.ok) {
+            // Busy, overloaded or broken: try the next server.
+            clearTimeout(slowTimer);
+            tried(`${name} ${refusal(res.status)} ${secs(Date.now() - t0)}`);
+            continue;
+          }
+          opts.onAnswer?.(name);
+          const body = await readBody(res, opts.onBytes);
+          clearTimeout(slowTimer);
+          const json = body.data as { elements?: OsmElement[]; remark?: string };
+          bytes = body.bytes;
+          // The server ran out of time itself: an empty answer with a remark. Try the next server.
+          if (json.remark && /timed out|out of memory|runtime error/i.test(json.remark) && !json.elements?.length) {
+            tried(`${name} gave up ${secs(Date.now() - t0)} (${json.remark.slice(0, 60)})`);
+            continue;
+          }
+          tried(`${name} ok ${secs(Date.now() - t0)}`);
+          result = json.elements?.length ? 'found' : 'none';
+          return json;
         } catch {
-          if (ctrl.signal.aborted) return null;
+          clearTimeout(slowTimer);
+          if (slow && !ctrl.signal.aborted) {
+            tried(`${name} too slow ${secs(Date.now() - t0)}`);
+            continue;
+          }
+          if (ctrl.signal.aborted) {
+            const mine = opts.signal?.aborted;
+            tried(`${name} ${mine ? 'stopped' : 'out of time'} ${secs(Date.now() - t0)}`);
+            if (mine) result = 'stopped';
+            break;
+          }
           /* unreachable: try the next server */
+          tried(`${name} unreachable ${secs(Date.now() - t0)}`);
+        } finally {
+          ctrl.signal.removeEventListener('abort', onAbort);
         }
       }
       return null;
     } finally {
       clearTimeout(timer);
       opts.signal?.removeEventListener('abort', stop);
+      if (queued > 500) note = `waited ${secs(queued)} for a free slot`;
+      const entry = addMapLog({
+        at: called,
+        what: opts.label ?? 'landmarks',
+        ...(opts.near ? { near: opts.near } : {}),
+        result,
+        ms: Date.now() - called,
+        ...(bytes ? { bytes } : {}),
+        tries,
+        ...(note ? { note } : {}),
+      });
+      if (opts.report) opts.report.entry = entry;
     }
   });
 }
 
 /** Runs an Overpass query and returns the raw answer, or null on any failure. */
-export function overpassJson(query: string, timeoutMs: number): Promise<{ elements?: OsmElement[] } | null> {
-  return overpassQuery(query, { timeoutMs });
+export function overpassJson(query: string, timeoutMs: number, label?: string): Promise<{ elements?: OsmElement[] } | null> {
+  return overpassQuery(query, { timeoutMs, label });
 }

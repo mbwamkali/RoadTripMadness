@@ -1,8 +1,16 @@
 import * as THREE from 'three';
+import { ScreenIcons } from '../ui/screenIcons';
 import {
   buyFuel,
   foundCash,
   damage,
+  DIZZY_CASH,
+  healWalker,
+  HEARTS,
+  heartsOf,
+  hurtWalker,
+  SNACK_HEARTS,
+  WAKE_HEARTS,
   openCrate,
   repair,
   restAtMotel,
@@ -21,7 +29,7 @@ import { CRATE_GLOW, type TownSpot, type TownWorld } from './world';
 import { daylight, hourOf } from '../game/time';
 import { hashString } from '../game/rng';
 import { testing } from '../game/testFlag';
-import { walkAround, type GroundBox } from './walkAround';
+import { offTheRide, walkAround, WALK_ROOM, type GroundBox } from './walkAround';
 
 /**
  * Playing a town: you turn off the highway onto Main Street in the road
@@ -65,6 +73,14 @@ export interface TownHooks {
 
 /** The walker is drawn this much bigger inside buildings. */
 const INSIDE_SCALE = 1.3;
+/** Out of hearts: the stars spin this long (s) before you wake up in the car. */
+const DIZZY_TIME = 1.2;
+/** On waking, zombies within this of the car are knocked back this far. */
+const KNOCK_RANGE = 8;
+const KNOCK_BACK = 4;
+/** Boxes in these places sometimes hold a snack or a bandage (a heart back, if you're short). */
+const SNACK_PLACES: Partial<Record<string, string>> = { grocery: '🍎', pumps: '🍎', pharmacy: '🩹' };
+const SNACK_CHANCE = 0.5;
 
 /** Town driving (m/s): cruising speed (about 40 mph), and the most it speeds up to on a long way round (about 100 mph). */
 export const TOWN_SPEED = 18;
@@ -150,7 +166,11 @@ export class TownPlay {
   /** Digging into a box you walked over to: opens it when the time runs out. */
   private dig: { i: number; t: number } | null = null;
   /** Loot icons flying from a box up to your supplies. */
-  private fly: { obj: THREE.Sprite; from: THREE.Vector3; t: number }[] = [];
+  private fly: { el: HTMLElement; pos: THREE.Vector3; size: number; from: THREE.Vector3; t: number }[] = [];
+  /** Pictures that float up and fade (💨, 💵), drawn on the screen like the flying loot. */
+  private pops: { el: HTMLElement; pos: THREE.Vector3; size: number; life: number; max: number; vy: number }[] = [];
+  /** Loot and pop-up pictures are page elements over the 3D view, so the scene's light never darkens them. */
+  private icons = new ScreenIcons();
   private move: CarMove | null = null;
   private zombies: Zombie[] = [];
   private fx: { obj: THREE.Object3D; life: number; vy: number }[] = [];
@@ -310,8 +330,11 @@ export class TownPlay {
   }
 
   get busy(): boolean {
-    return !!this.move || !!this.walk || !!this.dig || !!this.doorAnim || !!this.entering || this.resting;
+    return !!this.move || !!this.walk || !!this.dig || !!this.doorAnim || !!this.entering || this.resting || this.dizzy > 0;
   }
+
+  /** Out of hearts, seeing stars (seconds left before you wake up in the car). */
+  dizzy = 0;
 
   /** Asleep at the motel (the Zzz picture is up). */
   resting = false;
@@ -392,6 +415,7 @@ export class TownPlay {
 
   /** A tap or hold on the 3D view at normalised device coordinates. */
   tap(ndc: { x: number; y: number }): boolean {
+    if (this.dizzy > 0) return true;
     this.ray.setFromCamera(new THREE.Vector2(ndc.x, ndc.y), this.host.camera);
     if (this.phase !== 'inside') {
       const z = this.pickZombie();
@@ -468,7 +492,7 @@ export class TownPlay {
   /** At the pumps: get out (if you aren't), walk to the pump and fill up. */
   fillUp(): void {
     const sp = this.at;
-    if (!sp?.pump || this.filling > 0) return;
+    if (!sp?.pump || this.filling > 0 || this.dizzy > 0) return;
     if (this.phase === 'parked') this.getOut();
     this.walkTo([sp.pump], WALK_SPEED, () => {
       const r = buyFuel(this.hooks.state);
@@ -495,8 +519,8 @@ export class TownPlay {
 
   getOut(): void {
     if (this.phase !== 'parked') return;
-    const left = new THREE.Vector3(Math.cos(this.carYaw), 0, -Math.sin(this.carYaw));
-    this.walker.position.copy(this.host.car.position).addScaledVector(left, 1.9).setY(this.host.car.position.y);
+    // Step out on the side facing the place, clear of the ride, so the walk there goes round it.
+    this.walker.position.copy(this.besideCar(this.at?.door));
     // Face the place you parked at, so the camera (behind you) shows it, not the highway.
     const sp = this.at;
     const toward = sp ? sp.door.clone().sub(this.walker.position).setY(0) : new THREE.Vector3();
@@ -514,9 +538,8 @@ export class TownPlay {
       this.leaveBuilding(run, () => this.backToCar(run));
       return;
     }
-    if (this.phase !== 'walking' || this.entering) return;
-    const left = new THREE.Vector3(Math.cos(this.carYaw), 0, -Math.sin(this.carYaw));
-    this.walkTo([this.host.car.position.clone().addScaledVector(left, 1.9)], run ? RUN_SPEED : WALK_SPEED, () => {
+    if (this.phase !== 'walking' || this.entering || this.dizzy > 0) return;
+    this.walkTo([this.besideCar(this.walker.position)], run ? RUN_SPEED : WALK_SPEED, () => {
       this.walker.visible = false;
       this.phase = 'parked';
       this.hooks.sfx.click();
@@ -525,7 +548,7 @@ export class TownPlay {
   }
 
   goIn(sp: TownSpot): void {
-    if (this.phase !== 'walking' || this.entering) return;
+    if (this.phase !== 'walking' || this.entering || this.dizzy > 0) return;
     // Up to the building's own door, it swings open, step through, and you're inside.
     this.entering = sp;
     this.hooks.changed();
@@ -694,6 +717,15 @@ export class TownPlay {
       for (const [k, v] of Object.entries(r.loot) as [keyof Inventory, number][]) {
         this.flyIcon(LOOT_ICONS[k], p, n++);
         words.push(`${v} ${k === 'cash' ? 'dollars' : k}`);
+      }
+      // Food or a bandage in the box: a heart back, right away, when you're short of one.
+      const snack = SNACK_PLACES[sp.lot.place];
+      const s = this.hooks.state;
+      if (snack && heartsOf(s) < HEARTS && Math.random() < SNACK_CHANCE) {
+        healWalker(s, SNACK_HEARTS);
+        this.flyIcon(snack, p, n++);
+        this.flyIcon('❤️', p, n++);
+        words.push(snack === '🩹' ? 'a bandage (+1 ❤️)' : 'a snack (+1 ❤️)');
       }
       if (!words.length) this.popIcon('💨', p);
       this.hooks.say(words.length ? (this.hooks.kid ? `${LOOT_ICONS[(Object.keys(r.loot)[0] as keyof Inventory)]}!` : `Found ${words.join(', ')}.`) : this.hooks.kid ? 'Empty!' : 'Empty.', false);
@@ -1099,6 +1131,12 @@ export class TownPlay {
   }
 
   private updateZombies(dt: number): void {
+    if (this.dizzy > 0) {
+      // Seeing stars: you spin on the spot and nobody grabs you, then you wake up in the car.
+      this.dizzy -= dt;
+      this.walker.rotation.y += dt * 9;
+      if (this.dizzy <= 0) this.wakeInCar();
+    }
     const target = this.focusPoint();
     this.zombies.forEach((z, i) => {
       z.phase += dt;
@@ -1115,7 +1153,9 @@ export class TownPlay {
       z.cool -= dt;
       if (dist < GRAB && z.cool <= 0) {
         z.cool = 1.3;
-        if (this.phase === 'walking') this.grabbed(z);
+        if (this.phase === 'walking') {
+          if (this.dizzy <= 0) this.grabbed(z);
+        }
         else if (this.phase === 'parked') {
           damage(this.hooks.state, 2);
           this.hooks.sfx.bad();
@@ -1127,22 +1167,63 @@ export class TownPlay {
 
   private grabbed(z: Zombie): void {
     const s = this.hooks.state;
+    const kid = this.hooks.kid;
     this.hooks.sfx.bad();
     document.body.classList.remove('hurt');
     void document.body.offsetWidth;
     document.body.classList.add('hurt');
-    // A grab costs a little of what you carry and shoves you away.
-    let what = '';
-    if (s.inv.cash >= 5) {
-      s.inv.cash -= 5;
-      what = '5 dollars';
-    } else if (s.inv.scrap >= 1) {
-      s.inv.scrap -= 1;
-      what = '1 scrap';
-    }
+    // A grab costs you a heart (yours, not the car's) and shoves you away.
+    const out = hurtWalker(s, kid);
     const away = this.walker.position.clone().sub(z.obj.position).setY(0).normalize();
     this.walker.position.addScaledVector(away, 1.2);
-    this.hooks.say(this.hooks.kid ? 'Ow! Run!' : what ? `A zombie grabbed ${what}!` : 'A zombie grabbed you!', false);
+    if (out) this.seeStars();
+    else this.hooks.say(kid ? 'Ow! Run!' : heartsOf(s) <= 2 ? 'Ouch! Get back to the car!' : 'A zombie grabbed you!', false);
+    this.hooks.changed();
+  }
+
+  /** Out of hearts: stars spin round your head, then you wake up safe in the car. */
+  private seeStars(): void {
+    this.dizzy = DIZZY_TIME;
+    this.walk = null;
+    this.entering = null;
+    if (this.doorAnim) {
+      // Halfway through a door: it shuts again.
+      const sp = this.doorAnim.sp;
+      const panel = sp.doorway.getObjectByName('doorPanel');
+      if (panel) panel.rotation.y = 0;
+      if (!sp.real) sp.doorway.visible = false;
+      this.doorAnim = null;
+    }
+    const head = this.walker.position.clone().setY(this.walker.position.y + 2.1);
+    this.popIcon('💫', head, 1.3, DIZZY_TIME);
+    this.popIcon('⭐', head.clone().add(new THREE.Vector3(0.5, 0.3, 0)), 0.8, DIZZY_TIME * 0.8);
+    this.popIcon('⭐', head.clone().add(new THREE.Vector3(-0.5, 0.1, 0)), 0.7, DIZZY_TIME * 0.7);
+    this.hooks.say('Too dizzy!');
+  }
+
+  private wakeInCar(): void {
+    const s = this.hooks.state;
+    const kid = this.hooks.kid;
+    this.dizzy = 0;
+    this.hooks.fade?.();
+    this.walker.visible = false;
+    this.walker.scale.setScalar(1);
+    this.phase = 'parked';
+    s.hearts = Math.max(heartsOf(s), WAKE_HEARTS);
+    const lost = kid ? 0 : Math.min(s.inv.cash, DIZZY_CASH);
+    s.inv.cash -= lost;
+    // The zombies by the car are knocked back a few steps, so you can drive off.
+    const car = this.host.car.position;
+    for (const z of this.zombies) {
+      const off = z.obj.position.clone().sub(car).setY(0);
+      if (off.length() > KNOCK_RANGE) continue;
+      if (off.lengthSq() < 0.01) off.set(1, 0, 0);
+      z.obj.position.addScaledVector(off.normalize(), KNOCK_BACK);
+      z.hurt = 0.22;
+      z.cool = 2;
+    }
+    this.hooks.say(kid ? 'Phew! Safe in the car!' : lost ? `You wake up in the car. You dropped $${lost}.` : 'You wake up in the car.');
+    this.hooks.save();
     this.hooks.changed();
   }
 
@@ -1212,11 +1293,9 @@ export class TownPlay {
 
   /** A loot icon pops out of the box, then flies up to your supplies at the top of the screen. */
   private flyIcon(icon: string, p: THREE.Vector3, n: number): void {
-    const s = emojiSprite(icon, 1.4);
-    s.position.copy(p);
-    s.renderOrder = 10;
-    this.host.scene.add(s);
-    this.fly.push({ obj: s, from: p.clone().add(new THREE.Vector3((n - 1) * 0.7, 0, 0)), t: -n * 0.12 });
+    const el = this.icons.add(icon);
+    el.style.visibility = 'hidden';
+    this.fly.push({ el, pos: p.clone(), size: 1.4, from: p.clone().add(new THREE.Vector3((n - 1) * 0.7, 0, 0)), t: -n * 0.12 });
   }
 
   private updateFly(dt: number): void {
@@ -1225,22 +1304,33 @@ export class TownPlay {
     const to = new THREE.Vector3(-0.55, 0.78, 0.5).unproject(cam).sub(cam.position).normalize().multiplyScalar(4).add(cam.position);
     this.fly = this.fly.filter((f) => {
       f.t += dt;
-      const t = Math.max(0, f.t);
+      if (f.t < 0) return true;
+      const t = f.t;
       if (t < 0.45) {
         // Pop up out of the box first.
-        f.obj.position.copy(f.from).setY(f.from.y + Math.sin((t / 0.45) * Math.PI * 0.5) * 1.2);
+        f.pos.copy(f.from).setY(f.from.y + Math.sin((t / 0.45) * Math.PI * 0.5) * 1.2);
+        this.icons.place(f.el, f.pos, f.size, cam);
         return true;
       }
       const k = Math.min(1, (t - 0.45) / 0.55);
       const start = f.from.clone().setY(f.from.y + 1.2);
-      f.obj.position.lerpVectors(start, to, k * k);
-      const sc = 1.4 * (1 - k * 0.6);
-      f.obj.scale.set(sc, sc, 1);
+      f.pos.lerpVectors(start, to, k * k);
+      this.icons.place(f.el, f.pos, f.size * (1 - k * 0.6), cam);
       if (k < 1) return true;
-      this.host.scene.remove(f.obj);
-      disposeSprite(f.obj);
+      this.icons.remove(f.el);
       this.hooks.bump?.();
       return false;
+    });
+    this.pops = this.pops.filter((f) => {
+      f.life -= dt;
+      f.pos.y += f.vy * dt;
+      if (f.life <= 0) {
+        this.icons.remove(f.el);
+        return false;
+      }
+      // Fades out over its last quarter.
+      this.icons.place(f.el, f.pos, f.size, cam, Math.min(1, f.life / (f.max * 0.25)));
+      return true;
     });
   }
 
@@ -1266,10 +1356,9 @@ export class TownPlay {
   }
 
   private popIcon(icon: string, p: THREE.Vector3, size = 1.6, life = 1.2): void {
-    const s = emojiSprite(icon, size);
-    s.position.copy(p);
-    this.host.scene.add(s);
-    this.fx.push({ obj: s, life, vy: 1.6 });
+    const el = this.icons.add(icon);
+    this.pops.push({ el, pos: p.clone(), size, life, max: life, vy: 1.6 });
+    this.icons.place(el, p, size, this.host.camera);
   }
 
   private walkTo(pts: THREE.Vector3[], speed: number, then: () => void): void {
@@ -1279,7 +1368,10 @@ export class TownPlay {
     if (car.visible && this.walker.visible) {
       const box = this.carBox();
       let from = this.walker.position;
-      for (const p of pts) {
+      for (const q of pts) {
+        // A step that would end on the ride (a shop door right by its nose) stops beside it instead.
+        const o = offTheRide({ x: q.x, z: q.z }, box);
+        const p = new THREE.Vector3(o.x, q.y, o.z);
         for (const c of walkAround({ x: from.x, z: from.z }, { x: p.x, z: p.z }, box)) route.push(new THREE.Vector3(c.x, 0, c.z));
         route.push(p);
         from = p;
@@ -1288,25 +1380,36 @@ export class TownPlay {
     this.walk = { pts: route.map((p) => p.clone().setY(car.position.y)), speed, then };
   }
 
-  private carSize: { halfW: number; halfL: number; dx: number; dz: number } | null = null;
+  /** A spot beside the parked ride, level with its middle, just outside the room kept round it: on the side nearer `toward` (the left if none). */
+  private besideCar(toward?: THREE.Vector3): THREE.Vector3 {
+    const b = this.carBox();
+    const left = new THREE.Vector3(Math.cos(b.yaw), 0, -Math.sin(b.yaw));
+    const mid = new THREE.Vector3(b.x, this.host.car.position.y, b.z);
+    const side = toward && toward.clone().sub(mid).dot(left) < 0 ? -1 : 1;
+    return mid.addScaledVector(left, side * (b.halfW + WALK_ROOM + 0.25));
+  }
+
+  private carSize: { halfW: number; halfL: number; dx: number; dz: number; of: THREE.Object3D } | null = null;
   /** The parked ride's footprint on the ground (measured once from its own shape, in its own frame). */
   private carBox(): GroundBox {
     const car = this.host.car;
     car.updateMatrixWorld(true);
-    if (!this.carSize) {
+    // Measured again if the garage swapped the ride's model.
+    if (this.carSize?.of !== car) {
       const inv = new THREE.Matrix4().copy(car.matrixWorld).invert();
       const box = new THREE.Box3();
       const m = new THREE.Matrix4();
       car.traverse((o) => {
         const mesh = o as THREE.Mesh;
-        if (!mesh.isMesh || !mesh.visible || o.name === 'rider' || !mesh.geometry) return;
+        // The blinker glows are wide flat cards, not part of the body.
+        if (!mesh.isMesh || !mesh.visible || o.name === 'rider' || o.name.startsWith('glow') || !mesh.geometry) return;
         if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
         box.union(mesh.geometry.boundingBox!.clone().applyMatrix4(m.multiplyMatrices(inv, mesh.matrixWorld)));
       });
       const size = box.isEmpty() ? new THREE.Vector3(2, 1, 4.6) : box.getSize(new THREE.Vector3());
       const mid = box.isEmpty() ? new THREE.Vector3() : box.getCenter(new THREE.Vector3());
       const k = car.scale.x || 1;
-      this.carSize = { halfW: (size.x * k) / 2, halfL: (size.z * k) / 2, dx: mid.x * k, dz: mid.z * k };
+      this.carSize = { halfW: (size.x * k) / 2, halfL: (size.z * k) / 2, dx: mid.x * k, dz: mid.z * k, of: car };
     }
     const yaw = yawOf(car);
     const sz = this.carSize;
@@ -1500,10 +1603,9 @@ export class TownPlay {
     for (const l of this.locals) this.host.scene.remove(l.rig.obj);
     for (const z of this.zombies) this.host.scene.remove(z.obj);
     for (const f of this.fx) this.host.scene.remove(f.obj);
-    for (const f of this.fly) {
-      this.host.scene.remove(f.obj);
-      disposeSprite(f.obj);
-    }
+    this.fly = [];
+    this.pops = [];
+    this.icons.dispose();
     this.host.scene.remove(this.walker);
     this.host.car.visible = true;
     const rider = this.host.car.getObjectByName('rider');

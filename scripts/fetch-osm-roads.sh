@@ -6,7 +6,7 @@
 # soon as it is filtered, so this needs only about 2 GB of free disk.
 #
 # usage: sh scripts/fetch-osm-roads.sh [work_dir]   (default data-src/osm)
-# Needs osmium-tool. Result: <work_dir>/roads-XX.osm.pbf, one per state
+# Needs osmium-tool. Result: <work_dir>/roads-XX.osm.pbf and streets-XX.osm.pbf, one each per state
 #
 # Source: state extracts of OpenStreetMap cut by movisda
 # (https://osm.download.movisda.io), updated daily. The data is © OpenStreetMap
@@ -28,8 +28,14 @@ for s in $STATES; do
     n/tourism=attraction,viewpoint,theme_park \
     n/historic=monument,memorial,castle,fort,ruins,battlefield \
     n/man_made=tower,lighthouse,water_tower,windmill
+  # Local streets and town places for the street squares (scripts/build-osm-streets.py);
+  # motorway links only so their junctions with streets are found.
+  osmium tags-filter --overwrite --no-progress -o "$DIR/streets-$s.osm.pbf" "$DIR/US-$s.osm.pbf" \
+    w/highway=motorway,motorway_link,trunk,trunk_link,primary,primary_link,secondary,secondary_link,tertiary,tertiary_link,unclassified,residential,living_street \
+    nw/amenity=fuel,police,pharmacy nw/craft=car_repair nw/tourism=motel,hotel,guest_house nw/industrial=scrap_yard nw/landuse=farmyard \
+    nw/shop=supermarket,convenience,grocery,general,hardware,doityourself,car_repair,tyres,chemist,farm,hunting,outdoor,weapons
   rm -f "$DIR/US-$s.osm.pbf"
 done
 # The build reads the state files one by one. Merging them would keep only
 # one copy of each road that crosses a state line, and lose the other half.
-ls -l "$DIR"/roads-*.osm.pbf
+ls -l "$DIR"/roads-*.osm.pbf "$DIR"/streets-*.osm.pbf

@@ -54,6 +54,8 @@ export interface Enemy {
   throwTimer?: number;
   /** The hermit: time to his next hop across the road. */
   hopTimer?: number;
+  /** Real seconds since it showed up (game time ÷ the drive's time scale), for zombie time. */
+  realAge?: number;
 }
 
 /** Junk thrown at the car: flies from the thrower to where the car was, and hits if the car is still there. */
@@ -111,6 +113,11 @@ export interface CombatState {
    * the drive. Escape then grows with distance driven. Unset = time-based.
    */
   pace?: number;
+  /**
+   * On the road: how fast game time runs against real time (below 1 during
+   * zombie time), set every frame by the drive. Unset = 1.
+   */
+  timeScale?: number;
   carX: number;
   steer: number;
   /**
@@ -236,6 +243,30 @@ export const WEAPONS: Record<WeaponKind, { name: string; dmg: number; cooldown: 
 };
 
 export const ROAD_SPEED = 14;
+/** Road units per second at pace 1 (cruise speed, 65 mph; geo/route.ts CRUISE_SPEED). */
+const PACE_UNITS = 38;
+/** Units per second per mph (65 mph = 38 units/s). */
+const UNITS_PER_MPH = PACE_UNITS / 65;
+/**
+ * Walking zombies stand on the road and shuffle toward you at this speed
+ * (units/s), so they come up at your own speed: stop and they barely move.
+ */
+export const ZOMBIE_WALK = 2;
+/** Once you've slowed right down, zombies hurry toward the car (units/s). */
+export const ZOMBIE_HURRY = 4;
+/** A horde first shows up this far up the road (units), plus up to HORDE_DEPTH more. */
+export const HORDE_AHEAD = 115;
+const HORDE_DEPTH = 15;
+/** A lone zombie shows up this many seconds ahead at your speed, kept between 70 and 130 units. */
+const ZOMBIE_LEAD = 2.6;
+/** Below this speed (mph) you don't plough zombies over: they grab on and claw instead. */
+export const ZOMBIE_PUSH_MPH = 20;
+/** Most zombies clinging to the car at once; the rest crowd in front. */
+const MAX_CLIMBERS = 4;
+/** How hard a zombie hits the car by speed: (mph ÷ 65)², at least 0.2, at most 3. */
+export function zombieHitScale(mph: number): number {
+  return Math.min(3, Math.max(0.2, (mph / 65) ** 2));
+}
 export const LANE_LIMIT = 2.6;
 /** Lane centres for fights on the road: your side's two lanes, 3.6 apart (one lane over clears a boss's red strip). */
 export const ROAD_LANES = [-1.8, 1.8];
@@ -441,10 +472,11 @@ function spawn(c: CombatState, type: EnemyType, horde = false): Enemy {
     if (THROWING_BOSSES[type]) e.throwTimer = 3;
   } else if (type === 'zombie') {
     e.x = range(r, -7, 7);
-    e.z = -70;
+    // Zombies stand on the road, so they show up far enough ahead to see them coming at your speed.
+    e.z = -Math.min(130, Math.max(70, closingSpeed(c) * ZOMBIE_LEAD));
     if (horde) {
       e.horde = true;
-      e.z = -70 - r() * 12;
+      e.z = -HORDE_AHEAD - r() * HORDE_DEPTH;
       e.holdX = range(r, -6, 6);
     } else if (!c.boss) {
       // Later in the trip more zombies fight back: some throw junk, some climb on.
@@ -507,6 +539,13 @@ export function stepCombat(c: CombatState, dt: number): number {
   }
 
   const roadSpeed = ROAD_SPEED * (boosting ? 2.2 : 1);
+  // How fast the road (and anything standing on it) comes at you.
+  const closing = closingSpeed(c, boosting);
+  const mph = closing / UNITS_PER_MPH;
+  const slow = c.pace !== undefined && mph < ZOMBIE_PUSH_MPH;
+  let climbers = c.enemies.filter((e) => e.onCar && e.hp > 0).length;
+  const toReal = 1 / Math.max(0.05, c.timeScale ?? 1);
+  for (const e of c.enemies) e.realAge = (e.realAge ?? 0) + dt * toReal;
   let carDamage = 0;
   const hitCar = (raw: number, from: EnemyType) => {
     if (c.dodge > 0 && c.rng() < c.dodge) return;
@@ -523,13 +562,24 @@ export function stepCombat(c: CombatState, dt: number): number {
       stepBoss(c, e, e.type, dt, stunned, hitCar);
     } else if (e.type === 'zombie') {
       if (e.onCar) stepClimber(c, e, dt, stunned, boosting, hitCar);
-      else if (e.role === 'thrower') stepThrower(c, e, dt, stunned, boosting, roadSpeed);
+      else if (e.role === 'thrower') stepThrower(c, e, dt, stunned, closing);
       else {
-        e.z += roadSpeed * dt;
+        // Standing on the road, shuffling toward you: the road brings it to you at your speed.
+        e.z += (closing + (stunned ? 0 : slow ? ZOMBIE_HURRY : ZOMBIE_WALK)) * dt;
         // A horde spreads across the road far off and closes in on the car as it nears.
         const aimX = e.horde ? c.carX + e.holdX * Math.min(1, Math.max(0, -e.z / 35)) : c.carX;
         if (!stunned) e.x += Math.sign(aimX - e.x) * Math.min(Math.abs(aimX - e.x), (e.horde ? 1.6 : 1.8) * dt);
-        if (e.z > -1.5 && e.z < 1.5 && Math.abs(e.x - c.carX) < 1.5) {
+        const inLane = Math.abs(e.x - c.carX) < 1.5;
+        if (slow && inLane && e.z > -2.4 && e.z < 1.5 && !boosting) {
+          // Crawling along or stopped: it grabs on and claws (shoot it, or swerve to shake it off).
+          if (climbers < MAX_CLIMBERS) {
+            climbers++;
+            e.onCar = true;
+            e.shaken = 0;
+            e.timer = 1.2;
+            c.events.push({ kind: 'grab', enemy: e.id });
+          } else e.z = -2.4; // the rest crowd round the front
+        } else if (e.z > -1.5 && e.z < 1.5 && inLane) {
           if (e.role === 'climber' && !boosting) {
             // It grabs on instead of going under the wheels.
             e.onCar = true;
@@ -538,7 +588,9 @@ export function stepCombat(c: CombatState, dt: number): number {
             c.events.push({ kind: 'grab', enemy: e.id });
           } else {
             // Ploughing into a zombie hurts the car unless you're boosting through; a horde zombie is a small bump.
-            if (!boosting && c.ramDamage > 0) hitCar(e.horde ? c.ramDamage * 0.25 : c.ramDamage, 'zombie');
+            // The faster you hit it, the more it hurts.
+            const k = c.pace !== undefined ? zombieHitScale(mph) : 1;
+            if (!boosting && c.ramDamage > 0) hitCar((e.horde ? c.ramDamage * 0.25 : c.ramDamage) * k, 'zombie');
             kill(c, e, !!e.horde);
           }
         }
@@ -648,12 +700,21 @@ function kill(c: CombatState, e: Enemy, byPlayer: boolean): void {
 /** How long an enemy flashes before it attacks. */
 export const WINDUP = 0.6;
 
-/** A thrower stops up the road, winds up and hurls junk at the lane the car is in. */
-function stepThrower(c: CombatState, e: Enemy, dt: number, stunned: boolean, boosting: boolean, roadSpeed: number): void {
-  // Boosting leaves throwers behind.
-  if (boosting || e.z < e.holdZ) e.z = boosting ? e.z + roadSpeed * dt : Math.min(e.holdZ, e.z + roadSpeed * dt);
-  if (stunned || e.z < e.holdZ - 0.5 || e.z > e.holdZ + 0.5) {
+/**
+ * A thrower stands up the road, and as you come near winds up and hurls junk
+ * at the lane you're in, timed to land as you get there. Slow down and it
+ * throws again.
+ */
+function stepThrower(c: CombatState, e: Enemy, dt: number, stunned: boolean, closing: number): void {
+  e.z += closing * dt;
+  if (stunned || e.z > -6) {
     e.charging = false;
+    return;
+  }
+  // In reach when the junk (wind-up plus a second's flight) would land about as you arrive.
+  const reach = Math.max(16, closing * (WINDUP + 1) + 4);
+  if (!e.charging && -e.z > reach) {
+    e.timer = Math.max(e.timer, WINDUP + 0.05);
     return;
   }
   e.timer -= dt;
@@ -668,6 +729,29 @@ function stepThrower(c: CombatState, e: Enemy, dt: number, stunned: boolean, boo
     c.missiles.push(m);
     c.events.push({ kind: 'throw', missile: m.id });
   }
+}
+
+/** How fast the road comes at the car (units/s): its real speed on the road, else the fight view's fixed pace. */
+function closingSpeed(c: CombatState, boosting = c.boostTime > 0): number {
+  return c.pace !== undefined ? c.pace * PACE_UNITS : ROAD_SPEED * (boosting ? 2.2 : 1);
+}
+
+/**
+ * The nearest horde zombie still coming (not on the car), for zombie time:
+ * how far ahead it is, how fast it's closing, and how long ago (real seconds)
+ * the oldest one still coming showed up.
+ */
+export function hordeAhead(c: CombatState): { dist: number; closing: number; age: number } | null {
+  let best: Enemy | null = null;
+  let age = 0;
+  for (const e of c.enemies) {
+    if (!e.horde || e.onCar || e.hp <= 0 || e.z > -2.5) continue;
+    if (!best || e.z > best.z) best = e;
+    // The window runs from when the wave showed up: the oldest zombie still coming.
+    age = Math.max(age, e.realAge ?? 0);
+  }
+  if (!best) return null;
+  return { dist: -best.z, closing: closingSpeed(c) + ZOMBIE_WALK, age };
 }
 
 /** A drone hangs over the road ahead, weaving, and fires a small shot after a wind-up (it blinks red). */
@@ -722,7 +806,8 @@ function stepClimber(c: CombatState, e: Enemy, dt: number, stunned: boolean, boo
   if (e.timer <= 0) {
     e.timer = 1.6;
     e.charging = false;
-    hitCar(3, 'zombie');
+    // Horde zombies are weaklings: a scratch each.
+    hitCar(e.horde ? 1 : 3, 'zombie');
   }
 }
 
