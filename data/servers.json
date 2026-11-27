@@ -1,0 +1,5 @@
+{
+  "note": "Map servers the game uses. Change them here (no app update needed). Overpass servers are tried in order; the first is the main one.",
+  "overpass": ["https://overpass-api.de/api/interpreter", "https://overpass.private.coffee/api/interpreter"],
+  "nominatim": "https://nominatim.openstreetmap.org/search"
+}
